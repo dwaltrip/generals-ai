@@ -88,6 +88,8 @@ This is what `replay_collector/fetcher.py` does.
 
 The decoded value is a JSON array. Each slot is a fixed field; new versions append slots rather than restructuring existing ones, which is why a 2017 parser still extracts the first 14 fields correctly from a v18 replay.
 
+> **Wire shape vs. post-mapping shape.** The "Type" column below describes the **wire shape** — what comes out of `decompress_gior()` (and what `replay_collector/fetcher.py` returns). Several record-typed slots (`moves`, `afks`, `chat`, `pings`, `generalTrades`) are stored as positional arrays on the wire; the reference JS bundle wraps each record into a named-field object via `.map(...)`. If your code does the same wrapping, those slots will be lists of dicts; if it doesn't, they're lists of arrays.
+
 | Slot | Field | Type | Notes |
 |---|---|---|---|
 | 0 | `version` | int | `18` at time of writing |
@@ -100,14 +102,14 @@ The decoded value is a JSON array. Each slot is a fixed field; new versions appe
 | 7 | `cityArmies` | int[] | parallel to `cities` — starting armies |
 | 8 | `generals` | int[] | parallel to `usernames` — each player's general tile |
 | 9 | `mountains` | int[] | flat tile indices |
-| 10 | `moves` | object[] | each: `{index, start, end, is50, turn}` |
-| 11 | `afks` | object[] | each: `{index, turn}` |
-| 12 | `teams` | array | empty / non-empty by mode |
+| 10 | `moves` | array[] | wire: `[index, start, end, is50, turn]` per move. See [Move record](#move-record) for field meanings. |
+| 11 | `afks` | array[] | wire: `[index, turn]` per AFK event — `index` is player, `turn` is when they went AFK |
+| 12 | `teams` | array\|null | `null` for FFA; populated for team modes |
 | 13 | `map` | string\|null | custom-map reference; `null` for random maps (was `map_title` in v7) |
 | 14 | `neutrals` | int[] | non-city neutral tiles |
 | 15 | `neutralArmies` | int[] | parallel to `neutrals` |
 | 16 | `swamps` | int[] | swamp tiles (modifier) |
-| 17 | `chat` | array[] | `[text, ?, sender_idx, turn]` |
+| 17 | `chat` | array[] | wire: `[text, prefix, playerIndex, turn]` per message. `prefix` is `""` for normal chat; non-empty for team/whisper/system chat. |
 | 18 | (playerColors source) | int[]\|null | `playerColors` is derived; `null` → fall back to `[0..N-1]` |
 | 19 | `lights` | int[] | |
 | 20 | (settings array) | float[] | `[speed, city_density, mountain_density, swamp_density, city_fairness, spawn_fairness, desert_density, lookout_density, observatory_density]` |
@@ -115,9 +117,9 @@ The decoded value is a JSON array. Each slot is a fixed field; new versions appe
 | 22 | `observatories` | int[] | tile indices (modifier) |
 | 23 | `lookouts` | int[] | tile indices (modifier) |
 | 24 | `deserts` | int[] | tile indices (modifier) |
-| 25 | `player_transforms` | int[] | per-player 3-bit map-orientation flag — bit 0 = flip-x, bit 1 = flip-y, bit 2 = transpose. Fairness mechanism so each player's general appears in a consistent orientation. |
-| 26 | `pings` | array | ping events |
-| 27 | `generalTrades` | array | general-swap events (v ≥ 16) |
+| 25 | `player_transforms` | object | wire: `{"<playerIdx>": int}` — `JSON.stringify` on a `Uint8Array` produces an object keyed by stringified indices, not an array. Iterate `.values()` rather than indexing. Each value is a 3-bit map-orientation flag (bit 0 = flip-x, bit 1 = flip-y, bit 2 = transpose) — fairness mechanism so each player's general appears in a consistent orientation. |
+| 26 | `pings` | array[] | wire: `[player, turn, tileIndex]` per ping event |
+| 27 | `generalTrades` | array[] | wire: `[playerIndexA, playerIndexB, turn]` per trade event (v ≥ 16) |
 | 28 | `tunnels` | int[] | tile indices (modifier) |
 | 29 | `tunnelLimits` | int[] | parallel to `tunnels` |
 | 30 | `chessClockTimingsByMove` | array\|null | timing data when chess clock is enabled |
@@ -126,7 +128,7 @@ The decoded value is a JSON array. Each slot is a fixed field; new versions appe
 | 33 | `stronghold_strength_max` | int | v ≥ 18 |
 | 34 | `strongholds` | int[] | tile indices (v ≥ 18) |
 | 35 | `strongholdStrengths` | int[] | parallel to `strongholds` (v ≥ 18) |
-| 36 | `chessClockMoveExecutionTimestamps` | array\|null | optional — may be absent |
+| 36 | `chessClockMoveExecutionTimestamps` | array\|null | optional — may be absent from the array entirely, or present and `null` |
 
 ### Tile coordinates
 
@@ -134,15 +136,17 @@ All tile-index fields use **flat row-major** indexing: `idx = row * mapWidth + c
 
 ### Move record
 
-```
-{
-  index: int,   // player index into `usernames` / `generals` / `stars`
-  start: int,   // source tile (flat)
-  end: int,     // dest tile (flat) — always orthogonally adjacent in valid play
-  is50: 0 | 1,  // half-army move?
-  turn: int     // game turn
-}
-```
+Each move on the wire is a 5-element array `[index, start, end, is50, turn]`:
+
+| Position | Field | Meaning |
+|---|---|---|
+| 0 | `index` | player index into `usernames` / `generals` / `stars` |
+| 1 | `start` | source tile (flat) |
+| 2 | `end` | dest tile (flat) — always orthogonally adjacent in valid play |
+| 3 | `is50` | `0` or `1` — half-army move? |
+| 4 | `turn` | game turn the move was issued on |
+
+The reference JS parser wraps these into `{index, start, end, is50, turn}` objects via `.map(deserializeMove)`. `replay_collector/fetcher.py` returns the wire array form unchanged.
 
 ## Version gates
 
@@ -154,7 +158,7 @@ Behaviors that change with `version`:
 | v < 6 | Cities regenerate (changed in v6) |
 | v ≥ 5 and < 15 | `old_priority_v2` rules apply |
 | v ≥ 9 | Chat field populated |
-| v ≥ 12 | Settings array slots 4–8 populated (fairness + modifier densities) |
+| v ≥ 13 | Settings array slots 4–8 populated (fairness + modifier densities) — bundle checks `version > 12` |
 | v ≥ 16 | General-trade events present |
 | v ≥ 18 | Strongholds present |
 

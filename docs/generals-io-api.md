@@ -14,6 +14,8 @@ Base: `https://generals.io`. All paths below are relative to that.
 |---|---|
 | `GET /api/serverSettings` | Server config snapshot — sample response below |
 | `GET /api/replays?count=N&offset=M` | Recent replays metadata. Both params required, `count` ≤ 200. Documented in [`replay-format.md`](./replay-format.md). |
+| `GET /api/games/public` | Currently in-progress public games |
+| `GET /api/starsAndRanks?u=<name>` | Player rating / profile data |
 
 ### Known but not tested
 
@@ -21,8 +23,6 @@ Names pulled from the JS bundle. Semantics are inferred from the name; we haven'
 
 | Endpoint | Likely purpose |
 |---|---|
-| `/api/games/public` | Currently in-progress public games |
-| `/api/starsAndRanks?u=<name>` | Player rating / profile data |
 | `/api/validateUsername?u=<name>` | Username availability |
 | `/api/isSupporter?u=<name>` | Supporter (paid) status |
 | `/api/profileModerationData?u=<name>` | Per-user moderation history |
@@ -87,7 +87,7 @@ The web client picks a different replay bucket depending on the hostname it's se
 |---|---|
 | `generals.io`, `ws.generals.io` | `generalsio-replays-na` |
 | `bot.generals.io`, `botws.generals.io` | `generalsio-replays-bot` |
-| Raw IP address (test deploys) | `generalsio-replays-na` (with API on `:8080`) |
+| Raw IP address (test deploys) | `generalsio-replays-dev` (served from local MinIO at `:9000`, same as `localhost`) |
 | `localhost` | `generalsio-replays-dev` (served from a local MinIO at `127.0.0.1:9000`) |
 
 The `-na` suffix is suggestive of regional sharding, but we've found no evidence of other regional buckets — NA appears to be the only public human-replay bucket today.
