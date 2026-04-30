@@ -39,12 +39,50 @@ The S3 bucket is public and unauthenticated. There is a separate bucket `general
 
 The `id` is what feeds into the S3 URL. There is no documented filter-by-username param on this endpoint (`u=` is ignored).
 
+### S3 serving behavior
+
+Replay objects on `generalsio-replays-na` are served by Amazon S3 with:
+
+- `Content-Type: application/octet-stream`
+- `Last-Modified` header set per object — usable for incremental sync, cache validation, or "did this game just finish?"
+- AES256 server-side encryption at rest
+- No CORS errors (the browser fetches the bucket directly from the web client)
+
+### Storage characteristics
+
+> **Caveat:** Numbers below are from a single arbitrarily-selected sample game (`vsVin3bP7`, an 8-player FFA, 658 turns, 2325 moves). Update this section once we have more samples and can describe the realistic range across game modes (1v1 duel, 2v2, FFA, big team).
+
+| Metric | Value (sample) |
+|---|---|
+| Compressed `.gior` | 14.5 KB |
+| Decompressed JSON | ~125 KB |
+| Compression ratio | ~9× |
+
 ## Decoding pipeline
 
 1. Download the `.gior` bytes.
-2. Decompress with `lz-string`'s `decompressFromUint8Array`. (Note: `lz-string` has several incompatible variants — this one specifically. A Python port that supports it is `lz-string-python` / `python-lzstring`.)
+2. Decompress with `lz-string`'s `decompressFromUint8Array` variant. `lz-string` has several incompatible compress/decompress variants — this is one specific one.
 3. JSON-parse the result. You get a flat positional array.
 4. Map array slots to named fields per the schema below.
+
+### Python: `lzstring` package gotcha
+
+The `lzstring` PyPI package (latest is `1.0.4` as of 2026-04) does **not** ship a `decompressFromUint8Array` method, even though the JavaScript library does. Bridge: pair input bytes big-endian into 16-bit codepoints, build a string, hand to plain `decompress()`:
+
+```python
+import json
+import lzstring
+
+_lzs = lzstring.LZString()
+
+def decompress_gior(raw: bytes) -> list:
+    s = "".join(chr((raw[i*2] << 8) | raw[i*2+1]) for i in range(len(raw) // 2))
+    return json.loads(_lzs.decompress(s))
+```
+
+This mirrors what the JS variant does internally: each 16-bit char split into two big-endian bytes on compress, paired back up on decompress.
+
+This is what `replay_collector/fetcher.py` does.
 
 ## Schema (v18)
 
