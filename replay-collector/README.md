@@ -47,8 +47,11 @@ uv run python -m replay_collector data/players.txt --n-ffa 200 --no-dry-run
 | `--n-ffa N` | *required* | per-player FFA replay target |
 | `--max-listings M` | 1000 | safety cap on listings walked per player |
 | `--max-failures K` | 10 | abort the run after K HTTP failures (run-wide budget) |
-| `--dry-run` / `--no-dry-run` | dry-run | default is dry-run; pass `--no-dry-run` to execute |
-| `-v`, `--verbose` | off | DEBUG logging |
+| `--dry-run` | default | print estimates without making API calls |
+| `--test-logger` | off | walk one bucket per player, skip `.gior` fetches; for testing log output |
+| `--no-dry-run` | off | execute the run for real |
+
+`--dry-run`, `--test-logger`, and `--no-dry-run` are mutually exclusive.
 
 Exit code is `1` if the failure budget tripped, else `0`.
 
@@ -62,6 +65,15 @@ The collector is idempotent. Every run starts from the user's most-recent game (
 
 So re-runs are cheap — usually just listing pages plus any new games played since the last run. **To backfill older games for a player, bump `--n-ffa` higher** (re-running with the same `--n-ffa` will not reach further back).
 
+## Logs
+
+Each run writes two files under `tmp/`:
+
+- `<timestamp>-replay_collector.log` — condensed: per-player intro/summary lines and per-bucket progress with streamed dots. `tail -f` shows mid-bucket progress live.
+- `<timestamp>-replay_collector-verbose.log` — full audit trail: same content plus httpx requests and per-replay save records.
+
+Use `--test-logger` to exercise the format without hitting S3 or writing replay rows.
+
 ## Module map
 
 | File | Purpose |
@@ -71,6 +83,7 @@ So re-runs are cheap — usually just listing pages plus any new games played si
 | `replay_collector/runner.py` | Orchestration: `collect_one`, `collect_many`, `UserStats`, `RunStats` |
 | `replay_collector/db.py` | SQLite schema + persistence helpers |
 | `replay_collector/__main__.py` | CLI (dry-run estimator + entry into `collect_many`) |
+| `replay_collector/logging_setup.py` | Two-file logging + streaming bucket-progress writer |
 | `scripts/build_player_list.py` | Merge leaderboard JSON dumps into a deduped player list |
 
 ## Data
