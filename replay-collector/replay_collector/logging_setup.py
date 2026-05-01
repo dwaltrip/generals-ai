@@ -26,11 +26,16 @@ through StreamWriter which owns the file directly. When a normal log
 record (e.g. a TrackedClient HTTP-failure warning) fires while a streamed
 line is open, the writer closes the line, emits the record, and lets the
 next dot resume on a fresh indented line — no prefix repeat.
+
+StreamWriter also tees every write to stdout, so the running terminal
+sees the same content as the condensed log (after the path lines that
+__main__ prints before logging is wired up).
 """
 
 import atexit
 import datetime as dt
 import logging
+import sys
 from pathlib import Path
 
 DOTS_PER_FETCHES = 20
@@ -52,8 +57,9 @@ def _filename_timestamp(now: dt.datetime) -> str:
 
 
 class StreamWriter:
-    """Owns the condensed-log file. Tracks whether a streamed line is open
-    so log records can break in cleanly without garbling dot output."""
+    """Owns the condensed-log file and tees every write to stdout. Tracks
+    whether a streamed line is open so log records can break in cleanly
+    without garbling dot output."""
 
     _RESUME_INDENT = "    "
 
@@ -62,18 +68,26 @@ class StreamWriter:
         self._fmt = formatter
         self._line_open = False
 
+    def _write(self, s: str) -> None:
+        self._f.write(s)
+        sys.stdout.write(s)
+
+    def _flush(self) -> None:
+        self._f.flush()
+        sys.stdout.flush()
+
     def write_log_record(self, record: logging.LogRecord) -> None:
         if self._line_open:
-            self._f.write("\n")
+            self._write("\n")
             self._line_open = False
-        self._f.write(self._fmt.format(record) + "\n")
-        self._f.flush()
+        self._write(self._fmt.format(record) + "\n")
+        self._flush()
 
     def open_line(self, prefix: str) -> None:
         if self._line_open:
-            self._f.write("\n")
-        self._f.write(prefix)
-        self._f.flush()
+            self._write("\n")
+        self._write(prefix)
+        self._flush()
         self._line_open = True
 
     def append(self, fragment: str) -> None:
@@ -81,15 +95,15 @@ class StreamWriter:
         # alignment is intentionally relaxed; warnings/errors are rare and
         # warrant the visual break.
         if not self._line_open:
-            self._f.write(self._RESUME_INDENT)
+            self._write(self._RESUME_INDENT)
             self._line_open = True
-        self._f.write(fragment)
-        self._f.flush()
+        self._write(fragment)
+        self._flush()
 
     def close_line(self) -> None:
         if self._line_open:
-            self._f.write("\n")
-            self._f.flush()
+            self._write("\n")
+            self._flush()
         self._line_open = False
 
     def now_prefix(self) -> str:

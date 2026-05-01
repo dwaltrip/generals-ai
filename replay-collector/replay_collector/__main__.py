@@ -1,4 +1,5 @@
 import argparse
+import logging
 import math
 import sys
 from pathlib import Path
@@ -78,18 +79,17 @@ def print_dry_run(args, players: list[str]) -> None:
     print("Note: .gior fetch count assumes nothing is already cached; re-runs will be faster.")
 
 
-def print_banner(
-    n_players: int,
-    players_file: Path,
-    condensed_path: Path,
-    verbose_path: Path,
-    test_logger: bool,
-) -> None:
-    label = "test-logger run" if test_logger else "running"
-    print(f"{label} replay-collector for {n_players} players (from {players_file}).")
+def print_log_paths(condensed_path: Path, verbose_path: Path) -> None:
     print(f"  condensed log: {condensed_path}")
     print(f"  verbose log:   {verbose_path}")
-    print(f"  tail with: tail -f {condensed_path}")
+
+
+def log_run_intro(n_players: int, players_file: Path, test_logger: bool) -> None:
+    label = "test-logger run" if test_logger else "running"
+    logging.getLogger("replay_collector").info(
+        "%s replay-collector for %d players (from %s).",
+        label, n_players, players_file,
+    )
 
 
 def main() -> None:
@@ -140,7 +140,8 @@ def main() -> None:
         args.max_listings = PAGE_SIZE
 
     condensed_path, verbose_path, progress = setup_logging(TMP_DIR)
-    print_banner(len(players), args.players_file, condensed_path, verbose_path, test_logger)
+    print_log_paths(condensed_path, verbose_path)
+    log_run_intro(len(players), args.players_file, test_logger)
 
     run = collect_many(
         players,
