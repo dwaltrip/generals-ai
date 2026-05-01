@@ -4,6 +4,7 @@ import logging
 import httpx
 import lzstring
 
+from replay_collector import db
 from replay_collector.client import RateLimiter, host_of, make_client
 
 log = logging.getLogger(__name__)
@@ -81,22 +82,21 @@ def collect(username: str, limit: int) -> None:
         meta = list_user_replays(client, limiter, username, limit)
         log.info("found %d replay(s) for %r", len(meta), username)
 
-        seen: set[str] = set()
         for entry in meta:
             replay_id = entry["id"]
-            if replay_id in seen:
+            if db.has_replay(replay_id):
+                log.info("skip id=%s (already in db)", replay_id)
                 continue
-            seen.add(replay_id)
             try:
                 raw, decoded = fetch_replay(client, limiter, replay_id)
             except httpx.HTTPError as e:
                 log.warning("fetch failed for %s: %s", replay_id, e)
                 continue
+            db.save_replay(entry, decoded, raw)
             log.info(
-                "fetched id=%s type=%s turns=%d bytes=%d slots=%d",
+                "saved id=%s type=%s turns=%d bytes=%d",
                 replay_id,
                 entry.get("type"),
                 entry.get("turns"),
                 len(raw),
-                len(decoded),
             )
