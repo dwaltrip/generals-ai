@@ -1,10 +1,10 @@
 import argparse
-import logging
 import math
 import sys
 from pathlib import Path
 
 from replay_collector.generals_api import PAGE_SIZE
+from replay_collector.logging_setup import setup_logging
 from replay_collector.runner import (
     DEFAULT_MAX_FAILURES,
     DEFAULT_MAX_LISTINGS_PER_USER,
@@ -14,6 +14,9 @@ from replay_collector.runner import (
 # Dry-run uses these to bracket the estimate. Real-world FFA share among top
 # players' recent games tends to land somewhere in this band.
 DRY_RUN_FFA_RATES = (0.25, 1.00)
+
+# tmp/ at the subproject root, where log files land.
+TMP_DIR = Path(__file__).resolve().parent.parent / "tmp"
 
 
 def load_players(path: Path) -> list[str]:
@@ -75,6 +78,20 @@ def print_dry_run(args, players: list[str]) -> None:
     print("Note: .gior fetch count assumes nothing is already cached; re-runs will be faster.")
 
 
+def print_banner(
+    n_players: int,
+    players_file: Path,
+    condensed_path: Path,
+    verbose_path: Path,
+    test_logger: bool,
+) -> None:
+    label = "test-logger run" if test_logger else "running"
+    print(f"{label} replay-collector for {n_players} players (from {players_file}).")
+    print(f"  condensed log: {condensed_path}")
+    print(f"  verbose log:   {verbose_path}")
+    print(f"  tail with: tail -f {condensed_path}")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(prog="replay_collector")
     parser.add_argument(
@@ -93,31 +110,45 @@ def main() -> None:
         "--max-failures", type=int, default=DEFAULT_MAX_FAILURES,
         help=f"abort the run after this many HTTP failures (default: {DEFAULT_MAX_FAILURES})",
     )
-    parser.add_argument(
-        "--dry-run", action=argparse.BooleanOptionalAction, default=True,
-        help="print estimates without making API calls (default: True; pass --no-dry-run to execute)",
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument(
+        "--dry-run", dest="mode", action="store_const", const="dry-run",
+        help="print estimates without making API calls (default)",
     )
-    parser.add_argument("-v", "--verbose", action="store_true", help="enable DEBUG logging")
+    mode.add_argument(
+        "--test-logger", dest="mode", action="store_const", const="test-logger",
+        help="walk one bucket per player and skip .gior fetches; for testing log output",
+    )
+    mode.add_argument(
+        "--no-dry-run", dest="mode", action="store_const", const="real",
+        help="execute the run for real",
+    )
+    parser.set_defaults(mode="dry-run")
     args = parser.parse_args()
-
-    logging.basicConfig(
-        level=logging.DEBUG if args.verbose else logging.INFO,
-        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-    )
 
     players = load_players(args.players_file)
     if not players:
         parser.error(f"no usernames found in {args.players_file}")
 
-    if args.dry_run:
+    if args.mode == "dry-run":
         print_dry_run(args, players)
         return
+
+    test_logger = args.mode == "test-logger"
+    if test_logger:
+        # One bucket per player. Overrides any user-supplied --max-listings.
+        args.max_listings = PAGE_SIZE
+
+    condensed_path, verbose_path, progress = setup_logging(TMP_DIR)
+    print_banner(len(players), args.players_file, condensed_path, verbose_path, test_logger)
 
     run = collect_many(
         players,
         n_ffa=args.n_ffa,
+        progress=progress,
         max_listings=args.max_listings,
         max_failures=args.max_failures,
+        skip_full_fetch=test_logger,
     )
     sys.exit(1 if run.aborted else 0)
 

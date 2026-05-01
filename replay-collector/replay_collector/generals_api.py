@@ -26,8 +26,11 @@ def user_exists(client: TrackedClient, username: str) -> bool:
     return bool(r.json().get("ranks"))
 
 
-def iter_user_replays(client: TrackedClient, username: str) -> Iterator[dict]:
-    """Yield every replay listing for `username`, paging until the server returns []."""
+def iter_user_replay_pages(
+    client: TrackedClient, username: str
+) -> Iterator[list[dict]]:
+    """Yield each page of replay listings for `username`. The final page is
+    shorter than PAGE_SIZE; an empty page ends iteration."""
     offset = 0
     while True:
         r = client.get(
@@ -37,8 +40,14 @@ def iter_user_replays(client: TrackedClient, username: str) -> Iterator[dict]:
         page = r.json()
         if not page:
             return
-        yield from page
+        yield page
         offset += len(page)
+
+
+def iter_user_replays(client: TrackedClient, username: str) -> Iterator[dict]:
+    """Yield every replay listing for `username`, paging until the server returns []."""
+    for page in iter_user_replay_pages(client, username):
+        yield from page
 
 
 def list_user_replays(client: TrackedClient, username: str, limit: int) -> list[dict]:

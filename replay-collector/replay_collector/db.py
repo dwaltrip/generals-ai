@@ -87,6 +87,26 @@ def has_full_data(replay_id: str) -> bool:
     return cur.fetchone() is not None
 
 
+def cached_full_replay_stats(
+    player_name: str,
+) -> tuple[int, int | None, int | None]:
+    """Return (count, min_started, max_started) of replays where `player_name`
+    appears in the ranking and the .gior bytes are stored."""
+    # NOTE: keys on `players.name`. If a player has been renamed, replays under
+    # the old name live in a different `players` row and won't be counted here.
+    row = get_conn().execute(
+        """
+        SELECT COUNT(r.id), MIN(r.started), MAX(r.started)
+        FROM replays r
+        JOIN replay_players rp ON rp.replay_id = r.id
+        JOIN players p          ON p.id = rp.player_id
+        WHERE p.name = ? AND r.raw IS NOT NULL
+        """,
+        (player_name,),
+    ).fetchone()
+    return row[0], row[1], row[2]
+
+
 def _player_id(conn: sqlite3.Connection, name: str) -> int:
     row = conn.execute("SELECT id FROM players WHERE name = ?", (name,)).fetchone()
     if row is not None:

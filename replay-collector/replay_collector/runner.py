@@ -1,3 +1,4 @@
+import datetime as dt
 import logging
 from dataclasses import dataclass, field
 
@@ -11,6 +12,7 @@ from replay_collector.client import (
     host_of,
     make_client,
 )
+from replay_collector.logging_setup import BucketProgress
 
 log = logging.getLogger(__name__)
 
@@ -38,7 +40,7 @@ class UserStats:
     full_data_fetched: int = 0
     full_data_already_had: int = 0
     fetch_errors: int = 0
-    stop_reason: str = ""  # target_reached | max_listings | exhausted | user_not_found
+    stop_reason: str = ""  # target_reached | max_listings | exhausted | user_not_found | error
 
 
 @dataclass
@@ -55,13 +57,90 @@ class RunStats:
         return {k: sum(getattr(u, k) for u in self.per_user) for k in keys}
 
 
+def _format_started_date(started: int | None) -> str:
+    if started is None:
+        return "?"
+    # `started` is stored as-is from the listing API (epoch ms in practice).
+    seconds = started / 1000 if started > 1e12 else started
+    return dt.datetime.fromtimestamp(seconds).strftime("%Y-%m-%d")
+
+
+def _log_user_intro(username: str) -> None:
+    count, lo, hi = db.cached_full_replay_stats(username)
+    if count == 0:
+        log.info("[%s] no cached full replays yet", username)
+    else:
+        log.info(
+            "[%s] %d cached full replays, %s → %s",
+            username, count, _format_started_date(lo), _format_started_date(hi),
+        )
+
+
+def _log_user_summary(stats: UserStats) -> None:
+    log.info(
+        "[%s] done: walked=%d ffa=%d new=%d fetched=%d cached=%d errors=%d (stop=%s)",
+        stats.username, stats.listings_walked, stats.ffa_found,
+        stats.new_listings, stats.full_data_fetched,
+        stats.full_data_already_had, stats.fetch_errors, stats.stop_reason,
+    )
+
+
+def _process_entry(
+    client: TrackedClient,
+    entry: dict,
+    stats: UserStats,
+    progress: BucketProgress,
+    skip_full_fetch: bool,
+) -> None:
+    """Upsert one listing and (for FFA games) fetch full data unless we
+    already have it. Updates `stats` and pings `progress` per fetch."""
+    stats.listings_walked += 1
+    if db.upsert_listing(entry):
+        stats.new_listings += 1
+
+    if entry.get("ladder_id") not in FULL_DATA_LADDER_ID_FILTER:
+        return
+    stats.ffa_found += 1
+    replay_id = entry["id"]
+    if db.has_full_data(replay_id):
+        stats.full_data_already_had += 1
+        return
+
+    if skip_full_fetch:
+        # Test-logger mode: count it as if we fetched, so dots render against
+        # the would-have-fetched count. No S3 call, no DB write.
+        stats.full_data_fetched += 1
+        progress.fetch_done()
+        return
+
+    try:
+        raw, decoded = generals_api.fetch_replay(client, replay_id)
+    except httpx.HTTPError:
+        # TrackedClient already logged + counted toward the budget.
+        stats.fetch_errors += 1
+        return
+    db.save_full_data(replay_id, raw, decoded)
+    stats.full_data_fetched += 1
+    progress.fetch_done()
+    log.info(
+        "saved id=%s type=%s turns=%d bytes=%d",
+        replay_id, entry.get("type"), entry.get("turns"), len(raw),
+    )
+
+
 def collect_one(
-    client: TrackedClient, username: str, n_ffa: int, max_listings: int
+    client: TrackedClient,
+    username: str,
+    n_ffa: int,
+    max_listings: int,
+    progress: BucketProgress,
+    skip_full_fetch: bool = False,
 ) -> UserStats:
-    """Walk `username`'s recent replays, persisting every listing as metadata
+    """Walk `username`'s recent replays page-by-page, persisting every listing
     and downloading the .gior for FFA games until we hit `n_ffa` FFAs found,
     walk past `max_listings` total entries, or run out of pages."""
     stats = UserStats(username=username)
+    progress.start_user()
 
     if not generals_api.user_exists(client, username):
         log.warning("user %r not found on generals.io; skipping", username)
@@ -69,54 +148,40 @@ def collect_one(
         stats.stop_reason = "user_not_found"
         return stats
 
-    for entry in generals_api.iter_user_replays(client, username):
-        stats.listings_walked += 1
-        if db.upsert_listing(entry):
-            stats.new_listings += 1
+    _log_user_intro(username)
 
-        if entry.get("ladder_id") in FULL_DATA_LADDER_ID_FILTER:
-            stats.ffa_found += 1
-            replay_id = entry["id"]
-            if db.has_full_data(replay_id):
-                stats.full_data_already_had += 1
-            else:
-                try:
-                    raw, decoded = generals_api.fetch_replay(client, replay_id)
-                except httpx.HTTPError:
-                    # TrackedClient already logged + counted toward the budget.
-                    stats.fetch_errors += 1
-                else:
-                    db.save_full_data(replay_id, raw, decoded)
-                    stats.full_data_fetched += 1
-                    log.info(
-                        "saved id=%s type=%s turns=%d bytes=%d",
-                        replay_id, entry.get("type"), entry.get("turns"), len(raw),
-                    )
+    for page in generals_api.iter_user_replay_pages(client, username):
+        ffa_in_page = [e for e in page if e.get("ladder_id") in FULL_DATA_LADDER_ID_FILTER]
+        cached_in_page = sum(1 for e in ffa_in_page if db.has_full_data(e["id"]))
+        to_fetch = len(ffa_in_page) - cached_in_page
+        progress.start_bucket(len(page), len(ffa_in_page), cached_in_page, to_fetch)
+
+        for entry in page:
+            _process_entry(client, entry, stats, progress, skip_full_fetch)
             if stats.ffa_found >= n_ffa:
                 stats.stop_reason = "target_reached"
                 break
+            if stats.listings_walked >= max_listings:
+                stats.stop_reason = "max_listings"
+                break
 
-        if stats.listings_walked >= max_listings:
-            stats.stop_reason = "max_listings"
+        progress.end_bucket()
+        if stats.stop_reason:
             break
     else:
         stats.stop_reason = "exhausted"
 
-    log.info(
-        "user=%r walked=%d ffa_found=%d new_listings=%d fetched=%d "
-        "already_had=%d fetch_errors=%d stop=%s",
-        username, stats.listings_walked, stats.ffa_found, stats.new_listings,
-        stats.full_data_fetched, stats.full_data_already_had,
-        stats.fetch_errors, stats.stop_reason,
-    )
+    _log_user_summary(stats)
     return stats
 
 
 def collect_many(
     usernames: list[str],
     n_ffa: int,
+    progress: BucketProgress,
     max_listings: int = DEFAULT_MAX_LISTINGS_PER_USER,
     max_failures: int = DEFAULT_MAX_FAILURES,
+    skip_full_fetch: bool = False,
 ) -> RunStats:
     """Collect the N most recent FFA replays for each username.
 
@@ -131,7 +196,10 @@ def collect_many(
         client = TrackedClient(http, limiter, max_failures=max_failures)
         for username in usernames:
             try:
-                run.per_user.append(collect_one(client, username, n_ffa, max_listings))
+                run.per_user.append(collect_one(
+                    client, username, n_ffa, max_listings, progress,
+                    skip_full_fetch=skip_full_fetch,
+                ))
             except TooManyFailures as e:
                 run.aborted = True
                 run.abort_reason = str(e)
@@ -148,8 +216,8 @@ def collect_many(
 
     totals = run.totals()
     log.info(
-        "run complete: users=%d aborted=%s | walked=%d ffa_found=%d "
-        "new_listings=%d fetched=%d already_had=%d fetch_errors=%d failures=%d",
+        "run complete: users=%d aborted=%s | walked=%d ffa=%d "
+        "new=%d fetched=%d cached=%d errors=%d failures=%d",
         len(run.per_user), run.aborted,
         totals["listings_walked"], totals["ffa_found"], totals["new_listings"],
         totals["full_data_fetched"], totals["full_data_already_had"],
