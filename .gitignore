@@ -1,3 +1,6 @@
+# project stuff
+db-backups/
+
 # Python
 __pycache__/
 *.py[cod]
