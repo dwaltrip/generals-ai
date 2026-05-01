@@ -4,27 +4,49 @@ from pathlib import Path
 
 DB_PATH = Path(__file__).resolve().parent.parent / "data" / "generals.sqlite"
 
-_SCHEMA = """
+_NOW_MS = "(CAST(unixepoch('subsec') * 1000 AS INTEGER))"
+
+_SCHEMA = f"""
 CREATE TABLE IF NOT EXISTS players (
-    id   INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL UNIQUE
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    name       TEXT NOT NULL UNIQUE,
+    created_at INTEGER NOT NULL DEFAULT {_NOW_MS},
+    updated_at INTEGER NOT NULL DEFAULT {_NOW_MS}
 );
 
+CREATE TRIGGER IF NOT EXISTS trg_players_updated_at
+AFTER UPDATE ON players
+BEGIN
+    UPDATE players SET updated_at = {_NOW_MS} WHERE id = NEW.id;
+END;
+
 CREATE TABLE IF NOT EXISTS replays (
-    id          TEXT PRIMARY KEY,
-    type        TEXT NOT NULL,
-    ladder_id   TEXT,
-    started     INTEGER NOT NULL,
-    turns       INTEGER NOT NULL,
-    version     INTEGER NOT NULL,
-    map_width   INTEGER NOT NULL,
-    map_height  INTEGER NOT NULL,
-    fetched_at  INTEGER NOT NULL,
-    raw         BLOB NOT NULL
+    id            TEXT PRIMARY KEY,
+    -- from listing API (always populated)
+    type          TEXT NOT NULL,
+    ladder_id     TEXT,
+    started       INTEGER NOT NULL,
+    turns         INTEGER NOT NULL,
+    player_count  INTEGER NOT NULL,
+    -- from .gior fetch (null until fetched)
+    version       INTEGER,
+    map_width     INTEGER,
+    map_height    INTEGER,
+    fetched_at    INTEGER,
+    raw           BLOB,
+    -- timestamps
+    created_at    INTEGER NOT NULL DEFAULT {_NOW_MS},
+    updated_at    INTEGER NOT NULL DEFAULT {_NOW_MS}
     -- Future: decoded_flat TEXT (JSON of the wire-shape array). Lets us query
     -- into game state via SQLite JSON ops without decompressing in code.
     -- Adds ~3.3x storage (~5GB at 100k replays). Backfillable from `raw`.
 );
+
+CREATE TRIGGER IF NOT EXISTS trg_replays_updated_at
+AFTER UPDATE ON replays
+BEGIN
+    UPDATE replays SET updated_at = {_NOW_MS} WHERE id = NEW.id;
+END;
 
 CREATE TABLE IF NOT EXISTS replay_players (
     replay_id    TEXT NOT NULL REFERENCES replays(id) ON DELETE CASCADE,
@@ -40,6 +62,7 @@ CREATE INDEX IF NOT EXISTS idx_replay_players_player_id    ON replay_players(pla
 CREATE INDEX IF NOT EXISTS idx_replay_players_current_name ON replay_players(current_name);
 CREATE INDEX IF NOT EXISTS idx_replays_started             ON replays(started);
 CREATE INDEX IF NOT EXISTS idx_replays_type                ON replays(type);
+CREATE INDEX IF NOT EXISTS idx_replays_ladder_id           ON replays(ladder_id);
 """
 
 _conn: sqlite3.Connection | None = None
@@ -55,8 +78,12 @@ def get_conn() -> sqlite3.Connection:
     return _conn
 
 
-def has_replay(replay_id: str) -> bool:
-    cur = get_conn().execute("SELECT 1 FROM replays WHERE id = ? LIMIT 1", (replay_id,))
+def has_full_data(replay_id: str) -> bool:
+    """True iff we've fetched and stored the .gior bytes for this replay."""
+    cur = get_conn().execute(
+        "SELECT 1 FROM replays WHERE id = ? AND raw IS NOT NULL LIMIT 1",
+        (replay_id,),
+    )
     return cur.fetchone() is not None
 
 
@@ -68,36 +95,31 @@ def _player_id(conn: sqlite3.Connection, name: str) -> int:
     return cur.lastrowid
 
 
-def save_replay(metadata: dict, decoded: list, raw: bytes) -> bool:
-    """Persist a replay with its ranking junction rows. Returns True if newly
-    inserted, False if a row with this id already existed (no-op)."""
-    replay_id = metadata["id"]
+def upsert_listing(entry: dict) -> bool:
+    """Insert a listing-derived replay row + its ranking junction rows.
+    No-op if a row with this id already exists. Returns True if inserted."""
+    replay_id = entry["id"]
     conn = get_conn()
     with conn:
         cur = conn.execute(
             """
             INSERT OR IGNORE INTO replays
-                (id, type, ladder_id, started, turns, version,
-                 map_width, map_height, fetched_at, raw)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                (id, type, ladder_id, started, turns, player_count)
+            VALUES (?, ?, ?, ?, ?, ?)
             """,
             (
                 replay_id,
-                metadata["type"],
-                metadata.get("ladder_id"),
-                metadata["started"],
-                metadata["turns"],
-                decoded[0],
-                decoded[2],
-                decoded[3],
-                int(time.time() * 1000),
-                raw,
+                entry["type"],
+                entry.get("ladder_id"),
+                entry["started"],
+                entry["turns"],
+                len(entry.get("ranking", [])),
             ),
         )
         if cur.rowcount == 0:
             return False
-        for pos, entry in enumerate(metadata.get("ranking", [])):
-            pid = _player_id(conn, entry["name"])
+        for pos, p in enumerate(entry.get("ranking", [])):
+            pid = _player_id(conn, p["name"])
             conn.execute(
                 """
                 INSERT INTO replay_players
@@ -108,9 +130,36 @@ def save_replay(metadata: dict, decoded: list, raw: bytes) -> bool:
                     replay_id,
                     pos,
                     pid,
-                    entry.get("currentName"),
-                    entry.get("stars"),
-                    entry.get("kills"),
+                    p.get("currentName"),
+                    p.get("stars"),
+                    p.get("kills"),
                 ),
             )
         return True
+
+
+def save_full_data(replay_id: str, raw: bytes, decoded: list) -> None:
+    """Update an existing replay row with .gior bytes + decoded fields.
+    Requires the listing row to exist (call upsert_listing first)."""
+    conn = get_conn()
+    with conn:
+        cur = conn.execute(
+            """
+            UPDATE replays
+            SET version = ?, map_width = ?, map_height = ?,
+                fetched_at = ?, raw = ?
+            WHERE id = ?
+            """,
+            (
+                decoded[0],
+                decoded[2],
+                decoded[3],
+                int(time.time() * 1000),
+                raw,
+                replay_id,
+            ),
+        )
+        if cur.rowcount == 0:
+            raise ValueError(
+                f"no listing row for {replay_id}; call upsert_listing first"
+            )

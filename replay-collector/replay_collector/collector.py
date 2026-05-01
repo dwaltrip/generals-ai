@@ -18,6 +18,11 @@ DEFAULT_RATES = {
     host_of(S3_BASE): 1.0,
 }
 
+# Listing metadata is stored for every replay we observe; the .gior bytes are
+# only fetched (and decoded fields populated) for games whose ladder_id is in
+# this set. Widen later for a richer corpus.
+FULL_DATA_LADDER_ID_FILTER = {"ffa"}
+
 _lzs = lzstring.LZString()
 
 
@@ -82,17 +87,30 @@ def collect(username: str, limit: int) -> None:
         meta = list_user_replays(client, limiter, username, limit)
         log.info("found %d replay(s) for %r", len(meta), username)
 
+        new_listings = 0
+        fetched = 0
+        already_full = 0
+        filtered_out = 0
+
         for entry in meta:
             replay_id = entry["id"]
-            if db.has_replay(replay_id):
-                log.info("skip id=%s (already in db)", replay_id)
+            if db.upsert_listing(entry):
+                new_listings += 1
+
+            if entry.get("ladder_id") not in FULL_DATA_LADDER_ID_FILTER:
+                filtered_out += 1
                 continue
+            if db.has_full_data(replay_id):
+                already_full += 1
+                continue
+
             try:
                 raw, decoded = fetch_replay(client, limiter, replay_id)
             except httpx.HTTPError as e:
                 log.warning("fetch failed for %s: %s", replay_id, e)
                 continue
-            db.save_replay(entry, decoded, raw)
+            db.save_full_data(replay_id, raw, decoded)
+            fetched += 1
             log.info(
                 "saved id=%s type=%s turns=%d bytes=%d",
                 replay_id,
@@ -100,3 +118,13 @@ def collect(username: str, limit: int) -> None:
                 entry.get("turns"),
                 len(raw),
             )
+
+        log.info(
+            "summary: listings new=%d total_seen=%d | full_data fetched=%d "
+            "already_had=%d filtered_out=%d",
+            new_listings,
+            len(meta),
+            fetched,
+            already_full,
+            filtered_out,
+        )
