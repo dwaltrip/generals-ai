@@ -14,8 +14,9 @@ Base: `https://generals.io`. All paths below are relative to that.
 |---|---|
 | `GET /api/serverSettings` | Server config snapshot — sample response below |
 | `GET /api/replays?count=N&offset=M` | Recent replays metadata. Both params required, `count` ≤ 200. Documented in [`replay-format.md`](./replay-format.md). |
+| `GET /api/replaysForUsername?u=<name>&offset=M&count=N` | Per-player replay history. Same entry shape as `/api/replays`. `count` ≤ 200; `offset` beyond end returns `[]`. **Gotcha:** unknown usernames silently return 20 unrelated entries instead of `[]` or 4xx — verify the user via `/api/starsAndRanks` first. |
 | `GET /api/games/public` | Currently in-progress public games |
-| `GET /api/starsAndRanks?u=<name>` | Player rating / profile data |
+| `GET /api/starsAndRanks?u=<name>` | Player rating / profile data — sample response below. **Empty `ranks`/`stars` maps signal "user not found".** |
 
 ### Known but not tested
 
@@ -65,6 +66,26 @@ Notable:
 - The stronghold modifier is **disabled server-side**, even though v18 replays support it in the format.
 - Modifier IDs 0–11 exist; we don't yet know what each one means semantically.
 - `enabled_ladders` is the source of truth for which ranked queues are live.
+
+## `/api/starsAndRanks` response
+
+Real user (sample, 2026-04-30):
+
+```json
+{
+  "ranks":  {"duel": 28, "ffa": 1, "ffawin": 1, "ffacombat": 2, "ffakills": 1, "bigteam": 1, "mm2v2": 1, "2v2": 1},
+  "stars":  {"duel": "83.42...", "ffa": "75.13...", "ffawin": "87.26...", "...": "..."},
+  "isBot":  false
+}
+```
+
+Nonexistent user (HTTP 200, not 404):
+
+```json
+{"ranks": {}, "stars": {}, "isBot": false}
+```
+
+So the existence check is: HTTP 200 + non-empty `ranks` (or `stars`) → user exists. The `replay-collector` uses this to gate `/api/replaysForUsername` calls, since that endpoint silently returns garbage for unknown users.
 
 ## WebSocket endpoints
 

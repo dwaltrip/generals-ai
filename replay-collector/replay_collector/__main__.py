@@ -1,21 +1,22 @@
-import sys
+import argparse
+import logging
 
-from replay_collector.fetcher import fetch_replay
+from replay_collector.collector import collect
 
 
 def main() -> None:
-    if len(sys.argv) < 2:
-        print("usage: python -m replay_collector <replay_id>", file=sys.stderr)
-        sys.exit(2)
+    parser = argparse.ArgumentParser(prog="replay_collector")
+    parser.add_argument("username", help="generals.io username (case-sensitive, spaces allowed)")
+    parser.add_argument("--limit", type=int, default=5, help="max replays to fetch (default: 5)")
+    parser.add_argument("-v", "--verbose", action="store_true", help="enable DEBUG logging")
+    args = parser.parse_args()
 
-    replay_id = sys.argv[1]
-    arr = fetch_replay(replay_id)
-    version, rid, w, h, usernames = arr[0], arr[1], arr[2], arr[3], arr[4]
-    moves = arr[10]
-    last_turn = moves[-1][4] if moves else 0
+    logging.basicConfig(
+        level=logging.DEBUG if args.verbose else logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    )
 
-    print(f"id={rid} v{version} {w}x{h} players={len(usernames)} moves={len(moves)} last_turn={last_turn}")
-    print(f"usernames: {usernames}")
+    collect(args.username, args.limit)
 
 
 if __name__ == "__main__":
