@@ -15,6 +15,7 @@ from replay_collector.client import (
 from replay_collector.logging_setup import BucketProgress
 
 log = logging.getLogger(__name__)
+log_saved = logging.getLogger("replay_collector.saved")
 
 DEFAULT_RATES = {
     host_of(generals_api.API_BASE): 1.0,
@@ -122,7 +123,7 @@ def _process_entry(
     db.save_full_data(replay_id, raw, decoded)
     stats.full_data_fetched += 1
     progress.fetch_done()
-    log.info(
+    log_saved.info(
         "saved id=%s type=%s turns=%d bytes=%d",
         replay_id, entry.get("type"), entry.get("turns"), len(raw),
     )

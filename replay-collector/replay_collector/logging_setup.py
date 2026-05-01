@@ -3,35 +3,48 @@
 The collector writes two log files per run:
 
 - condensed: high-level progress (intro/bucket/summary lines), with dots
-  streamed live so a `tail -f` user sees progress mid-bucket. Drops httpx
-  INFO and per-replay save records.
+  streamed live so a `tail -f` user sees progress mid-bucket.
 - verbose: superset (everything at INFO/DEBUG); bucket-end summary written
   whole as a single record. httpx noise mixed in is fine here.
 
+Routing:
+
+- "Verbose-only" event categories (`httpx`, `replay_collector.bucket`,
+  `replay_collector.saved`) attach the verbose handler directly and set
+  `propagate = False` so they never reach root → the condensed handler.
+- Everything else flows through root → both handlers.
+
+Naming convention: loggers under `replay_collector.*` that follow the
+module path (`replay_collector.runner`, `.client`) are module loggers.
+Loggers named for an event category (`replay_collector.bucket`,
+`.saved`) are intentionally not module-tied — the name is the routing
+handle.
+
 The condensed log is special: stdlib logging can't open a line, write
-fragments over time, and close it. So we route the condensed handler
+fragments over time, and close it. So the condensed handler routes
 through StreamWriter which owns the file directly. When a normal log
 record (e.g. a TrackedClient HTTP-failure warning) fires while a streamed
 line is open, the writer closes the line, emits the record, and lets the
 next dot resume on a fresh indented line — no prefix repeat.
 """
 
+import atexit
 import datetime as dt
 import logging
 from pathlib import Path
 
 DOTS_PER_FETCHES = 20
 
-# Records routed through StreamWriter that match these are dropped from the
-# condensed log; they still flow to the verbose handler.
-_CONDENSED_DROP_LOGGER_PREFIXES = ("httpx",)
-_CONDENSED_DROP_MSG_SUBSTRINGS = ("saved id=",)
-# This logger is verbose-only: BucketProgress emits a complete bucket-summary
-# record here at end-of-bucket so the verbose log gets a single tidy line.
-# The condensed log already has the streamed version.
-_VERBOSE_ONLY_LOGGER = "replay_collector.bucket"
+_VERBOSE_ONLY_LOGGERS = (
+    "httpx",
+    "replay_collector.bucket",
+    "replay_collector.saved",
+)
 
 _LOG_FORMAT = "%(asctime)s %(levelname)s %(message)s"
+
+_configured: bool = False
+_cached_result: "tuple[Path, Path, BucketProgress] | None" = None
 
 
 def _filename_timestamp(now: dt.datetime) -> str:
@@ -50,8 +63,6 @@ class StreamWriter:
         self._line_open = False
 
     def write_log_record(self, record: logging.LogRecord) -> None:
-        if self._is_filtered(record):
-            return
         if self._line_open:
             self._f.write("\n")
             self._line_open = False
@@ -82,21 +93,14 @@ class StreamWriter:
         self._line_open = False
 
     def now_prefix(self) -> str:
-        """Format a timestamp+level prefix matching the formatter, for use in
-        streamed lines that bypass the logging module."""
+        # Build the prefix by formatting an empty-message record, so any
+        # change to _LOG_FORMAT carries through. Assumes the format ends
+        # with %(message)s — true today; no guard.
         rec = logging.LogRecord(
             name="", level=logging.INFO, pathname="", lineno=0,
             msg="", args=None, exc_info=None,
         )
-        return f"{self._fmt.formatTime(rec)} INFO "
-
-    def _is_filtered(self, record: logging.LogRecord) -> bool:
-        if record.name == _VERBOSE_ONLY_LOGGER:
-            return True
-        if any(record.name.startswith(p) for p in _CONDENSED_DROP_LOGGER_PREFIXES):
-            return True
-        msg = record.getMessage()
-        return any(s in msg for s in _CONDENSED_DROP_MSG_SUBSTRINGS)
+        return self._fmt.format(rec)
 
     def close(self) -> None:
         self.close_line()
@@ -123,7 +127,7 @@ class BucketProgress:
     to the condensed log via StreamWriter; emits a complete bucket-summary
     record to the verbose log at end-of-bucket."""
 
-    _verbose_log = logging.getLogger(_VERBOSE_ONLY_LOGGER)
+    _verbose_log = logging.getLogger("replay_collector.bucket")
 
     def __init__(self, writer: StreamWriter):
         self._writer = writer
@@ -180,6 +184,13 @@ class BucketProgress:
 def setup_logging(tmp_dir: Path) -> tuple[Path, Path, BucketProgress]:
     """Wire root logger to write a condensed + verbose log under tmp_dir.
     Returns the two paths and the BucketProgress runner.py uses."""
+    global _configured, _cached_result
+    if _configured:
+        logging.getLogger(__name__).warning(
+            "setup_logging() called more than once; returning existing handlers."
+        )
+        return _cached_result
+
     tmp_dir.mkdir(parents=True, exist_ok=True)
     ts = _filename_timestamp(dt.datetime.now())
     condensed_path = tmp_dir / f"{ts}-replay_collector.log"
@@ -194,10 +205,22 @@ def setup_logging(tmp_dir: Path) -> tuple[Path, Path, BucketProgress]:
     writer = StreamWriter(condensed_path, formatter)
     condensed_handler = StreamWriterHandler(writer)
     condensed_handler.setLevel(logging.INFO)
+    atexit.register(writer.close)
+
+    # Verbose-only categories: attach the verbose handler directly and stop
+    # propagation, so the condensed handler on root never sees these.
+    for name in _VERBOSE_ONLY_LOGGERS:
+        logger = logging.getLogger(name)
+        logger.addHandler(verbose_handler)
+        logger.propagate = False
+        logger.setLevel(logging.INFO)
 
     root = logging.getLogger()
     root.setLevel(logging.INFO)
     root.addHandler(verbose_handler)
     root.addHandler(condensed_handler)
 
-    return condensed_path, verbose_path, BucketProgress(writer)
+    progress = BucketProgress(writer)
+    _configured = True
+    _cached_result = (condensed_path, verbose_path, progress)
+    return _cached_result
