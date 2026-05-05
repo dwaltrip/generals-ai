@@ -73,6 +73,10 @@ def get_conn() -> sqlite3.Connection:
     if _conn is None:
         DB_PATH.parent.mkdir(parents=True, exist_ok=True)
         _conn = sqlite3.connect(DB_PATH)
+        # WAL lets readers and writers coexist (only writer-vs-writer
+        # serializes), so a long-running fetch-gior doesn't block ad-hoc
+        # query scripts. Persistent property of the DB file.
+        _conn.execute("PRAGMA journal_mode = WAL;")
         _conn.execute("PRAGMA foreign_keys = ON;")
         _conn.executescript(_SCHEMA)
     return _conn
