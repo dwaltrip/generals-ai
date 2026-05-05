@@ -107,6 +107,34 @@ def cached_full_replay_stats(
     return row[0], row[1], row[2]
 
 
+def replay_counts_by_player(
+    player_names: list[str],
+) -> list[tuple[str, int, int, int]]:
+    """For each name, return (name, total_listings, total_ffa, ffa_metadata_only)
+    where `metadata_only` is FFA listings with no `raw` bytes yet — i.e. the
+    Pass 2 (.gior fetch) backlog. Cumulative across all runs. Ordered by
+    backlog size, descending. Names with no replay data are absent from the
+    result."""
+    if not player_names:
+        return []
+    placeholders = ",".join("?" * len(player_names))
+    return get_conn().execute(
+        f"""
+        SELECT p.name,
+               COUNT(*) AS total_listings,
+               SUM(CASE WHEN r.ladder_id = 'ffa' THEN 1 ELSE 0 END) AS total_ffa,
+               SUM(CASE WHEN r.ladder_id = 'ffa' AND r.raw IS NULL THEN 1 ELSE 0 END) AS metadata_only
+        FROM replays r
+        JOIN replay_players rp ON rp.replay_id = r.id
+        JOIN players p          ON p.id = rp.player_id
+        WHERE p.name IN ({placeholders})
+        GROUP BY p.name
+        ORDER BY metadata_only DESC, p.name
+        """,
+        player_names,
+    ).fetchall()
+
+
 def _player_id(conn: sqlite3.Connection, name: str) -> int:
     row = conn.execute("SELECT id FROM players WHERE name = ?", (name,)).fetchone()
     if row is not None:

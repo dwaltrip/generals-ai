@@ -4,7 +4,7 @@ from urllib.parse import urlparse
 
 import httpx
 
-from replay_collector.config import config
+from replay_collector.config import API_BASE, S3_BASE, config
 
 DEFAULT_TIMEOUT = 30.0
 USER_AGENT_BASE = "generals-ai-replay-collector/0.1"
@@ -12,6 +12,18 @@ USER_AGENT_BASE = "generals-ai-replay-collector/0.1"
 USER_AGENT = f"{USER_AGENT_BASE} (+mailto:{config.UA_CONTACT_EMAIL})"
 
 log = logging.getLogger(__name__)
+
+
+def host_of(url: str) -> str:
+    return urlparse(url).hostname or ""
+
+
+# Per-host request budget shared across all runners. 1 req/sec is the
+# community-friendly rate generals.io tolerates for hobby projects.
+DEFAULT_RATES = {
+    host_of(API_BASE): 1.0,
+    host_of(S3_BASE): 1.0,
+}
 
 
 class RateLimiter:
@@ -42,10 +54,6 @@ def make_client() -> httpx.Client:
         timeout=DEFAULT_TIMEOUT,
         follow_redirects=True,
     )
-
-
-def host_of(url: str) -> str:
-    return urlparse(url).hostname or ""
 
 
 class TooManyFailures(Exception):

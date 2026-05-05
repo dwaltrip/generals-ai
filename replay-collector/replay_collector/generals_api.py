@@ -5,9 +5,8 @@ from typing import Iterator
 import lzstring
 
 from replay_collector.client import TrackedClient
+from replay_collector.config import API_BASE, S3_BASE
 
-API_BASE = "https://generals.io"
-S3_BASE = "https://generalsio-replays-na.s3.amazonaws.com"
 PAGE_SIZE = 200  # server-enforced max
 
 _lzs = lzstring.LZString()

@@ -6,21 +6,16 @@ import httpx
 
 from replay_collector import db, generals_api
 from replay_collector.client import (
+    DEFAULT_RATES,
     RateLimiter,
     TooManyFailures,
     TrackedClient,
-    host_of,
     make_client,
 )
 from replay_collector.logging_setup import BucketProgress
 
 log = logging.getLogger(__name__)
 log_saved = logging.getLogger("replay_collector.saved")
-
-DEFAULT_RATES = {
-    host_of(generals_api.API_BASE): 1.0,
-    host_of(generals_api.S3_BASE): 1.0,
-}
 
 # Listing metadata is upserted for every replay we walk past; the .gior bytes
 # are only fetched (and decoded fields populated) for games whose ladder_id is

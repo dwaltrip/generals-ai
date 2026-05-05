@@ -195,6 +195,47 @@ class BucketProgress:
         )
 
 
+_sweep_configured: bool = False
+_sweep_log_path: Path | None = None
+
+
+def setup_sweep_logging(tmp_dir: Path) -> Path:
+    """Single-file logging for sweep runs: INFO+ to a timestamped log file
+    under tmp_dir AND to stdout. No bucket-progress streaming, no
+    condensed/verbose split. httpx noise is silenced to WARNING."""
+    global _sweep_configured, _sweep_log_path
+    if _sweep_configured:
+        logging.getLogger(__name__).warning(
+            "setup_sweep_logging() called more than once; returning existing path."
+        )
+        return _sweep_log_path
+
+    tmp_dir.mkdir(parents=True, exist_ok=True)
+    ts = _filename_timestamp(dt.datetime.now())
+    log_path = tmp_dir / f"{ts}-sweep_metadata.log"
+
+    formatter = logging.Formatter(_LOG_FORMAT)
+
+    file_handler = logging.FileHandler(log_path)
+    file_handler.setLevel(logging.INFO)
+    file_handler.setFormatter(formatter)
+
+    stream_handler = logging.StreamHandler(sys.stdout)
+    stream_handler.setLevel(logging.INFO)
+    stream_handler.setFormatter(formatter)
+
+    root = logging.getLogger()
+    root.setLevel(logging.INFO)
+    root.addHandler(file_handler)
+    root.addHandler(stream_handler)
+
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+
+    _sweep_configured = True
+    _sweep_log_path = log_path
+    return log_path
+
+
 def setup_logging(tmp_dir: Path) -> tuple[Path, Path, BucketProgress]:
     """Wire root logger to write a condensed + verbose log under tmp_dir.
     Returns the two paths and the BucketProgress runner.py uses."""

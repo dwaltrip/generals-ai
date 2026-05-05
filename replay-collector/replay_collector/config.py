@@ -3,6 +3,11 @@ from pathlib import Path
 
 from dotenv import dotenv_values
 
+# Hosts we talk to. Bucket choice (`-na`) follows the public web client served
+# from generals.io / ws.generals.io — see docs/generals-io-api.md.
+API_BASE = "https://generals.io"
+S3_BASE = "https://generalsio-replays-na.s3.amazonaws.com"
+
 UA_CONTACT_EMAIL_KEY = "UA_CONTACT_EMAIL"
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
