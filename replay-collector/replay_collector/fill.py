@@ -59,6 +59,10 @@ def fill(
                 # TrackedClient already logged + counted toward the budget.
                 stats.errors += 1
                 continue
+            except generals_api.ReplayDecodeError as e:
+                log.warning("decode error for replay_id=%s: %r", replay_id, e.__cause__)
+                stats.errors += 1
+                continue
 
             stats.fetched += 1
             try:

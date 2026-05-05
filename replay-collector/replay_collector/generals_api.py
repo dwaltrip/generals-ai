@@ -12,6 +12,12 @@ PAGE_SIZE = 200  # server-enforced max
 _lzs = lzstring.LZString()
 
 
+class ReplayDecodeError(Exception):
+    """The .gior bytes were fetched but couldn't be decoded into the wire-shape
+    list. Wraps the underlying decode exception (truncated download, malformed
+    LZString, invalid JSON, etc.) so callers have one type to handle."""
+
+
 def decompress_gior(raw: bytes) -> list:
     # JS LZString.compressFromUint8Array splits each 16-bit char into two
     # big-endian bytes. Pair them back up and feed the resulting string to
@@ -55,4 +61,8 @@ def list_user_replays(client: TrackedClient, username: str, limit: int) -> list[
 
 def fetch_replay(client: TrackedClient, replay_id: str) -> tuple[bytes, list]:
     r = client.get(f"{S3_BASE}/{replay_id}.gior")
-    return r.content, decompress_gior(r.content)
+    try:
+        decoded = decompress_gior(r.content)
+    except Exception as e:
+        raise ReplayDecodeError(f"decode failed for {replay_id}") from e
+    return r.content, decoded

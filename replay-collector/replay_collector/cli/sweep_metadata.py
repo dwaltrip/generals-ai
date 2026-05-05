@@ -54,7 +54,7 @@ def _emit_summary(players: list[str], log_path: Path) -> None:
     """Cumulative DB summary — reflects all prior runs, not just this one.
     Written raw (no log-record prefix) to stdout and appended to log_path."""
     rows = db.replay_counts_by_player(players)
-    lines = _format_summary_lines(rows)
+    lines = _format_summary_lines(rows, players)
     for line in lines:
         print(line)
     with log_path.open("a") as f:
@@ -62,10 +62,15 @@ def _emit_summary(players: list[str], log_path: Path) -> None:
 
 
 def _format_summary_lines(
-    rows: list[tuple[str, int, int, int]],
+    rows: list[tuple[str, int, int, int]], players: list[str],
 ) -> list[str]:
+    absent = [p for p in players if p not in {r[0] for r in rows}]
+
     if not rows:
-        return ["", "No replay data in DB for these players."]
+        return [
+            "",
+            "No replay data in DB for any of these players: " + ", ".join(players),
+        ]
 
     total_listings = sum(r[1] for r in rows)
     total_ffa = sum(r[2] for r in rows)
@@ -91,4 +96,7 @@ def _format_summary_lines(
         f"  {'TOTAL':<{name_w}}  {total_listings:>10,}  {total_ffa:>10,}  {total_metadata_only:>14,}"
         f"   ({fmt_duration(est_seconds)} at 1/sec)"
     )
+    if absent:
+        lines.append("")
+        lines.append("  No replay data in DB for: " + ", ".join(absent))
     return lines

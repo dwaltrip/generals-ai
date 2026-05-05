@@ -194,7 +194,11 @@ def pending_full_data_work_set(
         )
         SELECT replay_id, owner_name, started
         FROM owner
-        ORDER BY ROW_NUMBER() OVER (PARTITION BY owner_name ORDER BY started DESC),
+        -- replay_id tiebreaks same-`started` rows so the LIMIT cutoff is
+        -- stable across runs.
+        ORDER BY ROW_NUMBER() OVER (
+                     PARTITION BY owner_name ORDER BY started DESC, replay_id
+                 ),
                  owner_name
     """
     if limit is not None:
