@@ -18,11 +18,12 @@ def host_of(url: str) -> str:
     return urlparse(url).hostname or ""
 
 
-# Per-host request budget shared across all runners. 1 req/sec is the
-# community-friendly rate generals.io tolerates for hobby projects.
+# Per-host request budget shared across all runners. generals.io's API gets
+# the conservative 1/sec the community tolerates for hobby projects; the S3
+# replay bucket is Amazon-hosted archival storage, so we pace it faster.
 DEFAULT_RATES = {
     host_of(API_BASE): 1.0,
-    host_of(S3_BASE): 1.0,
+    host_of(S3_BASE): 2.0,
 }
 
 

@@ -195,24 +195,27 @@ class BucketProgress:
         )
 
 
-_sweep_configured: bool = False
-_sweep_log_path: Path | None = None
+_simple_configured: bool = False
+_simple_log_path: Path | None = None
 
 
-def setup_sweep_logging(tmp_dir: Path) -> Path:
-    """Single-file logging for sweep runs: INFO+ to a timestamped log file
-    under tmp_dir AND to stdout. No bucket-progress streaming, no
-    condensed/verbose split. httpx noise is silenced to WARNING."""
-    global _sweep_configured, _sweep_log_path
-    if _sweep_configured:
+def setup_simple_logging(tmp_dir: Path, name: str) -> Path:
+    """Single-file logging for runs that don't need the condensed/verbose
+    split or bucket-progress streaming. INFO+ to a timestamped log file
+    under tmp_dir AND to stdout. httpx noise is silenced to WARNING.
+
+    `name` is embedded in the log filename (e.g. "sweep_metadata",
+    "fetch_gior")."""
+    global _simple_configured, _simple_log_path
+    if _simple_configured:
         logging.getLogger(__name__).warning(
-            "setup_sweep_logging() called more than once; returning existing path."
+            "setup_simple_logging() called more than once; returning existing path."
         )
-        return _sweep_log_path
+        return _simple_log_path
 
     tmp_dir.mkdir(parents=True, exist_ok=True)
     ts = _filename_timestamp(dt.datetime.now())
-    log_path = tmp_dir / f"{ts}-sweep_metadata.log"
+    log_path = tmp_dir / f"{ts}-{name}.log"
 
     formatter = logging.Formatter(_LOG_FORMAT)
 
@@ -231,8 +234,8 @@ def setup_sweep_logging(tmp_dir: Path) -> Path:
 
     logging.getLogger("httpx").setLevel(logging.WARNING)
 
-    _sweep_configured = True
-    _sweep_log_path = log_path
+    _simple_configured = True
+    _simple_log_path = log_path
     return log_path
 
 

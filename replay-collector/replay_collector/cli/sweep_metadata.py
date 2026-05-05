@@ -3,7 +3,7 @@ from pathlib import Path
 
 from replay_collector import db, sweep
 from replay_collector.cli._shared import TMP_DIR, fmt_duration, load_players
-from replay_collector.logging_setup import setup_sweep_logging
+from replay_collector.logging_setup import setup_simple_logging
 from replay_collector.runner import DEFAULT_MAX_FAILURES
 
 DEFAULT_MAX_LISTINGS_PER_USER = 100_000  # safety rail, not a target
@@ -37,7 +37,7 @@ def run(args) -> None:
     if not players:
         sys.exit(f"no usernames found in {args.players_file}")
 
-    log_path = setup_sweep_logging(TMP_DIR)
+    log_path = setup_simple_logging(TMP_DIR, "sweep_metadata")
     print(f"  log: {log_path}")
 
     result = sweep.sweep_many(

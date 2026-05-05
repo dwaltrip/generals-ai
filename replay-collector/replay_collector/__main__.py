@@ -1,6 +1,6 @@
 import argparse
 
-from replay_collector.cli import collect_recent, sweep_metadata
+from replay_collector.cli import collect_recent, fetch_gior, sweep_metadata
 
 
 def main() -> None:
@@ -8,6 +8,7 @@ def main() -> None:
     sub = parser.add_subparsers(dest="command", required=True)
     collect_recent.add_parser(sub)
     sweep_metadata.add_parser(sub)
+    fetch_gior.add_parser(sub)
     args = parser.parse_args()
     args.func(args)
 

@@ -135,6 +135,75 @@ def replay_counts_by_player(
     ).fetchall()
 
 
+def pending_full_data_count(player_filter: list[str] | None = None) -> int:
+    """Total replays in the Pass 2 backlog under the given filter. Counts
+    distinct replays even if multiple filter-listed players are in the same
+    game's ranking."""
+    where = ["r.ladder_id = 'ffa'", "r.raw IS NULL"]
+    params: list = []
+    if player_filter:
+        placeholders = ",".join("?" * len(player_filter))
+        where.append(f"p.name IN ({placeholders})")
+        params.extend(player_filter)
+
+    sql = f"""
+        SELECT COUNT(DISTINCT r.id)
+        FROM replays r
+        JOIN replay_players rp ON rp.replay_id = r.id
+        JOIN players p          ON p.id = rp.player_id
+        WHERE {" AND ".join(where)}
+    """
+    return get_conn().execute(sql, params).fetchone()[0]
+
+
+def pending_full_data_work_set(
+    player_filter: list[str] | None = None,
+    limit: int | None = None,
+) -> list[tuple[str, str, int]]:
+    """Return rows of (replay_id, owner_name, started) for FFA replays whose
+    .gior bytes haven't been fetched yet — i.e. the Pass 2 backlog.
+
+    Each replay is "owned" by `MIN(p.name)` over its ranking (alphabetically
+    first), which is the queue-head used for round-robin ordering. Output is
+    sorted so that fetches alternate across owners, taking each owner's newest
+    pending replay first: round 1 covers every owner's newest, round 2 their
+    second-newest, and so on.
+
+    `player_filter` (optional) restricts the work set to replays where at least
+    one named player appears in the ranking, AND restricts ownership to those
+    same players — so the round-robin balances among the listed players.
+
+    Replays with no listing for any filter-listed player are excluded entirely."""
+    where = ["r.ladder_id = 'ffa'", "r.raw IS NULL"]
+    params: list = []
+    if player_filter:
+        placeholders = ",".join("?" * len(player_filter))
+        where.append(f"p.name IN ({placeholders})")
+        params.extend(player_filter)
+
+    sql = f"""
+        WITH owner AS (
+            SELECT r.id     AS replay_id,
+                   r.started,
+                   MIN(p.name) AS owner_name
+            FROM replays r
+            JOIN replay_players rp ON rp.replay_id = r.id
+            JOIN players p          ON p.id = rp.player_id
+            WHERE {" AND ".join(where)}
+            GROUP BY r.id, r.started
+        )
+        SELECT replay_id, owner_name, started
+        FROM owner
+        ORDER BY ROW_NUMBER() OVER (PARTITION BY owner_name ORDER BY started DESC),
+                 owner_name
+    """
+    if limit is not None:
+        sql += " LIMIT ?"
+        params.append(limit)
+
+    return get_conn().execute(sql, params).fetchall()
+
+
 def _player_id(conn: sqlite3.Connection, name: str) -> int:
     row = conn.execute("SELECT id FROM players WHERE name = ?", (name,)).fetchone()
     if row is not None:
