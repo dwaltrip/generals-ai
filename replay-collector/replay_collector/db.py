@@ -1,5 +1,8 @@
+import atexit
 import datetime as dt
+import signal
 import sqlite3
+import sys
 import time
 from pathlib import Path
 
@@ -53,6 +56,10 @@ CREATE TABLE IF NOT EXISTS replays (
     -- Adds ~3.3x storage (~5GB at 100k replays). Backfillable from `raw`.
 );
 
+-- This trigger fires a second UPDATE on every save. On the replays table
+-- that means rewriting the row's blob overflow chain twice per Pass-2 save.
+-- If ingest throughput becomes a bottleneck, drop this trigger and set
+-- updated_at inline in save_full_data's UPDATE statement.
 CREATE TRIGGER IF NOT EXISTS trg_replays_updated_at
 AFTER UPDATE ON replays
 BEGIN
@@ -74,6 +81,13 @@ CREATE INDEX IF NOT EXISTS idx_replay_players_current_name ON replay_players(cur
 CREATE INDEX IF NOT EXISTS idx_replays_started             ON replays(started);
 CREATE INDEX IF NOT EXISTS idx_replays_type                ON replays(type);
 CREATE INDEX IF NOT EXISTS idx_replays_ladder_id           ON replays(ladder_id);
+
+-- If the Pass-2 work-set query slows as the pending backlog grows, add:
+--   CREATE INDEX IF NOT EXISTS idx_replays_pending_ffa
+--     ON replays(started DESC, id)
+--     WHERE ladder_id = 'ffa' AND raw IS NULL;
+-- The partial predicate shrinks the index as rows fill, keeping it
+-- proportional to the pending work set rather than the full FFA count.
 """
 
 _conn: sqlite3.Connection | None = None
@@ -89,8 +103,30 @@ def get_conn() -> sqlite3.Connection:
         # query scripts. Persistent property of the DB file.
         _conn.execute("PRAGMA journal_mode = WAL;")
         _conn.execute("PRAGMA foreign_keys = ON;")
+        # 64 MB page cache (vs SQLite's 2 MB default). Negative value = KB.
+        _conn.execute("PRAGMA cache_size = -65536;")
+        # Wait up to 5s on writer contention instead of failing immediately.
+        # Already the Python sqlite3 default, but pin it explicitly here.
+        _conn.execute("PRAGMA busy_timeout = 5000;")
         _conn.executescript(_SCHEMA)
     return _conn
+
+
+# Ensure the DB closes on shutdown so SQLite removes its -wal/-shm sidecar
+# files. atexit covers normal exits and Ctrl-C (SIGINT). SIGTERM bypasses
+# Python's finalization by default; route it through sys.exit so atexit
+# fires for `kill`, IDE stop buttons, and container shutdown too.
+def _close_conn() -> None:
+    global _conn
+    if _conn is not None:
+        # Refresh stale planner stats before close (no-op if nothing drifted).
+        _conn.execute("PRAGMA optimize;")
+        _conn.close()
+        _conn = None
+
+
+atexit.register(_close_conn)
+signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
 
 
 def has_full_data(replay_id: str) -> bool:
