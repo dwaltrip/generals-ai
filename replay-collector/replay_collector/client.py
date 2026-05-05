@@ -4,10 +4,12 @@ from urllib.parse import urlparse
 
 import httpx
 
-# TODO: consider adding contact email to UA (e.g. "(+contact: <email>)") so
-# the generals.io operators can reach us if our traffic ever causes friction.
-USER_AGENT = "generals-ai-replay-collector/0.1"
+from replay_collector.config import config
+
 DEFAULT_TIMEOUT = 30.0
+USER_AGENT_BASE = "generals-ai-replay-collector/0.1"
+# Add contact email so generals.io operators can reach us if we're causing issues.
+USER_AGENT = f"{USER_AGENT_BASE} (+mailto:{config.UA_CONTACT_EMAIL})"
 
 log = logging.getLogger(__name__)
 
