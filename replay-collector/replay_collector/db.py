@@ -1,6 +1,17 @@
+import datetime as dt
 import sqlite3
 import time
 from pathlib import Path
+
+
+def format_started_date(started: int | None) -> str:
+    """`started` is stored as-is from the listing API: epoch ms in practice,
+    but very old replays may be epoch-seconds. The 1e12 boundary distinguishes
+    them (≈ 2001-09 in ms, ≈ 33658 AD in seconds)."""
+    if started is None:
+        return "?"
+    seconds = started / 1000 if started > 1e12 else started
+    return dt.datetime.fromtimestamp(seconds).strftime("%Y-%m-%d")
 
 DB_PATH = Path(__file__).resolve().parent.parent / "data" / "generals.sqlite"
 

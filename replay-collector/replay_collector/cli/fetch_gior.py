@@ -8,14 +8,13 @@ from replay_collector.config import S3_BASE
 from replay_collector.logging_setup import setup_simple_logging
 from replay_collector.runner import DEFAULT_MAX_FAILURES
 
-# Hardcoded for now — stop modes (--limit, --for) come later.
-MAX_FETCHES = 1000
+DEFAULT_FETCH_LIMIT = 1000
 
 
 def add_parser(sub) -> None:
     p = sub.add_parser(
         "fetch-gior",
-        help=f"download .gior bytes for up to {MAX_FETCHES:,} pending FFA replays "
+        help="download .gior bytes for pending FFA replays "
              "(round-robin newest-first per player)",
     )
     p.add_argument(
@@ -23,6 +22,10 @@ def add_parser(sub) -> None:
         help="optional file of usernames; restricts the work set to replays "
              "where at least one listed player is in the ranking, and "
              "balances round-robin among those players",
+    )
+    p.add_argument(
+        "--limit", type=int, default=DEFAULT_FETCH_LIMIT,
+        help=f"max replays to fetch this run (default: {DEFAULT_FETCH_LIMIT:,})",
     )
     p.add_argument(
         "--max-failures", type=int, default=DEFAULT_MAX_FAILURES,
@@ -44,14 +47,14 @@ def run(args) -> None:
     player_filter = _load_player_filter(args.players)
 
     if args.mode == "dry-run":
-        _print_dry_run(player_filter)
+        _print_dry_run(player_filter, args.limit)
         return
 
     log_path = setup_simple_logging(TMP_DIR, "fetch_gior")
     print(f"  log: {log_path}")
 
     work_rows = db.pending_full_data_work_set(
-        player_filter=player_filter, limit=MAX_FETCHES,
+        player_filter=player_filter, limit=args.limit,
     )
     result = fill.fill(work_rows, max_failures=args.max_failures)
     sys.exit(1 if result.aborted else 0)
@@ -66,23 +69,34 @@ def _load_player_filter(path: Path | None) -> list[str] | None:
     return players
 
 
-def _print_dry_run(player_filter: list[str] | None) -> None:
+def _print_dry_run(player_filter: list[str] | None, limit: int) -> None:
     s3_rate = DEFAULT_RATES[host_of(S3_BASE)]
     total_pending = db.pending_full_data_count(player_filter)
-    fetches_this_run = min(total_pending, MAX_FETCHES)
+    work_rows = db.pending_full_data_work_set(player_filter=player_filter, limit=limit)
+    fetches_this_run = len(work_rows)
     eta_this_run = int(fetches_this_run / s3_rate)
     eta_full = int(total_pending / s3_rate)
+
+    if work_rows:
+        starteds = [row[2] for row in work_rows]
+        date_range = (
+            f"{db.format_started_date(min(starteds))} to "
+            f"{db.format_started_date(max(starteds))}"
+        )
+    else:
+        date_range = "n/a"
 
     print("Dry run (pass --no-dry-run to execute).")
     print()
     print("Inputs:")
     print(f"  players filter: {len(player_filter) if player_filter else 'none — all DB players'}")
     print(f"  S3 rate:        {s3_rate:g} req/sec")
-    print(f"  cap this run:   {MAX_FETCHES:,} fetches")
+    print(f"  cap this run:   {limit:,} fetches")
     print()
     print("Plan:")
     print(f"  total pending:    {total_pending:,}")
     print(f"  this run fetches: {fetches_this_run:,}   (ETA {fmt_duration(eta_this_run)})")
+    print(f"  date range:       {date_range}")
     if total_pending > fetches_this_run:
         print(f"  full backlog ETA: {fmt_duration(eta_full)} ({total_pending:,} fetches)")
     print()

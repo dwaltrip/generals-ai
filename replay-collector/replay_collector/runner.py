@@ -1,4 +1,3 @@
-import datetime as dt
 import logging
 from dataclasses import dataclass, field
 
@@ -53,14 +52,6 @@ class RunStats:
         return {k: sum(getattr(u, k) for u in self.per_user) for k in keys}
 
 
-def _format_started_date(started: int | None) -> str:
-    if started is None:
-        return "?"
-    # `started` is stored as-is from the listing API (epoch ms in practice).
-    seconds = started / 1000 if started > 1e12 else started
-    return dt.datetime.fromtimestamp(seconds).strftime("%Y-%m-%d")
-
-
 def _log_user_intro(username: str) -> None:
     count, lo, hi = db.cached_full_replay_stats(username)
     if count == 0:
@@ -68,7 +59,7 @@ def _log_user_intro(username: str) -> None:
     else:
         log.info(
             "[%s] %d cached full replays, %s → %s",
-            username, count, _format_started_date(lo), _format_started_date(hi),
+            username, count, db.format_started_date(lo), db.format_started_date(hi),
         )
 
 

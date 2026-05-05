@@ -35,6 +35,7 @@ __main__ prints before logging is wired up).
 import atexit
 import datetime as dt
 import logging
+import shlex
 import sys
 from pathlib import Path
 
@@ -54,6 +55,22 @@ _cached_result: "tuple[Path, Path, BucketProgress] | None" = None
 
 def _filename_timestamp(now: dt.datetime) -> str:
     return now.strftime("%Y.%m.%d-%H.%M.%S")
+
+
+def _write_run_header(*paths: Path) -> None:
+    """Write a `# command:` / `# started:` header to the top of each log file
+    so the operator can tell what invocation produced it.
+
+    Truncates each path. Safe because log paths are timestamped per run."""
+    # `sys.orig_argv` (3.10+) preserves the full interpreter invocation
+    # (e.g. `python -m replay_collector fetch-gior --limit 50`), which is
+    # more useful than `sys.argv` (script name + script args only).
+    argv = getattr(sys, "orig_argv", sys.argv)
+    cmd = shlex.join(argv)
+    started = dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    header = f"# command: {cmd}\n# started: {started}\n\n"
+    for path in paths:
+        path.write_text(header)
 
 
 class StreamWriter:
@@ -216,6 +233,7 @@ def setup_simple_logging(tmp_dir: Path, name: str) -> Path:
     tmp_dir.mkdir(parents=True, exist_ok=True)
     ts = _filename_timestamp(dt.datetime.now())
     log_path = tmp_dir / f"{ts}-{name}.log"
+    _write_run_header(log_path)
 
     formatter = logging.Formatter(_LOG_FORMAT)
 
@@ -253,6 +271,7 @@ def setup_logging(tmp_dir: Path) -> tuple[Path, Path, BucketProgress]:
     ts = _filename_timestamp(dt.datetime.now())
     condensed_path = tmp_dir / f"{ts}-replay_collector.log"
     verbose_path = tmp_dir / f"{ts}-replay_collector-verbose.log"
+    _write_run_header(condensed_path, verbose_path)
 
     formatter = logging.Formatter(_LOG_FORMAT)
 
