@@ -105,19 +105,24 @@ def sweep_many(
 
     with make_client() as http:
         client = TrackedClient(http, limiter, max_failures=max_failures)
-        for username in usernames:
-            try:
-                run.per_user.append(sweep_one(client, username, max_listings))
-            except TooManyFailures as e:
-                run.aborted = True
-                run.abort_reason = str(e)
-                log.error("aborting run: %s", e)
-                break
-            except httpx.HTTPError as e:
-                log.warning("user %r aborted mid-run: %s", username, e)
-                run.per_user.append(
-                    SweepStats(username=username, stop_reason="error")
-                )
+        try:
+            for username in usernames:
+                try:
+                    run.per_user.append(sweep_one(client, username, max_listings))
+                except TooManyFailures as e:
+                    run.aborted = True
+                    run.abort_reason = str(e)
+                    log.error("aborting run: %s", e)
+                    break
+                except httpx.HTTPError as e:
+                    log.warning("user %r aborted mid-run: %s", username, e)
+                    run.per_user.append(
+                        SweepStats(username=username, stop_reason="error")
+                    )
+        except KeyboardInterrupt:
+            run.aborted = True
+            run.abort_reason = "interrupted by user (SIGINT)"
+            log.warning("interrupted by user; finished users=%d", len(run.per_user))
 
     log.info(
         "sweep complete: users=%d aborted=%s",

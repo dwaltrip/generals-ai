@@ -47,39 +47,47 @@ def fill(
 
     with make_client() as http:
         client = TrackedClient(http, limiter, max_failures=max_failures)
-        for i, (replay_id, owner_name, _started) in enumerate(work_rows, 1):
-            try:
-                raw, decoded = generals_api.fetch_replay(client, replay_id)
-            except TooManyFailures as e:
-                stats.aborted = True
-                stats.abort_reason = str(e)
-                log.error("aborting fill run: %s", e)
-                break
-            except httpx.HTTPError:
-                # TrackedClient already logged + counted toward the budget.
-                stats.errors += 1
-                continue
-            except generals_api.ReplayDecodeError as e:
-                log.warning("decode error for replay_id=%s: %r", replay_id, e.__cause__)
-                stats.errors += 1
-                continue
+        try:
+            for i, (replay_id, owner_name, _started) in enumerate(work_rows, 1):
+                try:
+                    raw, decoded = generals_api.fetch_replay(client, replay_id)
+                except TooManyFailures as e:
+                    stats.aborted = True
+                    stats.abort_reason = str(e)
+                    log.error("aborting fill run: %s", e)
+                    break
+                except httpx.HTTPError:
+                    # TrackedClient already logged + counted toward the budget.
+                    stats.errors += 1
+                    continue
+                except generals_api.ReplayDecodeError as e:
+                    log.warning("decode error for replay_id=%s: %r", replay_id, e.__cause__)
+                    stats.errors += 1
+                    continue
 
-            stats.fetched += 1
-            try:
-                db.save_full_data(replay_id, raw, decoded)
-            except Exception:
-                log.exception("failed to save replay_id=%s", replay_id)
-                stats.errors += 1
-                continue
+                stats.fetched += 1
+                try:
+                    db.save_full_data(replay_id, raw, decoded)
+                except Exception:
+                    log.exception("failed to save replay_id=%s", replay_id)
+                    stats.errors += 1
+                    continue
 
-            stats.saved += 1
-            stats.bytes_total += len(raw)
-            if i % LOG_EVERY_N_FETCHES == 0:
-                log.info(
-                    "[fetch %d/%d] last_id=%s bytes=%d (saved=%d errors=%d total_bytes=%s)",
-                    i, total, replay_id, len(raw),
-                    stats.saved, stats.errors, _human_bytes(stats.bytes_total),
-                )
+                stats.saved += 1
+                stats.bytes_total += len(raw)
+                if i % LOG_EVERY_N_FETCHES == 0:
+                    log.info(
+                        "[fetch %d/%d] last_id=%s bytes=%d (saved=%d errors=%d total_bytes=%s)",
+                        i, total, replay_id, len(raw),
+                        stats.saved, stats.errors, _human_bytes(stats.bytes_total),
+                    )
+        except KeyboardInterrupt:
+            stats.aborted = True
+            stats.abort_reason = "interrupted by user (SIGINT)"
+            log.warning(
+                "interrupted by user; saved=%d errors=%d bytes=%s",
+                stats.saved, stats.errors, _human_bytes(stats.bytes_total),
+            )
 
     log.info(
         "fill complete: fetched=%d saved=%d errors=%d bytes=%s aborted=%s",

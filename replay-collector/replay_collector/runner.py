@@ -181,25 +181,30 @@ def collect_many(
 
     with make_client() as http:
         client = TrackedClient(http, limiter, max_failures=max_failures)
-        for username in usernames:
-            try:
-                run.per_user.append(collect_one(
-                    client, username, n_ffa, max_listings, progress,
-                    skip_full_fetch=skip_full_fetch,
-                ))
-            except TooManyFailures as e:
-                run.aborted = True
-                run.abort_reason = str(e)
-                log.error("aborting run: %s", e)
-                break
-            except httpx.HTTPError as e:
-                # Mid-user HTTP error that didn't trip the budget: TrackedClient
-                # already logged + counted it. Record a partial UserStats so the
-                # run summary reflects which user broke, then move on.
-                log.warning("user %r aborted mid-run: %s", username, e)
-                run.per_user.append(
-                    UserStats(username=username, stop_reason="error")
-                )
+        try:
+            for username in usernames:
+                try:
+                    run.per_user.append(collect_one(
+                        client, username, n_ffa, max_listings, progress,
+                        skip_full_fetch=skip_full_fetch,
+                    ))
+                except TooManyFailures as e:
+                    run.aborted = True
+                    run.abort_reason = str(e)
+                    log.error("aborting run: %s", e)
+                    break
+                except httpx.HTTPError as e:
+                    # Mid-user HTTP error that didn't trip the budget: TrackedClient
+                    # already logged + counted it. Record a partial UserStats so the
+                    # run summary reflects which user broke, then move on.
+                    log.warning("user %r aborted mid-run: %s", username, e)
+                    run.per_user.append(
+                        UserStats(username=username, stop_reason="error")
+                    )
+        except KeyboardInterrupt:
+            run.aborted = True
+            run.abort_reason = "interrupted by user (SIGINT)"
+            log.warning("interrupted by user; finished users=%d", len(run.per_user))
 
     totals = run.totals()
     log.info(
