@@ -22,8 +22,11 @@ def add_parser(sub) -> None:
     p.add_argument(
         "--max-listings-per-player", type=int,
         default=DEFAULT_MAX_LISTINGS_PER_USER,
-        help=f"safety rail; sweep stops at this many listings per player "
-             f"(default: {DEFAULT_MAX_LISTINGS_PER_USER:,})",
+        help=f"safety rail; sweep stops after walking this many listings per "
+             f"player. Counts every listing seen (including rows already in "
+             f"the DB), not just new inserts — so re-running with the same "
+             f"cap walks the same pages and won't reach further back. "
+             f"Default: {DEFAULT_MAX_LISTINGS_PER_USER:,}",
     )
     p.add_argument(
         "--max-failures", type=int, default=DEFAULT_MAX_FAILURES,

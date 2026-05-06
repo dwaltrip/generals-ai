@@ -78,7 +78,7 @@ Common to all subcommands:
 | Arg | Default | Notes |
 |---|---|---|
 | `players_file` | *required* | text file, one username per line |
-| `--max-listings-per-player M` | 100,000 | safety rail; sweep stops at this count per player |
+| `--max-listings-per-player M` | 100,000 | safety rail; counts every listing walked (incl. rows already in DB), not just new inserts |
 
 `fetch-gior`:
 
@@ -94,9 +94,9 @@ The collector is idempotent. Every run starts from the user's most-recent game (
 
 - Listing rows go through `INSERT OR IGNORE` — already-seen replays are no-ops.
 - `.gior` bytes are only fetched when `replays.raw IS NULL`.
-- The `--n-ffa` target counts already-cached FFAs walked past, so a re-run keeps a sliding window of "the N most recent FFAs cached."
+- The per-player walk caps (`--n-ffa` for `collect-recent`, `--max-listings-per-player` for `sweep-metadata`) count every listing walked, cached or not. So `collect-recent` keeps a sliding window of "the N most recent FFAs cached," and a `sweep-metadata` re-run with the same cap walks the same prefix of pages — adding nothing new if no games were played, and never reaching further back regardless.
 
-So re-runs are cheap — usually just listing pages plus any new games played since the last run. **To backfill older games for a player, bump `--n-ffa` higher** (re-running with the same `--n-ffa` will not reach further back).
+So re-runs are cheap in DB writes but still pay the full listing-page HTTP cost. **To backfill older games for a player, bump `--n-ffa` or `--max-listings-per-player` higher** — re-running with the same cap will not reach further back.
 
 ## Logs
 
