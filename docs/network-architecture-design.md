@@ -8,7 +8,7 @@
 - `compute-considerations.md` — compute reframe; channel count is not the binding lever
 - `2026-05/5.02-5-strakam-paper-summary.md` — Strakam paper summary (architecture lineage)
 - `2026-05/5.02-7-deepnash-summary-and-implications.md` — DeepNash architecture details (Pyramid Module spec)
-- `2026-05/5.02-3-initial-notes-and-decisions.md` — load-bearing project decisions; §5 (Architecture) is partially stale, consult `5.02-6` for U-Net decision
+- `2026-05/5.02-3-initial-notes-and-decisions.md` — load-bearing project decisions; §5 (Architecture) is partially stale, consult `2026-05/5.02-6-strakam-paper-takeaways.md` for U-Net decision
 - `2026-05/5.02-6-strakam-paper-takeaways.md` — U-Net decision lives in §2.1
 
 ---
@@ -98,7 +98,7 @@ Tracing through 2 contractions of the DeepNash Pyramid Module on 25×25 input: b
 - Alternatives considered: 256 → 320 → 320 (more middle capacity), 256 → 320 → 384 (progressive widening)
 - For v1: **256 → 256 → 320**. Smallest delta from inherited; easy to revisit.
 
-Status: tentative pending an empirical sensitivity sweep (1 vs. 2 vs. 3 contractions on small training runs). Listed in §6.
+Status: tentative pending an empirical sensitivity sweep (1 vs. 2 vs. 3 contractions on small training runs). Listed in §8.
 
 ### 3.2 Value head output shape: categorical placement distribution — **Tentative**
 
@@ -136,13 +136,13 @@ Status: tentative. Sensitivity check on small training runs would settle this em
 Input obs tensor (~95+ channels @ 25×25)
     │
     ▼
-┌────────────────────────────────────────────┐
-│ Torso: 2-contraction Pyramid Module        │
-│   25² → 13² → 7² → 13² → 25²               │
-│   widths 256 → 256 → 320 (→ symmetric)     │
-│   N=2 outer, M=2 middle, M=2 inner ResBlocks│
-│   skip connections at each level           │
-└────────────────────────────────────────────┘
+┌──────────────────────────────────────────────┐
+│ Torso: 2-contraction Pyramid Module          │
+│   25² → 13² → 7² → 13² → 25²                 │
+│   widths 256 → 256 → 320 (→ symmetric)       │
+│   N=2 outer, M=2 middle, M=2 inner ResBlocks │
+│   skip connections at each level             │
+└──────────────────────────────────────────────┘
     │ (256-ch spatial embedding @ 25×25)
     ├──────────────────┐
     ▼                  ▼
@@ -216,7 +216,7 @@ These are choices we've explicitly punted to "use the inherited Strakam/DeepNash
 
 Ranked by likely relevance:
 
-- **Mountain dead-ends.** Strakam's diagnosed pathology (§7.5 of paper). Mitigated partially by the v1 distance-feature channels (`distance-features-design-space.md` §6) and by the 2-contraction RF expansion (§3.1). **Not fully solved without GNN-style architecture.** Track via: agent gets stuck moving against impassable terrain; agent fails to route around mountains.
+- **Mountain dead-ends.** Strakam's diagnosed pathology (`2026-05/5.02-5-strakam-paper-summary.md` §7.5). Mitigated partially by the v1 distance-feature channels (`distance-features-design-space.md` §6) and by the 2-contraction RF expansion (§3.1). **Not fully solved without GNN-style architecture.** Track via: agent gets stuck moving against impassable terrain; agent fails to route around mountains.
 
 - **Mode-locking.** Strakam's other diagnosed pathology — agent fixates on attack OR defense OR castle-taking, ignoring others. Auxiliary-head territory if it surfaces (§8). Track via: held-out positions where agent ignores critical context (e.g., capturing castles while being attacked).
 

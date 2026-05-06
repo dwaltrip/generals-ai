@@ -52,7 +52,7 @@ Full RF derivation: see `network-architecture-design.md` §3.1.
 
 The cleanest mitigation is to compute distances **offline in the parser** and feed the results to the network as input channels. The network learns to *use* the feature instead of having to *compute* it.
 
-This is an instance of the broader pattern called out in DeepNash (their public-information tensor, our 5.02-7 §2.3a): any time you can compute a policy-independent function from history to inferred state, doing it at the input is essentially free. The network learns to use the feature, not to derive it.
+This is an instance of the broader pattern called out in DeepNash (their public-information tensor, our 5.02-7 §2.3 (a)): any time you can compute a policy-independent function from history to inferred state, doing it at the input is essentially free. The network learns to use the feature, not to derive it.
 
 For BFS-style features specifically, the parser cost is microseconds per frame at 25×25 — negligible.
 
@@ -110,12 +110,14 @@ Divide the map into an N×N grid of blocks (e.g., 5×5 grid → 25 blocks on a 2
 **Channel count:** equal to block count (25 for a 5×5 grid).
 
 **Pros:**
+
 - Stable identity (block position never changes across games)
 - Fixed channel count, no variable-region issues
 - Captures global topology systematically — each block-rep produces a full distance field through mountains
 - Trivial implementation (no edge cases beyond "block is fully blocked")
 
 **Cons:**
+
 - Loses within-block fragmentation distinctions (treats each block as a single "place")
 - Wastes some capacity on pairs that don't matter strategically (e.g., far-corner-to-far-corner)
 
@@ -125,17 +127,29 @@ For each block, identify connected components **within the block in isolation** 
 
 Per-cell channel value = BFS distance from the cell's containing block-region to the target block-region. This is piecewise-constant within each block-region (all cells in the same block-region see the same distance values for any given target).
 
-**Channel count:** ~75 for a 5×5 block grid with up to K=3 regions per block (chosen empirically from the dataset distribution).
+**Channel count:** ~75 for a 5×5 block grid with up to K=3 regions per block (K=3 is a guesstimate, needs to be empirically validated by analyzing the maps in our dataset)
 
 **Pros:**
+
 - Captures multi-region topology where blocks are split by mountains
 - Stable spatial anchor (channel identity tied to block position + canonical within-block ordering)
 - "Feed the network exactly what it can't compute" applied most fully
 
 **Cons:**
-- Variable region count requires padding + edge-case handling for the long tail (blocks with >K regions)
-- More channels (~3× the block-rep scheme) — sparse channels in the tail risk being underutilized
-- Per-block-region piecewise-constant resolution loses some intra-region detail (bounded by block size)
+
+- Variable region count requires padding + edge-case handling for the long tail (blocks with >K regions). What happens to a 4th region in a block?
+- More channels (~3× the block-rep scheme) — sparse channels in the tail risk being underutilized.
+- Per-block-region piecewise-constant resolution loses some intra-region detail (bounded by block size).
+
+**Open Questions:**
+
+* What block configs work well? Dividing the map into a block-grid with 3x3, 4x4, 5x5, etc. feels natural configs to try first. What dstribution of `max(block-region counts)` do we see in the data (8-player FFA maps in our replay database)?
+  * This should reveal what values of K would actually be needed (the k=3 value is my current guess). And then we can know the actual channel count needed as well.
+
+* How well does the "standardization" of region ID assignment within each block work out? How good is the spatial correlation for each fixed region across our dataset?
+  * e.g. Look at region-1 tiles for all maps in the data. Compute a metric measuring how well these regions "line up". They should be in relatively the same geographic position for each map. Ideally, the position is very similar.
+  * There may be fudge room — the channels may still highly useful even if they are only approximate. 80% "accurate" for distance measurements would still be a massive improvement over the native "navigational" capabilities of the CNN.
+* Can the  network learn to make effective use of these approximate distance signals?
 
 ### 4.4 Hybrid combinations
 
@@ -151,7 +165,7 @@ E.g., strategic point sources for known-critical things (my general, opponent ge
 |--------|----------|----------|-----------|
 | Strategic point sources | ~5–10 | Curated strategic distances | Engineer pre-decides what matters |
 | Block-rep grid | ~25 | Systematic global topology | Loses intra-block fragmentation |
-| Block-region | ~75 | Full multi-region topology | Sparse channels, tail edge cases |
+| Block-region | ~75 (with 25 blocks) | Full multi-region topology | Sparse channels, tail edge cases |
 | Hybrid | ~30–40 | Curated + systematic | Compounded complexity |
 
 ### 4.6 Other design axes (orthogonal to source selection)
@@ -197,7 +211,7 @@ For v1, we adopt a minimal version of §4.1: **point-source BFS to each general 
 - Every channel has stable identity (per-opponent slot, identical to other per-opponent broadcast channels)
 - Strategic relevance is direct and well-understood (defense, attack-target)
 - 8 channels is well below the "load-bearing fraction of obs tensor budget" line
-- No edge cases beyond sentinel handling
+- No edge cases beyond handling a single, straight-forward sentinel
 - Composes naturally with the slot-permutation augmentation already locked from session 5.05-3
 
 **What this v1 baseline does NOT include but could later:**
@@ -252,7 +266,26 @@ If we add auxiliary heads (open question per session 5.05-3 §3.5), one natural 
 
 ---
 
-## 8. Status notes
+## 8. Methodology note: working with LLMs on complex spatial schemes
+
+LLM spatial reasoning is a known weak spot — particularly involving partitioning, connectivity, multi-scale aggregation, and region semantics. The discussion that produced this doc bumped into this several times. Concrete examples from the session:
+
+- **Misread of block-region semantics.** Initial critique assumed a real-world region spanning two blocks would create boundary attribution issues. The scheme was actually defined so block-regions are connected components *within each block in isolation* — by construction. The misread invalidated a "block-boundary artifacts" objection that, on closer inspection, didn't apply.
+- **Conflation of region variability with channel-identity variability.** Initial critique conflated "regions differ game-to-game" with "channel meaning differs game-to-game." These are distinct: canonical block-position assignment cleanly resolves the second even when the first remains.
+- **Overstated edge cases.** Several engineering complications named in the initial critique (centroid in a mountain, fully-blocked block, boundary-spanning regions) turned out to be trivial or non-issues in the actual scheme.
+- **Too-pessimistic channel utilization estimate.** Initial framing of "20–40% of 75 channels effectively used" undercounted. First-layer linear projection compresses correlated inputs, so dense schemes degrade more gracefully than the framing suggested.
+
+These corrections came from user pushback during the discussion; this doc reflects the revised understanding rather than the initial reactions.
+
+**General lesson:** when LLM-assisted analysis is part of the loop and the topic involves complex spatial reasoning, treat first-pass LLM reactions as one input among several rather than as authoritative analysis. Budget time for back-and-forth. Domain spatial intuition (especially the user's) typically catches errors the LLM misses on first pass.
+
+This applies more broadly than this doc: anywhere complex spatial reasoning is load-bearing in the project (obs-tensor designs, parser logic, attention patterns, GNN topology, hierarchical aggregation), expect LLM-assisted analysis to need correction and don't accept first-pass takes as settled.
+
+**Note for future LLMs reading this doc:** if you're being asked to evaluate or propose schemes involving spatial topology, partitioning, connectivity, or hierarchical aggregation in this project, allocate more reasoning effort than you might default to, and hold initial conclusions a bit more tentatively. The session that produced this doc reached good outcomes — and the model did grok the user's schemes properly once it engaged carefully — but several first-pass takes were overstated or wrong, and only got corrected after substantive user pushback. The failure mode isn't an inability to reason about these schemes; it's overconfident initial reactions that don't survive a second look. Spending the extra thought up front converges faster than relying on the user to catch errors after the fact.
+
+---
+
+## 9. Status notes
 
 - **Locked for v1:** §6 baseline (point-source BFS to each general)
 - **Deferred:** all of §7
