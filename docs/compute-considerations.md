@@ -1,6 +1,7 @@
 # Compute Considerations
 
 **Status:** Topical reference doc. Updated in place as the project's compute picture sharpens.
+**Updated:** 2026.05.07
 **Companion:** [`deepnash-tpu-analysis.md`](./deepnash-tpu-analysis.md) (the v3 baseline argument for DeepNash).
 **Pulls together:** material previously scattered across `2026-05/5.02-3-initial-notes-and-decisions.md` §5, `2026-05/5.02-6-strakam-paper-takeaways.md` §2.5, and `2026-05/5.02-7-deepnash-summary-and-implications.md` §1.8.
 
@@ -8,8 +9,9 @@
 
 ## TL;DR
 
-- Hobby-budget cloud H100 rental ($2–10/hr) is sufficient for Phase 1 BC and likely sufficient for Phase 2 self-play. Local M1 is for development, not full training runs.
-- BC for our current dataset size (~80k filtered games) is estimated at **~30–60 H100-hours per run**, i.e. $60–600 cloud rental. Iteration over 5–10 runs is well within hobby range.
+- Hobby-budget cloud H100 rental ($2–10/hr) is the default for runs that need real artifacts. Local M1 is for development, not full training runs.
+- BC at current data scale (~135k raw replays) is estimated at **~30–60 H100-hours per run**, ~$60–600 cloud rental per run. Mini-sweep variants (e.g. width sweep) run at ~5–10% of full duration.
+- Phase 1 budget posture is exploratory and decided as the project progresses — see §4. Phase 2 (PPO self-play) is a separate downstream decision, not a committed plan.
 - **Channel count is not the binding compute lever.** First-conv FLOPS are 1–3% of total. The actually-binding levers are inner pyramid width, spatial extent, and dataset size. Channel count matters for engineering complexity and inference latency, not training compute.
 - DeepNash trained on roughly 10⁴ × Strakam's compute (estimated). Architecture transfer is sound; what's uncertain is how much of the architecture's capability we can extract on a tiny fraction of that compute.
 
@@ -71,7 +73,7 @@ This matters for architecture transfer: we're inheriting DeepNash's network desi
 
 ### Cloud H100 rental ($2–10/hr)
 
-The default for runs that need to count. At hobby-project scale, even $500/run is sustainable for periodic milestone training. Major cloud providers (Lambda, RunPod, Vast.ai, AWS) all rent H100s at the lower end of that range; AWS sits at the high end.
+The default for runs that need to count. Major cloud providers (Lambda, RunPod, Vast.ai, AWS) all rent H100s at the lower end of that range; AWS sits at the high end. Per-run costs depend on architecture and training duration; see §4 for the project budget posture and per-run estimates.
 
 ### Local Apple Silicon (64GB M1 Max or Ultra)
 
@@ -91,15 +93,63 @@ This minimizes spend (only pay for runs that count) while keeping the iteration 
 
 ## 4. BC compute estimate (Phase 1)
 
-### Sample volume math (current ~80k raw replays)
+### Budget posture
+
+Phase 1 BC budget is exploratory and decided as the project progresses. Working baseline: **~$500 total cloud spend on BC as a soft upper-bound**, hoping for less if achievable. The intent is to leave room for Phase 2 (PPO self-play, see §6) without committing to it, and to scale up only if early results suggest deeper investment is warranted.
+
+In practice:
+- Mini-sweeps and small partial training runs are cheap (tens of dollars each). Run freely.
+- Full BC runs are the meaningful budget items — be deliberate about when to commit one.
+- If first results are exciting and suggest more iteration is worth doing, willing to expand.
+- If early results are underwhelming, scale back rather than throwing more compute at it.
+- Per-run cost estimates below are factual planning inputs; total spend depends on how many runs end up being warranted.
+
+If budget pressure shows up after early sweeps, look for ways to squeeze more out of available compute — see §7 for levers (smaller widths, mixed precision, dataset subsampling for iteration runs).
+
+### Sample-volume math (current ~135k raw replays)
+
+The replay DB's `turns` field stores half-turns (one half-turn = one move = one (obs, action) sample). Each filtered replay yields one or two strong-player trajectories depending on cohort.
+
+Real game-length distribution for the 8-player FFA cohort (from `replay-collector/scripts/analyze_turn_stats.py`):
+
+| Stat | Half-turns |
+|---|---|
+| Mean | 632 |
+| Median | 563 |
+| p25 / p75 | 433 / 743 |
+| p10 / p90 | 342 / 974 |
+
+Per-replay sample count derivation:
 
 ```
-80k raw
-  → 40-56k after quality filter (30-50% trim)
-  → ~1.4 strong-player trajectories per game (most have only 1 qualifying perspective)
-  → 55-80k usable trajectories
-  → ~100-140M training samples (each trajectory ~1800 turns)
+Game length (mean):       ~632 half-turns
+Strong-player trajectory: ~60% of game length [^trajsurv] = ~380 half-turns
+Per replay (mixed):       60% × (1 trajectory × 380)
+                        + 40% × (2 trajectories × 380) [^twostrong]
+                        ≈ ~530 samples per filtered replay
 ```
+
+[^trajsurv]: Working assumption — strong-player trajectories tend to span ~60% of game length on average across various final placements. Easily validatable post-parser by joining trajectory length with placement metadata. Plausible range: 50–70% across the strong-player cohort.
+
+[^twostrong]: Cohort statistic — ~40% of filtered 8-player FFA games have ≥2 qualifying strong-player trajectories.
+
+Total raw samples at current 135k:
+
+```
+135k raw × ~60% filter survival = ~81k filtered replays
+× ~530 samples/replay
+≈ ~36–50M raw (state, action) pairs
+```
+
+With augmentation (effective independence multipliers, not theoretical maxima):
+- **Board symmetry [^bs]:** ~2–4× effective (theoretical 4× for rectangular maps, 8× for square)
+- **Slot permutation [^sp]:** ~2–3× effective
+
+[^bs]: Board symmetry: rectangular maps have D₂ symmetry (4 transformations: identity, horizontal flip, vertical flip, 180° rotation); square maps have D₄ (8 transformations including 90° rotations and diagonal flips). The theoretical multiplier is exactly determinable once we measure the dataset's map-aspect distribution. The *effective independence* multiplier — how much new training signal augmented samples actually provide — is smaller because augmented samples are correlated.
+
+[^sp]: Slot permutation theoretical max is 7! = 5040, but most permutations produce highly-correlated samples. The effective multiplier is hard to measure precisely and is mostly about how much "opponent identity confusability" the network exploits during training. Likely only validatable indirectly via held-out eval performance.
+
+Net effective sample-views during ~5 epochs of training: **~1–2B** at current 135k. At the achievable ~270k upper end (continued scraping is straightforward), roughly doubles to ~2–4B.
 
 ### Per-sample compute vs Strakam
 
@@ -107,22 +157,43 @@ This minimizes spend (only pay for runs that count) while keeping the iteration 
 |---|---|---|
 | Spatial extent | ~2× | 25×25 vs ~18×18 |
 | Input channels | ~4× | ~99 vs ~25 — but first conv is small fraction of total FLOPS |
-| Inner pyramid width | 1× | Same 256/320 |
+| Inner pyramid width | 1× (assumed) | Inherited 256/320; see "Softness in the 30–60 anchor" subsection below |
 | **Net per-sample** | **~2×** | Dominated by spatial; channels matter little |
 
 ### Headline estimate
 
-**~30–60 H100-hours per BC run, ~$60–600 at $2–10/hr.** Iteration across 5–10 runs is comfortably within hobby budget.
+**~30–60 H100-hours per BC run, ~$60–600 at $2–10/hr.** Mini-sweep variants run at ~5–10% of full duration each — a few hours and tens of dollars per variant.
 
-**Calibration check**: Strakam's 3-hour BC × ~7× sample volume × ~2× per-sample ≈ 42 hours, which falls inside our range.
+**Calibration check**: Strakam's 3-hour BC × ~10× sample volume (135k vs 16k filtered, with our larger per-game sample yield) × ~2× per-sample ≈ 60 hours, the upper end of our planning range. Order-of-magnitude only.
+
+### Softness in the 30–60 anchor
+
+The 30–60 figure is calibrated to Strakam's 3-hour BC at *presumed* inherited widths (256/320). Strakam's paper is silent on actual widths used; the published `network.py` is a 4×4 toy scaffold, not production code. So this calibration has a circularity worth flagging.
+
+**Two scenarios:**
+
+- **Scenario A — Strakam used inherited widths.** Our extrapolation is solid. Real H100 utilization for this architecture is ~20–30% of peak BF16 throughput. 30–60 H100-hrs/run is a reasonable estimate.
+
+- **Scenario B — Strakam quietly used smaller widths (e.g. 128/192).** Their 3 hours achieved ~4× fewer FLOPs per sample than our calibration assumes. We'd be overestimating. Real wall-clock at 256/320 could be 60–120 H100-hrs/run; at smaller widths from the planned width sweep (see `network-architecture-design.md` §3.3), 8–30 H100-hrs/run.
+
+We don't know which is true. **The first real BC run replaces estimate with measurement** — at that point we know actual H100 utilization, throughput, and per-epoch wall-clock for our specific architecture.
+
+What the budget posture is robust to (within ±2× of the anchor):
+- Order-of-magnitude budget viability — a few hundred dollars covers BC iteration, regardless of which scenario is true
+- Mini-sweep cost as a small fraction of full-run cost (the *ratio* doesn't depend on the calibration)
+- The width-sweep approach itself (since it explicitly sweeps over the widths in question)
+
+What's *less* robust:
+- Precise count of full BC runs achievable within any specific dollar ceiling
+- Exact dollar cost of the mini-sweep
 
 ### Implications for dataset sizing
 
-At ~80k filtered raw replays we're already in a comfortable BC range. The 100–140M training samples derived above is well past the threshold where pure BC tends to saturate — at this scale, doubling the dataset typically yields ~5–15% validation improvement, not transformative gains.
+At ~135k raw replays we're already in a comfortable BC range. The achievable upper end is ~270k+ via continued scraping (community channels, deeper archive work). The ~1–2B effective sample-views derived above is already past the threshold where pure BC tends to saturate — at this scale, doubling the dataset typically yields ~5–15% validation improvement, not transformative gains.
 
-The strategic value of *more raw replays* isn't in raising the sample count further — it's in enabling stricter quality filtering. With 80k raw, "≥1 strong player in lobby" is about as restrictive a bar as we can afford. With 200–400k raw, we could demand "all 8 players above threshold" or other aggressive cuts and still end up with a comparable filtered training set. Beyond ~400k raw, training time starts to bind before learnability does, so the marginal return on additional scraping diminishes.
+The strategic value of *more raw replays* isn't in raising the sample count further — it's in enabling stricter quality filtering. With 135k raw, "≥1 strong player in lobby" is about as restrictive a bar as we can comfortably afford. With 270–400k raw, we could demand "all 8 players above threshold" or other aggressive cuts and still end up with a comparable filtered training set. Beyond ~400k raw, training time starts to bind before learnability does, so the marginal return on additional scraping diminishes.
 
-For ballpark planning, the project currently baselines a filtered training set of **~100–150M training samples**. The wall-clock estimates in this section scale roughly linearly with that number — re-estimate if the baseline shifts substantially (e.g. via a much stricter filter producing fewer samples, or a much larger raw corpus enabling more aggressive subsetting).
+For ballpark planning, the project currently baselines a filtered training set in the **~36–50M raw sample range, ~1–2B effective sample-views with augmentation**. Wall-clock estimates in this section scale roughly linearly with total sample-views — re-estimate if the baseline shifts substantially (much stricter filter producing fewer samples, or a much larger raw corpus enabling more aggressive subsetting).
 
 ---
 
@@ -176,10 +247,17 @@ When obs-tensor changes are being evaluated, the relevant cost questions are abo
 Self-play not yet planned in detail. Forward-extrapolated estimate from Strakam's numbers, scaled per `5.02-6` §2.5:
 
 - Strakam self-play: ~33 H100-hours for 1v1
-- FFA estimated 2–5× more compute. The factors driving this: more agents per game step (8 inferences per timestep vs 2 for 1v1), longer episodes (1800 vs ~500 turns), sparser reward signal (placement vs binary win/loss makes credit assignment harder), and a larger opponent pool space to converge against
+- FFA estimated 2–5× more compute. Drivers: more agents per game step (8 inferences per timestep vs 2 for 1v1), longer episodes (1800 vs ~500 turns), sparser reward signal (placement vs binary win/loss makes credit assignment harder), and a larger opponent pool space to converge against
 - → **~70–170 H100-hours per Phase 2 run, ~$140–1,700 cloud rental**
 
-Within hobby budget but warrants planning before kicking off. Numbers will sharpen substantially once Phase 2 design lands; treat the above as a planning anchor, not a target.
+**Whether to do Phase 2 at all is an open decision**, made post-Phase-1. Factors that will weigh into it:
+
+- Phase 1 outcomes — does BC produce a model worth investing further in?
+- Remaining budget appetite — tighter if Phase 1 chewed through allotment; looser if early Phase 1 results were exciting and motivated expansion
+- Compute optimizations identified during Phase 1 — real H100 utilization, smaller widths from the sweep, more efficient data loading, etc.
+- Broader project timing and motivation
+
+The cost figures above are planning inputs to that decision, not a commitment. Numbers will sharpen substantially once Phase 2 design lands; treat the above as an anchor, not a target.
 
 ---
 
