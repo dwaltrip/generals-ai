@@ -1,6 +1,7 @@
 # Network Architecture Design — v1 Working Spec
 
 **Date:** 2026.05.06
+**Updated:** 2026.05.07
 **Status:** **Skeleton.** Major decisions tentative; many mid-/low-level details deferred. Meant to grow as decisions land.
 **Companion docs:**
 - `observation-tensor-design.md` — obs tensor v1 working spec (delta + pointer to 5.05-1)
@@ -36,7 +37,7 @@ DeepNash's "Pyramid Module" — a U-Net torso with residual blocks at each level
 
 ### 2.1 The Strakam existence proof (sharpened)
 
-A reframing landed in this session: the relevant compute comparison is **Strakam → us**, not DeepNash → us.
+The relevant compute comparison is **Strakam → us**, not DeepNash → us.
 
 - Strakam's full training: ~36 H100-hours total (3 BC + 33 self-play)
 - Our BC budget: ~30–60 H100-hours per run
@@ -93,10 +94,7 @@ Tracing through 2 contractions of the DeepNash Pyramid Module on 25×25 input: b
 
 **Compute envelope:** see §5 — the cost is modest (~2–10% per-sample FLOPs, ~50% more parameters). This is well within budget per the compute reframe.
 
-**Channel widths at the new middle level:**
-- Default proposed: **256 → 256 → 320** (keep widening only at the bottleneck)
-- Alternatives considered: 256 → 320 → 320 (more middle capacity), 256 → 320 → 384 (progressive widening)
-- For v1: **256 → 256 → 320**. Smallest delta from inherited; easy to revisit.
+**Channel widths at the new middle level:** the second contraction adds a middle level (13×13) not present in the inherited DeepNash spec. v1 default is 256/256/320 (preserves the inherited width-ratio); width is decided via sweep — see §3.3, and §8 for deferred non-proportional alternatives.
 
 Status: tentative pending an empirical sensitivity sweep (1 vs. 2 vs. 3 contractions on small training runs). Listed in §8.
 
@@ -128,6 +126,56 @@ Categorical placement gives ~3 bits of signal per sample (log₂8) vs. ~1 bit fo
 
 Status: tentative. Sensitivity check on small training runs would settle this empirically.
 
+### 3.3 Inner pyramid width: sweep methodology — **Tentative**
+
+**Decision:** Width is settled empirically via a parametric sweep, not committed up front. Run mini training runs at 0.5×, 0.75×, and 1× of the inherited 256/256/320 baseline (with 1.5× as an optional upper probe), compare loss curves and basic eval metrics, then commit full-training compute to the chosen variant.
+
+**Sweep variants:**
+
+| Variant | Outer / Middle / Bottleneck | Multiplier | Compute (rel.) | Approx. params |
+|---------|-----------------------------|------------|----------------|----------------|
+| A | 128 / 128 / 160 | 0.5× | ~0.25× | ~5M |
+| B | 192 / 192 / 240 | 0.75× | ~0.56× | ~10M |
+| C (baseline) | 256 / 256 / 320 | 1.0× | 1.0× | ~18M |
+| D (optional) | 384 / 384 / 480 | 1.5× | ~2.25× | ~40M |
+
+Compute and parameter counts both scale as C² per ResBlock, so a single multiplier captures the architectural delta. All three pyramid levels scale together (proportional, not differential) — keeps the sweep one-dimensional and preserves the inherited width-ratio structure.
+
+**Why a sweep instead of a fixed choice:**
+
+The inherited 256/320 widths come from DeepNash, trained at ~10⁴× our compute scale (per `compute-considerations.md` §2). Strakam ran at compute parity with us but the paper's "same architecture as Perolat 2022" doesn't pin down actual widths, and the published `network.py` is an experimental scaffold for a 4×4 grid rather than production code. We have no direct quantitative grounding for what width is right at our compute regime.
+
+The data:params framework is directional but not a hard constraint at our scale — width is fundamentally empirical, and treating heuristics as binding would mean over-weighting them. Code-wise, width is a config value at construction. Compute-wise, each variant requires a full retrain (no weight reuse across shapes). The sweep methodology is what makes the empirical approach affordable.
+
+**Mini-sweep methodology:**
+
+Train each variant to ~5–10% of full BC duration. Compare:
+- Loss curves (training and validation) — does the gap widen, narrow, or stay parallel across variants?
+- Basic eval metrics (next-action accuracy, top-3 on held-out positions)
+- Whether any variant fails to learn at all (useful pipeline-correctness signal)
+
+Sweep cost: roughly `4 variants × ~7.5% × full-run cost`. At the planning anchor of 30–60 H100-hrs per full run (per §5 and `compute-considerations.md` §4, with caveats), that's ~12–25 H100-hrs total. Cheap relative to committing a full run to the wrong width.
+
+**Prior on what the sweep will pick:**
+
+Lean depends on data scale at sweep time:
+
+- At current ~135k raw replays: lean toward variant **B (192/256)**. Comfortable data:params margin, meaningful speedup over inherited.
+- At 270k+ raw replays (the achievable upper end): lean toward variant **C (256/320)**. Inherited width is comfortably supported; the data:params argument for shrinking weakens.
+
+Variant **D (384/480)** becomes interesting only at 270k+ data; at current scale it sits in moderate-overfitting-risk territory and isn't the lead candidate.
+
+**Paired training-time defaults (regularization):**
+
+These pair with the width sweep as the package we actually run. Tentative — adjustable as we observe training:
+
+- **Optimizer:** AdamW (Adam + weight decay). `weight_decay ≈ 1e-4` initial.
+- **Trunk dropout:** 0.05–0.10. Cheap, modest regularization, safe at any width in the sweep range.
+- **Validation tracking:** train and validation loss tracked from epoch 1; early-stopping ready as a backstop if val loss flattens or rises.
+- **Augmentation enabled from run 1:** board symmetry (D₂ on rectangular maps, ~4×) and slot permutation. Both are locked decisions from prior project work.
+
+Status: tentative. The sweep settles which variant goes to full training. Regularization defaults are first-pass and adjustable based on the observed train/val gap.
+
 ---
 
 ## 4. High-level structure
@@ -155,7 +203,9 @@ Input obs tensor (~95+ channels @ 25×25)
 └──────────────┘   └─────────────────┘
 ```
 
-(Optional auxiliary heads — see §6.)
+(Widths shown are the 1× sweep baseline — see §3.3 for variants.)
+
+(Optional auxiliary heads — see §8.)
 
 Action space (policy head): per-cell `[pass + 4 directions × 2 splits]` = 9 channels. Inherited from Strakam. Output is `H×W×9` masked softmax over legal actions (owned cell + army > 1 + dest passable).
 
@@ -195,6 +245,8 @@ Compute cost is small. Param-count increase (~50%) is the bigger qualitative cos
 
 **Caveat:** these are back-of-envelope numbers. Real numbers come from profiling the actual implementation. They're reliable on order of magnitude, useful for decision-making, not load-bearing for budget planning.
 
+**Strakam-calibration caveat:** the 30–60 H100-hr anchor itself derives from a calibration to Strakam's 3-hour BC at *presumed* inherited widths (see `compute-considerations.md` §4 for the calibration). The Strakam paper is silent on actual widths used, so this is a planning anchor rather than a precise estimate. The first real BC run replaces estimate with measurement.
+
 ---
 
 ## 6. Defaults inherited (tentative pending review)
@@ -203,7 +255,7 @@ These are choices we've explicitly punted to "use the inherited Strakam/DeepNash
 
 | Decision | Inherited choice | Notes |
 |----------|------------------|-------|
-| Inner width | 256 outer / 320 bottleneck | Per the compute reframe, this is the actually-binding compute lever; never explored. Sensitivity sweep is on the open list. |
+| Inner width | See §3.3 | No longer "default inherited"; decided via sweep methodology over 0.5×–1.5× of 256/256/320. Listed here for table completeness. |
 | Normalization | LayerNorm | Strakam paper doesn't specify. LayerNorm is the safe default for RL — BatchNorm interacts poorly with policy gradient. Worth inspecting Strakam's `network.py` to confirm. |
 | Heads-as-Pyramid-Modules | Yes (per DeepNash) | Heads have their own conv structure rather than being linear projections. Strakam doesn't confirm they kept this; we're defaulting to inherited because the DeepNash justification (heads need their own spatial reasoning) holds for us. |
 | Skip-connection geometry | Symmetric across encoder/decoder at each level | Standard U-Net pattern. With 2 contractions, 2 skip levels. |
@@ -232,7 +284,7 @@ Ranked by likely relevance:
 
 | Item | Notes |
 |------|-------|
-| Channel widths at the new middle level | Default 256→256→320; could be 256→320→320 or 256→320→384. Sensitivity sweep would settle. |
+| Channel widths at the new middle level | **Option A (256/256/320) decided for v1.** Alternatives B (256/320/320) and C (256/320/384) deferred to future sensitivity sweep. |
 | Auxiliary heads | Open from `5.05-3-session-notes.md` §3.5. Candidates: predict eliminations, predict army-count-in-N-turns, predict who-eliminates-whom. Multi-task regularizer; FFA's strategic complexity strengthens the case. |
 | Optimizer / LR / batch size / schedule | Default to Adam + standard PPO defaults until profiled. Strakam paper doesn't specify. |
 | Sensitivity sweeps | Tentative decisions in §3 should be validated empirically on small training runs: contraction depth (1 vs. 2 vs. 3), value head shape (categorical vs. binary), middle-level channel widths. |
