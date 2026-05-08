@@ -4,9 +4,9 @@ import signal
 import sqlite3
 import sys
 import time
-from pathlib import Path
 
 from replay_collector import wire
+from replay_collector.config import DB_PATH
 
 
 def format_started_date(started: int | None) -> str:
@@ -17,8 +17,6 @@ def format_started_date(started: int | None) -> str:
         return "?"
     seconds = started / 1000 if started > 1e12 else started
     return dt.datetime.fromtimestamp(seconds).strftime("%Y-%m-%d")
-
-DB_PATH = Path(__file__).resolve().parent.parent / "data" / "generals.sqlite"
 
 _NOW_MS = "(CAST(unixepoch('subsec') * 1000 AS INTEGER))"
 
@@ -99,11 +97,26 @@ _conn: sqlite3.Connection | None = None
 def get_conn() -> sqlite3.Connection:
     global _conn
     if _conn is None:
-        _conn = create_conn()
+        _conn = create_conn(create_if_missing=True)
     return _conn
 
 
-def create_conn() -> sqlite3.Connection:
+def create_conn(create_if_missing: bool = False) -> sqlite3.Connection:
+    """Open a fresh, fully-bootstrapped connection at DB_PATH.
+
+    By default, raises `FileNotFoundError` if the DB file is missing — the
+    safe behavior for one-shot scripts and migrations, where a typo'd path
+    silently bootstrapping an empty DB would be a footgun.
+
+    Pass `create_if_missing=True` to opt into create-on-open (sqlite's
+    default). The application singleton (`get_conn`) does this; direct
+    callers should not unless they're explicitly bootstrapping a new DB.
+
+    Always applies pragmas (WAL, foreign_keys, cache_size, busy_timeout)
+    and runs `_SCHEMA` (idempotent CREATE IF NOT EXISTS — safe on existing
+    DBs, sets up tables/triggers/indexes on fresh ones)."""
+    if not create_if_missing and not DB_PATH.exists():
+        raise FileNotFoundError(f"DB not found: {DB_PATH}")
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(DB_PATH)
     # WAL lets readers and writers coexist (only writer-vs-writer

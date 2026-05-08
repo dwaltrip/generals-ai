@@ -9,24 +9,24 @@ Defaults target the dominant 8-player FFA bucket (type=classic, player_count=8).
 """
 
 import argparse
-import sqlite3
 import statistics
 import sys
-from pathlib import Path
 
-DEFAULT_DB = Path("data/generals.sqlite")
+from replay_collector.db import create_conn
+
 PERCENTILES = [1, 5, 10, 25, 50, 75, 90, 95, 99]
 
 
-def fetch_turns(
-    db: Path, replay_type: str, player_count: int, require_wire_data: bool
-) -> list[int]:
+def fetch_turns(replay_type: str, player_count: int, require_wire_data: bool) -> list[int]:
     sql = "SELECT turns FROM replays WHERE type = ? AND player_count = ?"
     params: list = [replay_type, player_count]
     if require_wire_data:
         sql += " AND wire_data IS NOT NULL"
-    with sqlite3.connect(db) as conn:
-        rows = conn.execute(sql, params).fetchall()
+    try:
+        conn = create_conn()
+    except FileNotFoundError as e:
+        sys.exit(str(e))
+    rows = conn.execute(sql, params).fetchall()
     return [r[0] for r in rows]
 
 
@@ -39,7 +39,6 @@ def percentile(sorted_values: list[int], pct: float) -> int:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--db", type=Path, default=DEFAULT_DB)
     parser.add_argument("--type", dest="replay_type", default="classic")
     parser.add_argument("--player-count", type=int, default=8)
     parser.add_argument(
@@ -49,12 +48,7 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    if not args.db.exists():
-        parser.error(f"missing db: {args.db}")
-
-    turns = fetch_turns(
-        args.db, args.replay_type, args.player_count, args.require_wire_data
-    )
+    turns = fetch_turns(args.replay_type, args.player_count, args.require_wire_data)
     n = len(turns)
     slice_desc = (
         f"type={args.replay_type} player_count={args.player_count}"

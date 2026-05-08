@@ -23,15 +23,14 @@ usernames; without it, raw `==` reports false positives).
 import argparse
 import json
 import multiprocessing as mp
-import sqlite3
 import sys
 import time
-from pathlib import Path
 
 from replay_collector import wire
+from replay_collector.db import create_conn
+from replay_collector.db_utils import columns
 from replay_collector.generals_api import decompress_gior
 
-DB_PATH = Path(__file__).resolve().parent.parent / "data" / "generals.sqlite"
 DEFAULT_WORKERS = 8
 READ_BATCH = 500          # rows per fetchmany
 WRITE_BATCH = 500         # UPDATEs per commit
@@ -51,19 +50,16 @@ def main() -> None:
                     help="cap total rows processed (smoke testing)")
     args = ap.parse_args()
 
-    if not DB_PATH.exists():
-        sys.exit(f"DB not found: {DB_PATH}")
-
     # Two connections: one for streaming SELECTs, one for batched UPDATEs.
     # Keeps the read cursor's snapshot independent of write commits.
-    read_conn = sqlite3.connect(DB_PATH)
-    write_conn = sqlite3.connect(DB_PATH)
-    for c in (read_conn, write_conn):
-        c.execute("PRAGMA journal_mode = WAL;")
+    try:
+        read_conn = create_conn()
+        write_conn = create_conn()
+    except FileNotFoundError as e:
+        sys.exit(str(e))
 
     # Sanity check: the column must already exist (migration 001 applied).
-    cols = {r[1] for r in read_conn.execute("PRAGMA table_info(replays)").fetchall()}
-    if "wire_data" not in cols:
+    if "wire_data" not in columns(read_conn, "replays"):
         sys.exit("`wire_data` column missing — run migrations/001_add_wire_data.py first.")
 
     total = read_conn.execute(

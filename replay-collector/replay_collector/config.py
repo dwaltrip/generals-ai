@@ -13,6 +13,8 @@ UA_CONTACT_EMAIL_KEY = "UA_CONTACT_EMAIL"
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 _DOTENV_PATH = _PROJECT_ROOT / ".env"
 
+DB_PATH = _PROJECT_ROOT / "data" / "generals.sqlite"
+
 
 @dataclass(frozen=True)
 class Config:

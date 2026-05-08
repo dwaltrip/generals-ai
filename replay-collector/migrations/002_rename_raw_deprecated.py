@@ -15,19 +15,20 @@ Run with:
     uv run python migrations/002_rename_raw_deprecated.py
 """
 
-import sqlite3
 import sys
-from pathlib import Path
 
-DB_PATH = Path(__file__).resolve().parent.parent / "data" / "generals.sqlite"
+from replay_collector.db import create_conn
+from replay_collector.db_utils import columns
 
 
 def main() -> None:
-    if not DB_PATH.exists():
-        sys.exit(f"DB not found: {DB_PATH}")
+    try:
+        conn = create_conn()
+    except FileNotFoundError as e:
+        sys.exit(str(e))
 
-    with sqlite3.connect(DB_PATH) as conn:
-        cols = {row[1] for row in conn.execute("PRAGMA table_info(replays)").fetchall()}
+    with conn:
+        cols = columns(conn, "replays")
 
         if "raw_deprecated" in cols and "raw" not in cols:
             print("Already renamed (raw_deprecated present, raw absent) — nothing to do.")
@@ -54,8 +55,7 @@ def main() -> None:
             )
 
         conn.execute("ALTER TABLE replays RENAME COLUMN raw TO raw_deprecated;")
-        conn.commit()
-        print("Renamed `raw` -> `raw_deprecated`.")
+    print("Renamed `raw` -> `raw_deprecated`.")
 
 
 if __name__ == "__main__":

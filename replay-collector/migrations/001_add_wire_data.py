@@ -7,25 +7,24 @@ Run with:
     uv run python migrations/001_add_wire_data.py
 """
 
-import sqlite3
 import sys
-from pathlib import Path
 
-DB_PATH = Path(__file__).resolve().parent.parent / "data" / "generals.sqlite"
+from replay_collector.db import create_conn
+from replay_collector.db_utils import columns
 
 
 def main() -> None:
-    if not DB_PATH.exists():
-        sys.exit(f"DB not found: {DB_PATH}")
+    try:
+        conn = create_conn()
+    except FileNotFoundError as e:
+        sys.exit(str(e))
 
-    with sqlite3.connect(DB_PATH) as conn:
-        cols = {row[1] for row in conn.execute("PRAGMA table_info(replays)").fetchall()}
-        if "wire_data" in cols:
+    with conn:
+        if "wire_data" in columns(conn, "replays"):
             print("`wire_data` column already present in `replays` — nothing to do.")
             return
         conn.execute("ALTER TABLE replays ADD COLUMN wire_data BLOB;")
-        conn.commit()
-        print("Added `wire_data` BLOB column to `replays`.")
+    print("Added `wire_data` BLOB column to `replays`.")
 
 
 if __name__ == "__main__":
