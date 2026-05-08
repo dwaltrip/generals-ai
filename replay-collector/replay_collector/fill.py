@@ -20,7 +20,7 @@ LOG_EVERY_N_FETCHES = 100
 @dataclass
 class FillStats:
     fetched: int = 0      # successful S3 fetch
-    saved: int = 0        # successful DB save (raw + decoded fields)
+    saved: int = 0        # successful DB save (wire_data + decoded fields)
     errors: int = 0       # any failure during fetch or save
     bytes_total: int = 0
     aborted: bool = False
@@ -32,7 +32,7 @@ def fill(
 ) -> FillStats:
     """Fetch and save the .gior bytes for each (replay_id, owner_name, started)
     row in `work_rows`. Errors are logged but do not update the row, so a
-    failed replay stays raw IS NULL and gets retried on the next run.
+    failed replay stays wire_data IS NULL and gets retried on the next run.
 
     Owns the shared httpx.Client + RateLimiter + TrackedClient. Aborts the
     whole run on TooManyFailures."""
@@ -67,7 +67,7 @@ def fill(
 
                 stats.fetched += 1
                 try:
-                    db.save_full_data(replay_id, raw, decoded)
+                    db.save_full_data(replay_id, decoded)
                 except Exception:
                     log.exception("failed to save replay_id=%s", replay_id)
                     stats.errors += 1

@@ -6,6 +6,8 @@ import sys
 import time
 from pathlib import Path
 
+from replay_collector import wire
+
 
 def format_started_date(started: int | None) -> str:
     """`started` is stored as-is from the listing API: epoch ms in practice,
@@ -47,13 +49,14 @@ CREATE TABLE IF NOT EXISTS replays (
     map_width     INTEGER,
     map_height    INTEGER,
     fetched_at    INTEGER,
-    raw           BLOB,
+    wire_data     BLOB,        -- canonical fetched-replay payload: gzip(json(wire-shape array)). See replay_collector/wire.py.
     -- timestamps
     created_at    INTEGER NOT NULL DEFAULT {_NOW_MS},
     updated_at    INTEGER NOT NULL DEFAULT {_NOW_MS}
-    -- Future: decoded_flat TEXT (JSON of the wire-shape array). Lets us query
-    -- into game state via SQLite JSON ops without decompressing in code.
-    -- Adds ~3.3x storage (~5GB at 100k replays). Backfillable from `raw`.
+    -- Existing DBs may still carry a `raw_deprecated` BLOB column (renamed
+    -- from the legacy `raw` by migrations/002_rename_raw_deprecated.py).
+    -- Fresh DBs created from this _SCHEMA do not include it — slated for
+    -- cleanup in a follow-up migration once the migrated DB has soaked.
 );
 
 -- This trigger fires a second UPDATE on every save. On the replays table
@@ -85,7 +88,7 @@ CREATE INDEX IF NOT EXISTS idx_replays_ladder_id           ON replays(ladder_id)
 -- If the Pass-2 work-set query slows as the pending backlog grows, add:
 --   CREATE INDEX IF NOT EXISTS idx_replays_pending_ffa
 --     ON replays(started DESC, id)
---     WHERE ladder_id = 'ffa' AND raw IS NULL;
+--     WHERE ladder_id = 'ffa' AND wire_data IS NULL;
 -- The partial predicate shrinks the index as rows fill, keeping it
 -- proportional to the pending work set rather than the full FFA count.
 """
@@ -130,9 +133,9 @@ signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
 
 
 def has_full_data(replay_id: str) -> bool:
-    """True iff we've fetched and stored the .gior bytes for this replay."""
+    """True iff we've fetched and stored the .gior payload for this replay."""
     cur = get_conn().execute(
-        "SELECT 1 FROM replays WHERE id = ? AND raw IS NOT NULL LIMIT 1",
+        "SELECT 1 FROM replays WHERE id = ? AND wire_data IS NOT NULL LIMIT 1",
         (replay_id,),
     )
     return cur.fetchone() is not None
@@ -142,7 +145,7 @@ def cached_full_replay_stats(
     player_name: str,
 ) -> tuple[int, int | None, int | None]:
     """Return (count, min_started, max_started) of replays where `player_name`
-    appears in the ranking and the .gior bytes are stored."""
+    appears in the ranking and the .gior payload is stored."""
     # NOTE: keys on `players.name`. If a player has been renamed, replays under
     # the old name live in a different `players` row and won't be counted here.
     row = get_conn().execute(
@@ -151,7 +154,7 @@ def cached_full_replay_stats(
         FROM replays r
         JOIN replay_players rp ON rp.replay_id = r.id
         JOIN players p          ON p.id = rp.player_id
-        WHERE p.name = ? AND r.raw IS NOT NULL
+        WHERE p.name = ? AND r.wire_data IS NOT NULL
         """,
         (player_name,),
     ).fetchone()
@@ -162,7 +165,7 @@ def replay_counts_by_player(
     player_names: list[str],
 ) -> list[tuple[str, int, int, int]]:
     """For each name, return (name, total_listings, total_ffa, ffa_metadata_only)
-    where `metadata_only` is FFA listings with no `raw` bytes yet — i.e. the
+    where `metadata_only` is FFA listings with no `wire_data` yet — i.e. the
     Pass 2 (.gior fetch) backlog. Cumulative across all runs. Ordered by
     backlog size, descending. Names with no replay data are absent from the
     result."""
@@ -174,7 +177,7 @@ def replay_counts_by_player(
         SELECT p.name,
                COUNT(*) AS total_listings,
                SUM(CASE WHEN r.ladder_id = 'ffa' THEN 1 ELSE 0 END) AS total_ffa,
-               SUM(CASE WHEN r.ladder_id = 'ffa' AND r.raw IS NULL THEN 1 ELSE 0 END) AS metadata_only
+               SUM(CASE WHEN r.ladder_id = 'ffa' AND r.wire_data IS NULL THEN 1 ELSE 0 END) AS metadata_only
         FROM replays r
         JOIN replay_players rp ON rp.replay_id = r.id
         JOIN players p          ON p.id = rp.player_id
@@ -190,7 +193,7 @@ def pending_full_data_count(player_filter: list[str] | None = None) -> int:
     """Total replays in the Pass 2 backlog under the given filter. Counts
     distinct replays even if multiple filter-listed players are in the same
     game's ranking."""
-    where = ["r.ladder_id = 'ffa'", "r.raw IS NULL"]
+    where = ["r.ladder_id = 'ffa'", "r.wire_data IS NULL"]
     params: list = []
     if player_filter:
         placeholders = ",".join("?" * len(player_filter))
@@ -225,7 +228,7 @@ def pending_full_data_work_set(
     same players — so the round-robin balances among the listed players.
 
     Replays with no listing for any filter-listed player are excluded entirely."""
-    where = ["r.ladder_id = 'ffa'", "r.raw IS NULL"]
+    where = ["r.ladder_id = 'ffa'", "r.wire_data IS NULL"]
     params: list = []
     if player_filter:
         placeholders = ",".join("?" * len(player_filter))
@@ -310,16 +313,17 @@ def upsert_listing(entry: dict) -> bool:
         return True
 
 
-def save_full_data(replay_id: str, raw: bytes, decoded: list) -> None:
-    """Update an existing replay row with .gior bytes + decoded fields.
-    Requires the listing row to exist (call upsert_listing first)."""
+def save_full_data(replay_id: str, decoded: list) -> None:
+    """Update an existing replay row with the gzip+JSON-encoded `wire_data`
+    payload + decoded fields. Requires the listing row to exist (call
+    upsert_listing first)."""
     conn = get_conn()
     with conn:
         cur = conn.execute(
             """
             UPDATE replays
             SET version = ?, map_width = ?, map_height = ?,
-                fetched_at = ?, raw = ?
+                fetched_at = ?, wire_data = ?
             WHERE id = ?
             """,
             (
@@ -327,7 +331,7 @@ def save_full_data(replay_id: str, raw: bytes, decoded: list) -> None:
                 decoded[2],
                 decoded[3],
                 int(time.time() * 1000),
-                raw,
+                wire.encode(decoded),
                 replay_id,
             ),
         )

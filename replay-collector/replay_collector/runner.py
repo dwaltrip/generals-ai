@@ -106,7 +106,7 @@ def _process_entry(
         # TrackedClient already logged + counted toward the budget.
         stats.fetch_errors += 1
         return
-    db.save_full_data(replay_id, raw, decoded)
+    db.save_full_data(replay_id, decoded)
     stats.full_data_fetched += 1
     progress.fetch_done()
     log_saved.info(

@@ -24,8 +24,8 @@ class SweepStats:
     listings_walked: int = 0
     listings_new: int = 0          # upsert_listing returned True
     ffa_total: int = 0
-    ffa_has_full: int = 0          # already have raw bytes
-    ffa_metadata_only: int = 0     # raw IS NULL — Pass 2 budget contribution
+    ffa_has_full: int = 0          # already have wire_data
+    ffa_metadata_only: int = 0     # wire_data IS NULL — Pass 2 budget contribution
     pages_fetched: int = 0
     stop_reason: str = ""          # exhausted | max_listings | user_not_found | error
 
