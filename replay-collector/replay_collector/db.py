@@ -99,20 +99,25 @@ _conn: sqlite3.Connection | None = None
 def get_conn() -> sqlite3.Connection:
     global _conn
     if _conn is None:
-        DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-        _conn = sqlite3.connect(DB_PATH)
-        # WAL lets readers and writers coexist (only writer-vs-writer
-        # serializes), so a long-running fetch-gior doesn't block ad-hoc
-        # query scripts. Persistent property of the DB file.
-        _conn.execute("PRAGMA journal_mode = WAL;")
-        _conn.execute("PRAGMA foreign_keys = ON;")
-        # 64 MB page cache (vs SQLite's 2 MB default). Negative value = KB.
-        _conn.execute("PRAGMA cache_size = -65536;")
-        # Wait up to 5s on writer contention instead of failing immediately.
-        # Already the Python sqlite3 default, but pin it explicitly here.
-        _conn.execute("PRAGMA busy_timeout = 5000;")
-        _conn.executescript(_SCHEMA)
+        _conn = create_conn()
     return _conn
+
+
+def create_conn() -> sqlite3.Connection:
+    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(DB_PATH)
+    # WAL lets readers and writers coexist (only writer-vs-writer
+    # serializes), so a long-running fetch-gior doesn't block ad-hoc
+    # query scripts. Persistent property of the DB file.
+    conn.execute("PRAGMA journal_mode = WAL;")
+    conn.execute("PRAGMA foreign_keys = ON;")
+    # 64 MB page cache (vs SQLite's 2 MB default). Negative value = KB.
+    conn.execute("PRAGMA cache_size = -65536;")
+    # Wait up to 5s on writer contention instead of failing immediately.
+    # Already the Python sqlite3 default, but pin it explicitly here.
+    conn.execute("PRAGMA busy_timeout = 5000;")
+    conn.executescript(_SCHEMA)
+    return conn
 
 
 # Ensure the DB closes on shutdown so SQLite removes its -wal/-shm sidecar
