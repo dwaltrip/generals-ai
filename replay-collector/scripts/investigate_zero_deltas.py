@@ -22,7 +22,7 @@ METRICS = ("ffa", "ffawin")
 
 def load_weekly_boards(metric: str) -> list[dict[str, float]]:
     """Return weeks 1..10 as a list of {username: stars} dicts."""
-    raw = json.loads(DATA.read_text())
+    raw = json.loads(DATA.read_text(encoding="utf-8"))
     snaps = raw["rankings"][1:11]
     return [{e["username"]: e["stars"] for e in snap[metric]} for snap in snaps]
 

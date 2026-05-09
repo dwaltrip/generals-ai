@@ -5,6 +5,7 @@ from replay_collector import db, sweep
 from replay_collector.cli._shared import TMP_DIR, fmt_duration, load_players
 from replay_collector.logging_setup import setup_simple_logging
 from replay_collector.runner import DEFAULT_MAX_FAILURES
+from replay_collector.usernames import display_name
 
 DEFAULT_MAX_LISTINGS_PER_USER = 100_000  # safety rail, not a target
 PASS_TWO_RATE_PER_SEC = 1.0
@@ -36,12 +37,12 @@ def add_parser(sub) -> None:
 
 
 def run(args) -> None:
+    log_path = setup_simple_logging(TMP_DIR, "sweep_metadata")
+    print(f"  log: {log_path}")
+
     players = load_players(args.players_file)
     if not players:
         sys.exit(f"no usernames found in {args.players_file}")
-
-    log_path = setup_simple_logging(TMP_DIR, "sweep_metadata")
-    print(f"  log: {log_path}")
 
     result = sweep.sweep_many(
         players,
@@ -80,7 +81,7 @@ def _format_summary_lines(
     total_metadata_only = sum(r[3] for r in rows)
     est_seconds = int(total_metadata_only / PASS_TWO_RATE_PER_SEC)
 
-    name_w = max(len("player"), max(len(r[0]) for r in rows))
+    name_w = max(len("player"), max(len(display_name(r[0])) for r in rows))
     header = f"  {'player':<{name_w}}  {'listings':>10}  {'ffa_total':>10}  {'metadata_only':>14}"
     sep = "  " + "─" * (len(header) - 2)
 
@@ -92,7 +93,7 @@ def _format_summary_lines(
     ]
     for name, listings, ffa_total, metadata_only in rows:
         lines.append(
-            f"  {name:<{name_w}}  {listings:>10,}  {ffa_total:>10,}  {metadata_only:>14,}"
+            f"  {display_name(name):<{name_w}}  {listings:>10,}  {ffa_total:>10,}  {metadata_only:>14,}"
         )
     lines.append(sep)
     lines.append(

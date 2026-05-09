@@ -18,6 +18,7 @@ from pathlib import Path
 
 from replay_collector.db import create_conn
 from replay_collector.sql_helpers import ffa_match_filter, wire_data_filter
+from replay_collector.usernames import display_name
 
 
 def fetch_by_game_count(top_n: int, require_wire_data: bool) -> list[tuple[str, int]]:
@@ -60,6 +61,10 @@ def main() -> None:
     args = parser.parse_args()
 
     rows = fetch_by_game_count(args.n, args.require_wire_data)
+    # Apply display_name() once so invalid names render via repr() in both
+    # tabular stdout and the CSV output (the CSV may round-trip through
+    # GSheets, which would corrupt embedded control chars).
+    rows = [(display_name(name), games) for name, games in rows]
 
     if args.csv:
         args.csv.parent.mkdir(parents=True, exist_ok=True)

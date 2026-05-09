@@ -17,10 +17,12 @@ import json
 import sys
 from pathlib import Path
 
+from replay_collector.usernames import filter_valid
 
-def load_users(path: Path) -> list[str]:
-    data = json.loads(path.read_text())
-    return data[0]["users"]
+
+def load_users_from_json(path: Path) -> list[str]:
+    data = json.loads(path.read_text(encoding="utf-8"))
+    return filter_valid(data[0]["users"])
 
 
 def main() -> None:
@@ -33,7 +35,7 @@ def main() -> None:
     seen: set[str] = set()
     merged: list[str] = []
     for path in args.inputs:
-        for name in load_users(path)[: args.top]:
+        for name in load_users_from_json(path)[: args.top]:
             if name not in seen:
                 seen.add(name)
                 merged.append(name)

@@ -24,6 +24,8 @@ import json
 import statistics
 from pathlib import Path
 
+from replay_collector.usernames import display_name
+
 EPS = 1e-9
 HALF_EPS = 1e-6
 ROOT = Path(__file__).resolve().parents[1]
@@ -48,7 +50,7 @@ def per_board_inactive(delta: float) -> bool:
 
 def load_boards():
     """Return n_weeks plus per-metric stars and rank lookups indexed by week."""
-    raw = json.loads(DATA.read_text())
+    raw = json.loads(DATA.read_text(encoding="utf-8"))
     snaps = raw["rankings"][1:11]
     n_weeks = len(snaps)
     stars = {m: [] for m in METRICS}
@@ -211,7 +213,7 @@ def print_top_table(rows, n=30):
         cells = []
         for h, w, a in headers:
             if h == "username":
-                name = r["username"]
+                name = display_name(r["username"])
                 if len(name) > w:
                     name = name[:w-1] + "…"
                 cells.append(f"{name:{a}{w}}")
@@ -273,7 +275,9 @@ def main():
         w = csv.DictWriter(f, fieldnames=fields)
         w.writeheader()
         for r in rows:
-            w.writerow({k: r[k] for k in fields})
+            row_out = {k: r[k] for k in fields}
+            row_out["username"] = display_name(row_out["username"])
+            w.writerow(row_out)
     print()
     print(f"full table: {OUT_CSV.relative_to(ROOT)}")
 
