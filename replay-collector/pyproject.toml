@@ -17,3 +17,8 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["replay_collector"]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.3",
+]
