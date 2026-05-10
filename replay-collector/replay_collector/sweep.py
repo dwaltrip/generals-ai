@@ -27,7 +27,7 @@ class SweepStats:
     ffa_has_full: int = 0          # already have wire_data
     ffa_metadata_only: int = 0     # wire_data IS NULL — Pass 2 budget contribution
     pages_fetched: int = 0
-    stop_reason: str = ""          # exhausted | max_listings | user_not_found | error
+    stop_reason: str = ""          # exhausted | max_listings | recency_cutoff | user_not_found | error
 
 
 @dataclass
@@ -62,8 +62,10 @@ def sweep_one(
     recency_cutoff_ms: int | None = None,
 ) -> SweepStats:
     """Walk every page of `username`'s replay listings, upserting each row.
-    No .gior fetches. Stops when the API runs out of pages or `max_listings`
-    is reached (a safety rail, not a target)."""
+    No .gior fetches. Stops when the API runs out of pages, `max_listings`
+    is reached (a safety rail, not a target), or — if `recency_cutoff_ms`
+    is set — the first listing older than the cutoff is encountered (that
+    listing is not processed)."""
     stats = SweepStats(username=username)
 
     if not generals_api.user_exists(client, username):
@@ -76,6 +78,15 @@ def sweep_one(
     for page in generals_api.iter_user_replay_pages(client, username):
         stats.pages_fetched += 1
         for entry in page:
+            if recency_cutoff_ms is not None and entry["started"] < recency_cutoff_ms:
+                log.info(
+                    "[%s] hit recency cutoff at replay %s (started=%s)",
+                    username, entry["id"],
+                    db.format_started_date(entry["started"]),
+                )
+                stats.stop_reason = "recency_cutoff"
+                _log_summary(stats)
+                return stats
             stats.listings_walked += 1
             if db.try_insert_listing(entry):
                 stats.listings_new += 1
@@ -98,7 +109,10 @@ def sweep_one(
 
 
 def sweep_many(
-    usernames: list[str], max_listings: int, max_failures: int
+    usernames: list[str],
+    max_listings: int,
+    max_failures: int,
+    recency_cutoff_ms: int | None = None,
 ) -> SweepRunStats:
     """Sweep every player's full listing history. Owns the shared httpx.Client +
     RateLimiter + TrackedClient. Aborts the run on TooManyFailures; per-user
@@ -111,7 +125,10 @@ def sweep_many(
         try:
             for username in usernames:
                 try:
-                    run.per_user.append(sweep_one(client, username, max_listings))
+                    run.per_user.append(sweep_one(
+                        client, username, max_listings,
+                        recency_cutoff_ms=recency_cutoff_ms,
+                    ))
                 except TooManyFailures as e:
                     run.aborted = True
                     run.abort_reason = str(e)

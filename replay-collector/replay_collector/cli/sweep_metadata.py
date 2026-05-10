@@ -1,3 +1,4 @@
+import datetime as dt
 import sys
 from pathlib import Path
 
@@ -11,8 +12,14 @@ DEFAULT_MAX_LISTINGS_PER_USER = 100_000  # safety rail, not a target
 PASS_TWO_RATE_PER_SEC = 1.0
 
 
-def _parse_cutoff(s: str) -> int:
-    raise NotImplementedError
+def _iso_to_epoch_ms(s: str) -> int:
+    """Parse an ISO 8601 datetime to epoch ms (UTC), comparable to a
+    listing's `started` field. Naive input is anchored to system local
+    time."""
+    cutoff = dt.datetime.fromisoformat(s)
+    if cutoff.tzinfo is None:
+        cutoff = cutoff.astimezone()
+    return int(cutoff.timestamp() * 1000)
 
 
 def add_parser(sub) -> None:
@@ -37,6 +44,13 @@ def add_parser(sub) -> None:
         "--max-failures", type=int, default=DEFAULT_MAX_FAILURES,
         help=f"abort the run after this many HTTP failures (default: {DEFAULT_MAX_FAILURES})",
     )
+    p.add_argument(
+        "--recency-cutoff", type=_iso_to_epoch_ms, default=None,
+        dest="recency_cutoff_ms", metavar="ISO_DATETIME",
+        help="ISO 8601 datetime — stop a player's sweep on the first "
+             "listing older than this. Naive input is treated as system "
+             "local time. Example: 2025-01-15T14:30:00",
+    )
     p.set_defaults(func=run)
 
 
@@ -52,6 +66,7 @@ def run(args) -> None:
         players,
         max_listings=args.max_listings_per_player,
         max_failures=args.max_failures,
+        recency_cutoff_ms=args.recency_cutoff_ms,
     )
 
     _emit_summary(players, log_path)
