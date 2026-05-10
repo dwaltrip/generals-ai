@@ -17,7 +17,7 @@ import sys
 from pathlib import Path
 
 from replay_collector.db import create_conn
-from replay_collector.sql_helpers import ffa_match_filter, wire_data_filter
+from replay_collector.sql_helpers import ffa_match_filter, from_player_games, wire_data_filter
 from replay_collector.usernames import display_name
 
 
@@ -30,9 +30,7 @@ def fetch_by_game_count(top_n: int, require_wire_data: bool) -> list[tuple[str, 
         where.append(wire_data_filter("r"))
     sql = f"""
         SELECT p.name, COUNT(*) AS games
-        FROM replay_players rp
-        JOIN players p ON p.id = rp.player_id
-        JOIN replays r ON r.id = rp.replay_id
+        {from_player_games()}
         WHERE {" AND ".join(where)}
         GROUP BY p.id ORDER BY games DESC, p.name LIMIT ?
     """

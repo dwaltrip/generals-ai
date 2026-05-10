@@ -7,6 +7,7 @@ import time
 
 from replay_collector import wire
 from replay_collector.config import DB_PATH
+from replay_collector.sql_helpers import from_player_games
 
 
 def format_started_date(started: int | None) -> str:
@@ -167,11 +168,9 @@ def cached_full_replay_stats(
     # NOTE: keys on `players.name`. If a player has been renamed, replays under
     # the old name live in a different `players` row and won't be counted here.
     row = get_conn().execute(
-        """
+        f"""
         SELECT COUNT(r.id), MIN(r.started), MAX(r.started)
-        FROM replays r
-        JOIN replay_players rp ON rp.replay_id = r.id
-        JOIN players p          ON p.id = rp.player_id
+        {from_player_games()}
         WHERE p.name = ? AND r.wire_data IS NOT NULL
         """,
         (player_name,),
@@ -196,9 +195,7 @@ def replay_counts_by_player(
                COUNT(*) AS total_listings,
                SUM(CASE WHEN r.ladder_id = 'ffa' THEN 1 ELSE 0 END) AS total_ffa,
                SUM(CASE WHEN r.ladder_id = 'ffa' AND r.wire_data IS NULL THEN 1 ELSE 0 END) AS metadata_only
-        FROM replays r
-        JOIN replay_players rp ON rp.replay_id = r.id
-        JOIN players p          ON p.id = rp.player_id
+        {from_player_games()}
         WHERE p.name IN ({placeholders})
         GROUP BY p.name
         ORDER BY metadata_only DESC, p.name
@@ -220,9 +217,7 @@ def pending_full_data_count(player_filter: list[str] | None = None) -> int:
 
     sql = f"""
         SELECT COUNT(DISTINCT r.id)
-        FROM replays r
-        JOIN replay_players rp ON rp.replay_id = r.id
-        JOIN players p          ON p.id = rp.player_id
+        {from_player_games()}
         WHERE {" AND ".join(where)}
     """
     return get_conn().execute(sql, params).fetchone()[0]
@@ -258,9 +253,7 @@ def pending_full_data_work_set(
             SELECT r.id     AS replay_id,
                    r.started,
                    MIN(p.name) AS owner_name
-            FROM replays r
-            JOIN replay_players rp ON rp.replay_id = r.id
-            JOIN players p          ON p.id = rp.player_id
+            {from_player_games()}
             WHERE {" AND ".join(where)}
             GROUP BY r.id, r.started
         )
