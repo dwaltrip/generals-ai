@@ -11,6 +11,10 @@ DEFAULT_MAX_LISTINGS_PER_USER = 100_000  # safety rail, not a target
 PASS_TWO_RATE_PER_SEC = 1.0
 
 
+def _parse_cutoff(s: str) -> int:
+    raise NotImplementedError
+
+
 def add_parser(sub) -> None:
     p = sub.add_parser(
         "sweep-metadata",

@@ -56,7 +56,10 @@ def _log_summary(stats: SweepStats) -> None:
 
 
 def sweep_one(
-    client: TrackedClient, username: str, max_listings: int
+    client: TrackedClient,
+    username: str,
+    max_listings: int,
+    recency_cutoff_ms: int | None = None,
 ) -> SweepStats:
     """Walk every page of `username`'s replay listings, upserting each row.
     No .gior fetches. Stops when the API runs out of pages or `max_listings`
