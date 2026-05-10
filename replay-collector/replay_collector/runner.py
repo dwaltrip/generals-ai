@@ -82,7 +82,7 @@ def _process_entry(
     """Upsert one listing and (for FFA games) fetch full data unless we
     already have it. Updates `stats` and pings `progress` per fetch."""
     stats.listings_walked += 1
-    if db.upsert_listing(entry):
+    if db.try_insert_listing(entry):
         stats.new_listings += 1
 
     if entry.get("ladder_id") not in FULL_DATA_LADDER_ID_FILTER:

@@ -22,7 +22,7 @@ class SweepStats:
     username: str
     user_exists: bool = True
     listings_walked: int = 0
-    listings_new: int = 0          # upsert_listing returned True
+    listings_new: int = 0          # try_insert_listing returned True
     ffa_total: int = 0
     ffa_has_full: int = 0          # already have wire_data
     ffa_metadata_only: int = 0     # wire_data IS NULL — Pass 2 budget contribution
@@ -74,7 +74,7 @@ def sweep_one(
         stats.pages_fetched += 1
         for entry in page:
             stats.listings_walked += 1
-            if db.upsert_listing(entry):
+            if db.try_insert_listing(entry):
                 stats.listings_new += 1
             if entry.get("ladder_id") == "ffa":
                 stats.ffa_total += 1

@@ -281,7 +281,7 @@ def _player_id(conn: sqlite3.Connection, name: str) -> int:
     return cur.lastrowid
 
 
-def upsert_listing(entry: dict) -> bool:
+def try_insert_listing(entry: dict) -> bool:
     """Insert a listing-derived replay row + its ranking junction rows.
     No-op if a row with this id already exists. Returns True if inserted."""
     replay_id = entry["id"]
@@ -327,7 +327,7 @@ def upsert_listing(entry: dict) -> bool:
 def save_full_data(replay_id: str, decoded: list) -> None:
     """Update an existing replay row with the gzip+JSON-encoded `wire_data`
     payload + decoded fields. Requires the listing row to exist (call
-    upsert_listing first)."""
+    try_insert_listing first)."""
     conn = get_conn()
     with conn:
         cur = conn.execute(
@@ -348,5 +348,5 @@ def save_full_data(replay_id: str, decoded: list) -> None:
         )
         if cur.rowcount == 0:
             raise ValueError(
-                f"no listing row for {replay_id}; call upsert_listing first"
+                f"no listing row for {replay_id}; call try_insert_listing first"
             )
