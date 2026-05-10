@@ -39,6 +39,8 @@ The S3 bucket is public and unauthenticated. There is a separate bucket `general
 
 The `id` is what feeds into the S3 URL. There is no documented filter-by-username param on this endpoint (`u=` is ignored).
 
+`started` is unix milliseconds, **UTC** (verified 2026-05-10 by cross-referencing a self-played game's wall-clock time).
+
 ### S3 serving behavior
 
 Replay objects on `generalsio-replays-na` are served by Amazon S3 with:

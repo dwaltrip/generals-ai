@@ -11,13 +11,14 @@ from replay_collector.sql_helpers import from_player_games
 
 
 def format_started_date(started: int | None) -> str:
-    """`started` is stored as-is from the listing API: epoch ms in practice,
-    but very old replays may be epoch-seconds. The 1e12 boundary distinguishes
-    them (≈ 2001-09 in ms, ≈ 33658 AD in seconds)."""
+    """`started` is stored as-is from the listing API: epoch ms in UTC
+    (verified 2026-05-10 by cross-referencing a self-played game).
+    generals.io launched in 2017, so every real timestamp is well past
+    the ms/seconds ambiguity boundary. Rendered in system local time
+    via naive fromtimestamp()."""
     if started is None:
         return "?"
-    seconds = started / 1000 if started > 1e12 else started
-    return dt.datetime.fromtimestamp(seconds).strftime("%Y-%m-%d")
+    return dt.datetime.fromtimestamp(started / 1000).strftime("%Y-%m-%d")
 
 _NOW_MS = "(CAST(unixepoch('subsec') * 1000 AS INTEGER))"
 
@@ -40,7 +41,7 @@ CREATE TABLE IF NOT EXISTS replays (
     -- from listing API (always populated)
     type          TEXT NOT NULL,
     ladder_id     TEXT,
-    started       INTEGER NOT NULL,
+    started       INTEGER NOT NULL,  -- epoch ms (UTC) from listing API; see format_started_date()
     turns         INTEGER NOT NULL,
     player_count  INTEGER NOT NULL,
     -- from .gior fetch (null until fetched)
