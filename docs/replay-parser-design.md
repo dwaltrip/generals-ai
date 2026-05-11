@@ -2,7 +2,7 @@
 
 **Date:** 2026.05.07
 
-**Status:** **Working draft.** High-level design and key decisions captured; nitty-gritty implementation details deferred. Several early-implementation TODOs flagged in §11 to resolve before/during simulator code.
+**Status:** **Working draft.** High-level design and key decisions captured; nitty-gritty implementation details deferred.
 
 **Companion docs:**
 - `replay-format.md` — `.gior` wire format reference (v18)
@@ -59,9 +59,9 @@
   - All modifier tile arrays empty (swamps, deserts, tunnels, lookouts, observatories, strongholds) — defensive cross-check against the `modifiers` slot
   - Custom map slot (`map`) null
   - Chess-clock slot (`chessClockTimingsByMove`) null
+  - `generalTrades` slot empty (mutual-general-swap mechanic; ~1.8% of v16+ FFA games per the filter-counts report — cheap drop, mechanic implementation deferred per §11.3)
 - A **filter-counts report runs first** against the existing corpus to surface the actual distribution before commitments harden. Want to see the real numbers before locking the filter rules in code.
 - Per `compute-considerations.md`: expected ~60% filter survival → ~81k filtered replays.
-- See §11 for the open question on `generalTrades` (FFA position-swap mechanic): may add as an additional filter for v1.
 
 ---
 
@@ -93,7 +93,7 @@ What the parser must do (v1 scope):
 - **Wire-shape decode** — done in `replay_collector`.
 - **Wire → typed records**, with version gating (chat ≥ v9, `generalTrades` ≥ v16, strongholds ≥ v18). Wraps positional arrays into named-field records.
 - **Map-orientation handling** (`player_transforms` slot 25): per-player flip-x / flip-y / transpose flag the live client uses for fairness. Must be applied per-perspective so each player's general appears in a consistent orientation. High blast radius if missed — easy to forget, produces silently inconsistent training data.
-- **Game simulator** (the hard part): per-turn production (general + each owned city), per-round land tick (every 25 turns, +1 on every owned tile), move resolution with the inward-first chain rule, capture mechanics (army halving, territory transfer, captured general → city), surrender countdown for AFK'd players, simultaneous-mutual-capture position swap (if implemented — see §11).
+- **Game simulator** (the hard part): per-turn production (general + each owned city), per-round land tick (every 25 turns, +1 on every owned tile), move resolution with the priority sort + inward-first dependency check (`game-mechanics.md` §6), capture mechanics (army halving, territory transfer, captured general → city), AFK lifecycle driven by the `afks` array (paired kill / neutralize events).
 - **Per-perspective state tracking**: raw simulator state is per-game; action targets are per-perspective.
 - **Action extraction**: each `[index, start, end, is50, turn]` is the supervised target for the moving player at that timestep; non-moving frames target "pass". Action space is settled in `network-architecture-design.md` §4: per-cell `[pass + 4 directions × 2 splits]`.
   - **Pass-frame rate** (napkin-math from user experience; verify empirically once parser produces samples): ~30–45% corpus-wide. Decomposes into:
@@ -101,9 +101,20 @@ What the parser must do (v1 scope):
     - ~80% **normal** games — pass-rate < 30%, often much lower.
   - 30–45% sits comfortably inside vanilla-cross-entropy comfort range; no class-weighting expected at v1. Revisit only if empirical rate exceeds ~80%.
 - **Metadata enrichment** per MVP §2: player_id, rating-at-game-start, placement, elim turn, perspective index, etc.
-- **Filter-counts report** (one-shot script, runs before any corpus parse). Reports: per-filter survival counts (how many drop to each rule in §4), version-distribution histogram (confirms ≥ v15 cutoff), `generalTrades` frequency in surviving games (informs §11.3), per-curated-player game counts + rolling win-rate distributions (informs §5 threshold tuning), and per-game perspective yield under the curated-list filter (confirms or revises §8 sample-volume estimates).
-- **Robustness**: skip-and-log on decode failures (`ReplayDecodeError` from `replay_collector/generals_api.py:decompress_gior`); a malformed `.gior` should never abort a corpus parse.
+- **Robustness**: skip-and-log on decode failures from `replay_collector/wire.py:decode` (the canonical decoder for the DB's `wire_data` BLOB); a malformed wire-data row should never abort a corpus parse.
 - **Validation harness** (see §10).
+
+**Simulator orchestration order (per timestep):**
+
+1. Process pending AFK events from the `afks` array (events with `turn <= current_turn`).
+2. Buffer pending moves from the `moves` array into per-player queues (preserve array order).
+3. Resolve at most one move per player via the priority sort + inward-first dependency check; execute combats and captures.
+4. Increment the turn counter.
+5. Every 2nd timestep: generals + each owned city produce +1 army.
+6. Every 50th timestep: each owned tile gains +1 army (the land tick).
+7. Recompute scores; check for game-end (one player remaining, or one of the synthetic fallbacks in `game-mechanics.md` §9 fires).
+
+Stop processing pending AFK events the moment game-end is reached — empirically, ~63% of AFK'd players have only the kill event in their replay record because the game ended or another player captured them before the 50-step neutralize countdown expired.
 
 ---
 
@@ -139,51 +150,38 @@ What the parser must do (v1 scope):
 
 ## 10. Validation strategy
 
-- **Final-state ownership check**: simulator's end-of-game state matches the replay's ranking. Source of ranking: the listings API, stored in `replay_players` in the collector DB. The wire format itself does not carry it.
-- **Spot checks**: dump rendered timesteps from a few games, compare against the in-browser replay player on generals.io.
-- **Automated ground-truth diff** (candidate, worth doing before any major training run): small Node-side harness using the saved live JS bundle's `deserialize` (`research/gior-format/generals-main-prod-v31.4.1-d51b92c0.js`, authoritative for current mechanics) to dump per-tile per-timestep state for a handful of games; diff against parser output. Could also seed with hand-collected ground-truth captures from the official replay viewer. Strongest available signal for catching per-tile simulator drift — exactly the failure mode the other paths miss. Specifics deferred.
+The v1 quality gate is **placement-outcome ranking-match** across the filtered corpus. Other signals are useful checks but secondary.
+
+- **Primary: placement-outcome ranking-match.** For each filtered replay, the simulator's deduced final ranking must equal the listings-API ranking stored in `replay_players` in the collector DB. The ranking is computed from end-of-game state via the bundle's `lbSort` tiebreak (players with kills outrank kill-less players regardless of army totals; then alive > dead; then dead-players by reverse death order; then total army desc, tile count desc, player index asc). **Target ≥ 99.9%** match across ~170k filtered games (≤ ~170 mismatches); stretch ≥ 99.99%. Bundle-independent server-truth signal.
+- **Spot checks**: dump rendered timesteps from a few games, compare against the in-browser replay player on generals.io. Cheap qualitative check during parser development.
+- **JS bundle diff (deferred until needed).** Node-side harness using the saved JS bundle's `deserialize` (`research/gior-format/generals-main-prod-v31.4.1-d51b92c0.js`) to dump per-tile per-timestep state; diff against parser output. The bundle is our most-documented reference implementation, but it is the replay-viewer's reconstruction — historical bugs exist. Useful for diagnosing per-tile drift if ranking-match plateaus below target, but not a primary gate.
 - **Wire-slot cross-check**: first 14 slots vs. legacy JS parser (`vzhou842/generals.io-Replay-Utils`) — useful for slot decoding only, not v18 mechanics.
+- **Live-game observation capture (deferred).** Capture per-timestep observations from the live server over the WebSocket during a small set of real games; diff against parser output. Per-timestep server-truth — the gold standard — but a meaningful chunk of infrastructure to build. Spin up only if ranking-match plateaus and per-timestep diagnosis is required.
 - **Round-trip parser ↔ live decoder**: deferred to bucket 3 (live deployment work). Per MVP §4: dry-run on a recorded game, compare live-decoded observations to parser-decoded observations of the same game. Catches format mismatches before they show up as bad live play.
 
 ---
 
-## 11. Early-implementation TODOs (resolve before / during simulator code)
+## 11. Early-implementation TODOs
 
-These are concrete unknowns whose resolution is required for simulator correctness. They're empirical questions, not design questions — flagged here so they aren't quietly skipped.
+Resolved 2026-05-11 via JS bundle reading + empirical sanity checks. Player-facing rules folded into `generals-io-game-mechanics.md`; bundle line refs preserved in its appendix.
 
-### 11.1 Surrender / AFK countdown duration
+### 11.1 Surrender / AFK countdown — Resolved
 
-- **The unknown:** when a player goes AFK or surrenders, the `afks` array records the moment. But the duration of the countdown before their territory transitions to neutral (and their general/cities become neutral cities) is not in the replay format. `game-mechanics.md` §11 estimates ~10–15 turns; not confirmed.
-- **Verification approaches** (multiple paths, fastest first):
-  1. **Read the live JS bundle's countdown logic directly** (`research/gior-format/generals-main-prod-v31.4.1-d51b92c0.js` — already saved, authoritative for current mechanics). Gives the exact constant in one shot.
-  2. Pick representative games with at least one AFK / surrender event. Manually inspect when the AFK'd player issued their final move in the replay data.
-  3. Cross-reference against the official web-based replay browser on generals.io to see when their territory visually transitions to neutral.
-  4. Cross-check via capture events: a surrendered player can only be **captured** before they convert to neutral tiles. Capture events on AFK'd players bound the countdown from below.
-- **Per-version verification:** check several games for each `version` value present in the corpus to detect breaking changes across versions.
+The countdown is **50 timesteps** at the standard game speed (= 25 turns / 25 seconds / one full round). However, the replay records both the kill and neutralize moments as paired entries in the `afks` array — drive both directly from the data rather than hardcoding the constant. Empirically only ~37% of AFK'd players have both events in the replay (the rest have only the kill: game ended or capture pre-empted the countdown). The simulator must stop processing AFK events past game-end.
 
-### 11.2 `moves[].turn` timestep-within-turn disambiguation
+### 11.2 `moves[].turn` timestep-within-turn — Resolved
 
-- **The unknown:** the wire format stores only `turn` per move, not which of the 2 timesteps within that turn the move belongs to. Each player can move twice per turn. Combat resolution depends on co-timestep ordering (the inward-first chain rule operates within a single timestep), so getting this wrong silently desyncs simulator output from server truth → corrupted BC training data.
-- **Working assumption:** array order within `moves` is authoritative — same player's moves with the same `turn` are listed in timestep order.
-- **Verification:** read the live JS bundle's `deserialize` / move-replay code in `research/gior-format/generals-main-prod-v31.4.1-d51b92c0.js` to confirm or correct. The cost of verification is low; the cost of getting it wrong is silent corpus corruption.
+Array order within `moves` is authoritative. The bundle drains all moves with `turn <= current_turn` into per-player input buffers in array order, then consumes one move per player per timestep. Same-`turn` moves for the same player therefore execute across consecutive timesteps in array order.
 
-### 11.3 `generalTrades` (slot 27) — FFA position-swap mechanic
+### 11.3 `generalTrades` — Resolved (filter, not implement)
 
-- **What it is:** when two players capture each other's generals on the **same timestep**, instead of resolving via tie-breaker, both players survive and **swap positions** — tiles, generals, cities, armies, all of it. Recent FFA addition (v ≥ 16 per the wire format). Surprising but works well as a game mechanic.
-- **v1 decision: Open / TBD.** Two paths:
-  - **Implement** the swap mechanic in the simulator.
-  - **Filter** games with non-empty `generalTrades` out of the corpus.
-- **Decision criteria:** how often does this actually happen in our 81k filtered FFA games (a count is cheap), and how complex is it to implement correctly relative to the rest of the simulator? Likely deferred to the filter approach for v1 unless the implementation is trivial.
+Filter out games with non-empty `generalTrades`. ~1.8% of v16+ FFA games (filter-counts report). Added to the §4 hard-filter list. Mutual-general-swap implementation deferred indefinitely.
 
-### 11.4 Tie-resolution edge cases (`game-mechanics.md` §11.1–11.3)
+### 11.4 Tie-resolution edge cases — Resolved
 
-`game-mechanics.md` §11 documents three mechanics that the simulator must resolve but whose exact rules are unconfirmed:
+All three (convergent moves, two-attacker, production-on-capture) reduce to the v15+ priority sort + sequential resolution. Within a timestep, moves are sorted by: defensive-first, general-attacks-last, larger-source-army-first, input-order tiebreak. The inward-first rule is applied as a dependency check on top of the sort. For production-on-capture: moves resolve first, then turn counter increments, then production runs against the post-move state — a capture this timestep produces for the new owner immediately if the new turn is a production turn.
 
-- **Convergent moves with exact-tie armies** (mechanics §11.1): two players moving onto the same neutral tile simultaneously with armies differing by 1 — does the larger capture with 1 remaining, or is it treated as a tie?
-- **Two simultaneous attackers on one defender** (mechanics §11.2): exact resolution order unknown (player index? larger army first? something else?).
-- **Production timing on capture** (mechanics §11.3): if a city is captured on a timestep coincident with a turn boundary or the land tick, does it produce for the new owner that turn? Believed "next tick" but unconfirmed.
-
-**Verification:** same paths as §11.1 — read the live JS bundle's resolution code directly, then cross-check against representative replays where these edge cases occur. All three have the same blast-radius property as the items in §12 — silent simulator drift if mis-implemented.
+Full statement of these rules: `generals-io-game-mechanics.md` §6, §7, §9.
 
 ---
 
@@ -192,7 +190,6 @@ These are concrete unknowns whose resolution is required for simulator correctne
 - **Move-priority chain rule** (inward-first) — `game-mechanics.md` §6. Must match server resolution exactly.
 - **`player_transforms` orientation** — easy to forget; produces silently inconsistent map orientation across training data if missed.
 - **Half-turn vs. turn semantics** — DB and wire `turn`/`turns` fields are half-turns (= timesteps = one move per player). No ×2 conversion. Notational landmine.
-- See §11 for the unresolved-but-tractable empirical questions.
 
 ---
 

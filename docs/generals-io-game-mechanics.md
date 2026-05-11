@@ -6,6 +6,8 @@
 
 **Scope:** This document covers the standard FFA and 1v1 game mode. It does not cover team modes, custom games, special events, or other variants.
 
+**Appendix:** [`game-mechanics-appendix-resolved-ambiguities.md`](./game-mechanics-appendix-resolved-ambiguities.md) — implementation-reference notes on mechanics details that were once unconfirmed and have since been resolved against the live JS client bundle.
+
 ---
 
 ## 1. Overview
@@ -106,14 +108,21 @@ Every owned tile gains +1 army. A player with 100 land gains +100 army in a sing
 
 **The "leave 1 behind" rule and its implications:** because movement always leaves at least 1 army on the source tile, non-combat movement never decreases owned territory. Once you own a tile, you own it until an opponent captures it by force. There is no mechanic for voluntarily abandoning territory.
 
-**Simultaneous execution:** all players' moves for a given timestep are submitted simultaneously, but when moves interact, they are resolved in a deterministic priority order.
+**Simultaneous execution:** all players' moves for a given timestep are submitted simultaneously. When moves interact, they are resolved in a deterministic priority order.
 
-**The "inward-first" rule:** for any pair of moves m1 and m2, if m1's destination is m2's source tile, then m1 executes before m2. Intuitively, a tile must face an incoming move before it can execute its own outgoing move. This has two important consequences:
+**Move priority order.** Within a single timestep, the simultaneous moves are sorted by:
+
+1. **Defensive moves first.** Moves that move armies onto a tile already owned by the moving player (or teammate) are processed before moves that attack another player.
+2. **General-captures last.** Among attacking moves, attacks on an opponent's general tile resolve after other attacking moves.
+3. **Larger source army first.** Among moves of the same class, the move originating from the tile with more armies resolves first.
+4. **Input order tiebreak.** If still tied, the move submitted earlier in the timestep takes priority.
+
+**The "inward-first" rule:** for any pair of moves m1 and m2, if m1's destination is m2's source tile, then m1 executes before m2 — regardless of where the priority order above would otherwise have placed them. Intuitively, a tile must face an incoming move before it can execute its own outgoing move. This has two important consequences:
 
 - **Defending/chasing is favored.** If m1 attacks the tile that m2 is trying to move away from, m1 lands first. m2's source tile absorbs the hit — its army is reduced (or the tile is captured entirely) — before m2's outgoing move resolves. If m1 captures the tile, m2's move is canceled.
 - **The rule chains.** If m3's source tile is m2's destination, then m2 executes before m3 by the same logic. Combined with the above, the execution order for a chain m1 → m2 → m3 (where each move's destination is the next move's source) is: m1 first, then m2, then m3.
 
-**Convergent moves:** when two players move onto the same neutral tile simultaneously, it is resolved as combat between the two arriving armies. The larger army takes the tile with the difference as its garrison.*
+**Convergent moves:** when two players move onto the same neutral tile simultaneously, the moves resolve in sequence under the priority order. The mover with more armies on their source tile captures the empty tile first; the second player's move then attacks the now-occupied tile as normal combat (see §7). The net effect: the tile goes to the player with the larger source army, with garrison equal to the difference between the two sent armies. If the two source armies are exactly equal, the input-order tiebreak applies, and the resulting garrison is 0 (defender's advantage in tied combat).
 
 ---
 
@@ -130,6 +139,8 @@ Combat occurs when a player moves onto a tile owned by an opponent (or a neutral
 **If armies are equal:** the defender wins (defender's advantage). The tile stays with the defender at 0 army.
 
 **Effective capture threshold:** to capture a tile with `d` defending armies using a normal move, you need at least `d + 2` armies on your source tile — `d + 1` to overcome the defender, plus 1 to leave behind. For a split move, you need at least `2 * (d + 1)` on the source tile.
+
+**Multiple simultaneous attackers.** When two or more players attack the same tile in the same timestep, the moves resolve sequentially per the move priority order (§6). Each successive attacker sees the post-resolution state of the defending tile — which may have been weakened or captured by an earlier-resolving move.
 
 ---
 
@@ -152,8 +163,8 @@ The scoreboard is symmetric — opponents can make the same inferences about you
 
 **Inheritance:** the capturing player inherits all of the eliminated player's territory — land, cities, and armies. Two important details:
 
-- **The captured general becomes a city.** It functions identically to any other owned city: produces +1 army per turn, can be contested and captured by other players, etc.
-- **Inherited armies are halved.** All army counts on the defeated player's tiles are divided by 2 (rounded down) when ownership transfers to the capturing player. A tile that had 10 armies under the defeated player will have 5 armies under the new owner.
+- **The captured general becomes a city.** It functions identically to any other owned city: produces +1 army per turn, can be contested and captured by other players, etc. The army count on this tile is whatever was left after the capturing combat — the halving rule below does not apply to it (it has already absorbed the combat damage).
+- **Inherited armies are halved (rounded upward).** Army counts on the defeated player's other tiles are halved when ownership transfers to the capturing player. A tile with 10 armies becomes 5 under the new owner; a tile with 11 becomes 6.
 
 **Notification:** Player captures are announced globally as a system-message in the game chat.
 
@@ -162,13 +173,27 @@ The scoreboard is symmetric — opponents can make the same inferences about you
 
 **Game end:** the game ends when only one general remains.
 
-**Surrender / disconnect:** a player may surrender at any time. Surrender is not instant — there is a countdown period* during which the surrendering player is still in the game and their general is still capturable. This countdown exists to protect opponents who were actively fighting the surrendering player: without it, a surrender would deny them the capture and inheritance they were about to earn. The rule also applies to disconnects.
+**Synthetic game-end conditions.** In rare situations where the normal one-general condition doesn't trigger, the game ends via one of two safety fallbacks:
+
+- **All-AFK fallback.** If no moves are made by any player for 2000 consecutive timesteps (~17 minutes at normal speed), all remaining players except the strongest (by total army count, then tile count) are eliminated — the strongest is declared the winner.
+- **Maximum game length.** Games are capped at 50000 timesteps (~7 hours at normal speed). At the cap, the same "kill all but the leader" fallback fires.
+
+**Surrender / disconnect:** a player may surrender at any time. Surrender is not instant — there is a **25-turn countdown** (50 timesteps, 25 seconds at normal game speed; one full round) during which the surrendering player is still in the game and their general is still capturable. This countdown exists to protect opponents who were actively fighting the surrendering player: without it, a surrender would deny them the capture and inheritance they were about to earn.
+
+The rule also applies to disconnects, except that disconnect uses a 1-timestep countdown — effectively immediate.
+
+**During the countdown:** the surrendering player is marked as eliminated and can no longer issue moves, but their tiles remain under their ownership. Their general and cities continue to produce armies. Other players can attack and capture their tiles and general normally during this window.
 
 After the countdown expires:
 
 - All of the surrendering player's tiles convert to neutral, with army values unchanged.
 - The general and cities become neutral cities, garrisoned with whatever army count they had on the final tick of the countdown.
 - Non-structure tiles become neutral land with retained armies (see "neutral armies" in §2).
+
+**Two ways the countdown can be cut short:**
+
+- **Captured first.** If another player captures the surrendering player's general before the countdown expires, the normal capture-and-inheritance rules apply. No neutralization happens — the player is already captured, and the captor inherits everything per the rules above.
+- **Game ends first.** If the surrender drops the game to a single remaining player (a common outcome of late-game surrender), the game ends immediately. No neutralization needed.
 
 ---
 
@@ -194,14 +219,3 @@ After the countdown expires:
 
 **The power of capturing.** There are two ways to gain land. (1) Traverse and capture neutral tiles one move at a time **or** (2) gain all land from a player by attacking and capturing their general tile. Capturing the general of a player with 100 owned tiles increases your land by +100 in a single move, while accomplishing that through neutral tiles would take 100 moves. In actuality, winning a fight may take many moves, but the core framing is very important and is a key part of the strategy. Killing other players is often the fastest way to grow stronger. And it's compounded by the fact that "other players" can be viewed as a "limited resource" that one must compete for. If player A captures player B, that general is gone (it's now a city), and no one else can capture that player and gain that entire set of tiles in one fell swoop.
 
----
-
-## 11. Ambiguities / needs confirmation
-
-The following details are unconfirmed and should be tested and resolved when building the replay parser or simulator.
-
-1. **Convergent moves and ties.** When two players move onto the same neutral tile simultaneously and their armies differ by exactly 1, does the larger army capture the tile with 1 remaining? Or is it treated as effectively a tie? (Referenced in §6.)
-2. **Two attackers on one defender.** When two players simultaneously attack a tile owned by a third player, the exact resolution order is unknown. Possibilities include: one attack is prioritized by player index, larger army moves first, or something else entirely.
-3. **Production timing on capture.** If a city is captured on the same timestep as a turn boundary, does it produce for the new owner that turn, or starting the next turn? Same question for the land tick — do tiles captured on the exact timestep of a land tick receive the +1? Believed to be "next tick" but not confirmed.
-4. **Surrender countdown duration.** The surrender countdown is believed to be approximately 10–15 turns but the exact value is unconfirmed.
-4. **Disconnect trigger:** When is a player considered disconnected and how is it represented in the replay data? Is that the moment the "surrender countdown" starts? For the 2nd question, the answer is believed to be "yes". But both questions need confirmation.
