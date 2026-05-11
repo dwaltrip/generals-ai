@@ -8,4 +8,8 @@ to a shared library is mechanical.
 
 Add a new file here only when the parser actually needs something from
 the corresponding upstream module. Don't pre-mirror speculatively.
+
+The "route through here" rule is enforced by ruff (see `[tool.ruff]` in
+the workspace root `pyproject.toml`): direct `replay_collector` imports
+elsewhere in `replay-parser/` are flagged as TID251.
 """

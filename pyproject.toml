@@ -18,3 +18,13 @@ dev = [
 
 [tool.pytest.ini_options]
 addopts = "--import-mode=importlib"
+
+[tool.ruff.lint]
+select = ["TID"]
+
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+"replay_collector".msg = "Import via replay_parser._collector.* instead of replay_collector directly"
+
+[tool.ruff.lint.per-file-ignores]
+"replay-parser/replay_parser/_collector/**/*.py" = ["TID251"]
+"replay-collector/**/*.py" = ["TID251"]
