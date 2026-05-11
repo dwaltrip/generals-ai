@@ -21,6 +21,7 @@ Usage (from replay-collector/):
     uv run python scripts/filter_counts_report.py
 """
 
+import csv
 import datetime as dt
 import json
 import logging
@@ -647,6 +648,251 @@ def compute_section_3(conn, curated: list[str]) -> dict:
     }
 
 
+# --- Renderers ---------------------------------------------------------------
+
+
+def _pct(num: int, denom: int) -> str:
+    return f"{(100.0 * num / denom):.2f}%" if denom else "—"
+
+
+def _fmt_hist(hist: dict) -> str:
+    """Render a {bucket_edge: count} histogram as aligned lines.
+    Bucket edges are strings like '0.00', '0.05', ..., '1.00'."""
+    if not hist:
+        return "  (empty)"
+    total = sum(hist.values())
+    edges = sorted(hist.keys(), key=lambda s: float(s))
+    max_count = max(hist.values()) or 1
+    lines = []
+    for edge in edges:
+        cnt = hist[edge]
+        bar = "█" * int(40 * cnt / max_count)
+        # The "1.00" bucket holds rates exactly == 1.0 (small-prior edge cases),
+        # not a [1.00, 1.05) range. Render it as "= 1.00".
+        label = "    = 1.00" if edge == "1.00" else f"{edge}–{float(edge)+0.05:.2f}"
+        lines.append(
+            f"  {label}  {cnt:>7}  {_pct(cnt, total):>7}  {bar}"
+        )
+    return "\n".join(lines)
+
+
+def render_markdown(data: dict) -> str:
+    lines: list[str] = []
+    a = lines.append
+
+    a("# Replay corpus filter-counts report")
+    a("")
+    a(f"_Generated: {data['generated_at']}_")
+    a(f"_DB: `replay-collector/data/generals.sqlite`_")
+    a("")
+
+    cl = data["curated_list"]
+    a("## Curated list")
+    a("")
+    a(f"Union of {len(cl['files'])} files, {cl['unique_valid_names']} unique valid names.")
+    a("")
+    a("| file | raw | valid |")
+    a("|---|---:|---:|")
+    for path, d in cl["files"].items():
+        a(f"| `{path}` | {d['raw']} | {d['valid']} |")
+    a("")
+
+    g = data["corpus_at_a_glance"]
+    a("## Corpus at a glance")
+    a("")
+    a(f"- FFA listings total: **{g['ffa_listings_total']:,}**")
+    a(f"- FFA with `wire_data` (funnel input): **{g['ffa_with_wire_data']:,}**")
+    a(f"- Non-FFA listings (ignored): {g['non_ffa_listings']:,}")
+    a("")
+    a("Pre-funnel version histogram (FFA + wire_data):")
+    a("")
+    a("| version | n |")
+    a("|---:|---:|")
+    for v, n in g["version_histogram_pre_funnel"].items():
+        a(f"| {v} | {n:,} |")
+    a("")
+
+    f = data["funnel"]
+    total_input = g["ffa_with_wire_data"]
+    a("## Section 1 — Vanilla FFA Filters funnel (§4)")
+    a("")
+    a(f"Starting from {total_input:,} FFA replays with `wire_data` present.")
+    a("")
+    a("| # | stage | drops | cumulative survivors | % of input |")
+    a("|---:|---|---:|---:|---:|")
+    surv = total_input
+    for i, stage in enumerate(FUNNEL_STAGES):
+        drop = f["drops"][stage]
+        surv -= drop
+        a(f"| {i} | {stage} | {drop:,} | {surv:,} | {_pct(surv, total_input)} |")
+    a("")
+    a(f"**Final survivors: {f['survivor_count']:,} ({_pct(f['survivor_count'], total_input)} of input)**")
+    a("")
+    if f["decode_error_count"]:
+        a(f"Decode failures: {f['decode_error_count']} (sample: {f['decode_error_sample'][:3]})")
+        a("")
+
+    rule5 = f["rule5_per_array_breakdown"]
+    if rule5:
+        a("### Rule 5 — modifier tile arrays (defensive cross-check)")
+        a("")
+        a("**Non-zero.** Per-array breakdown of games where `modifiers` slot is")
+        a("empty but a tile-array slot is non-empty:")
+        a("")
+        for name, cnt in sorted(rule5.items(), key=lambda kv: -kv[1]):
+            a(f"- {name}: {cnt:,}")
+        a("")
+        a("Likely cause: weekend-event FFA games that added these modifier tiles")
+        a("to the regular ladder without registering an ID in the `modifiers` slot.")
+        a("Worth spot-checking a handful in the in-browser replay viewer to decide")
+        a("whether to keep or filter for the parser corpus.")
+        a("")
+    else:
+        a("Rule 5 per-array breakdown: all zero (defensive cross-check is a no-op).")
+        a("")
+
+    s2 = data["section_2"]
+    n_survivors = f["survivor_count"]
+    a("## Section 2 — Standalone counts on §4 survivors")
+    a("")
+
+    gt = s2["general_trades"]
+    a("### generalTrades (slot 27, v ≥ 16 only)")
+    a("")
+    a(f"- Non-empty overall: **{gt['non_empty_overall']:,}** ({_pct(gt['non_empty_overall'], n_survivors)})")
+    a("")
+    a("| version | non-empty | total | rate |")
+    a("|---:|---:|---:|---:|")
+    for v, d in gt["by_version"].items():
+        a(f"| {v} | {d['non_empty']:,} | {d['total']:,} | {d['rate']*100:.2f}% |")
+    a("")
+    a("Implication for §11.3: at v16+ this is the corpus cost of filtering vs.")
+    a("implementing the position-swap mechanic in the simulator.")
+    a("")
+
+    a("### Map dims and aspect")
+    a("")
+    a("Top 10 (width, height) pairs:")
+    a("")
+    a("| w | h | n |")
+    a("|---:|---:|---:|")
+    for d in s2["map_dims_top_10"]:
+        a(f"| {d['w']} | {d['h']} | {d['n']:,} |")
+    a("")
+    asp = s2["map_aspect"]
+    asp_total = sum(asp.values()) or 1
+    a("Aspect distribution:")
+    a("")
+    for k in ("square", "wide", "tall", "unknown"):
+        if k in asp:
+            a(f"- {k}: {asp[k]:,} ({_pct(asp[k], asp_total)})")
+    a("")
+    sq = asp.get("square", 0) / asp_total
+    rect = (asp.get("wide", 0) + asp.get("tall", 0)) / asp_total
+    a(f"Pins A.A4 (board-symmetry multiplier): weighted theoretical ≈ "
+      f"{4 * rect + 8 * sq:.2f}× (D₂ on rectangles, D₄ on squares).")
+    a("")
+
+    a("### Game length by version (half-turns)")
+    a("")
+    a("| version | n | mean | p25 | p50 | p75 |")
+    a("|---:|---:|---:|---:|---:|---:|")
+    for v, d in s2["length_half_turns_by_version"].items():
+        a(f"| {v} | {d['n']:,} | {d['mean']} | {d['p25']} | {d['p50']} | {d['p75']} |")
+    a("")
+
+    nc = s2["games_without_curated_player"]
+    a("### D check — survivor games with no curated player in ranking")
+    a("")
+    a(f"Count: **{nc['count']:,}** ({_pct(nc['count'], n_survivors)})")
+    if nc["sample"]:
+        a("")
+        a("Sample IDs: " + ", ".join(f"`{x}`" for x in nc["sample"]))
+    a("")
+
+    s3 = data["section_3"]
+    a("## Section 3 — Perspective-level stats")
+    a("")
+
+    cc = s3["curated_count_per_game"]
+    a("### Per-survivor-game curated-player count")
+    a("")
+    a("| curated in ranking | games | % |")
+    a("|---:|---:|---:|")
+    for k, n in cc["distribution"].items():
+        a(f"| {k} | {n:,} | {_pct(n, cc['total_games'])} |")
+    a("")
+    a(f"**Mean: {cc['mean_curated_per_game']} curated players per survivor game.**")
+    a("")
+    a("Revises §8 perspective-yield estimate (was 1.4).")
+    a("")
+
+    rp = s3["rolling_perspectives"]
+    th = rp["thresholds"]
+    total_p = rp["total_perspectives"]
+    a(f"### Rolling 100-prior-FFA-game rates (window=100, strict `<`, per perspective)")
+    a("")
+    a(f"Total curated perspectives in survivor games: **{total_p:,}**")
+    if rp["null_window_perspectives"]:
+        a(f"(of which {rp['null_window_perspectives']} have no preceding FFA games — first-game perspectives)")
+    a("")
+
+    a("**Thresholds (all perspectives, regardless of floor):**")
+    a("")
+    a(f"- 1st-rate ≥ {THRESHOLD_1ST}: {th['above_25pct_1st']:,} ({_pct(th['above_25pct_1st'], total_p)})")
+    a(f"- 1st-rate < {THRESHOLD_1ST}: {th['below_25pct_1st']:,} ({_pct(th['below_25pct_1st'], total_p)})")
+    a(f"- top-3-rate ≥ {THRESHOLD_TOP3} (random 8p baseline): {th['above_375pct_top3']:,} ({_pct(th['above_375pct_top3'], total_p)})")
+    a(f"- below prior-games floor (<{PRIOR_GAMES_FLOOR}): {th['below_floor']:,} ({_pct(th['below_floor'], total_p)})")
+    a("")
+
+    a("**Rolling 1st-rate histogram (all perspectives):**")
+    a("")
+    a("```")
+    a(_fmt_hist(rp["histograms"]["rolling_1st_rate_all"]))
+    a("```")
+    a("")
+    a(f"**Rolling 1st-rate histogram (above floor, prior ≥ {PRIOR_GAMES_FLOOR}):**")
+    a("")
+    a("```")
+    a(_fmt_hist(rp["histograms"]["rolling_1st_rate_above_floor"]))
+    a("```")
+    a("")
+    a("**Rolling top-3-rate histogram (all perspectives):**")
+    a("")
+    a("```")
+    a(_fmt_hist(rp["histograms"]["rolling_top3_rate_all"]))
+    a("```")
+    a("")
+
+    a("### Per-curated-player summary (top 25 by perspective count)")
+    a("")
+    a("| name | perspectives | mean 1st | p25 | p50 | p75 | below floor |")
+    a("|---|---:|---:|---:|---:|---:|---:|")
+    for row in rp["per_player_table"][:25]:
+        mean1 = row["mean_1st"]
+        mean1_s = f"{mean1:.3f}" if mean1 is not None else "—"
+        p25 = f"{row['p25_1st']:.3f}" if row["p25_1st"] is not None else "—"
+        p50 = f"{row['p50_1st']:.3f}" if row["p50_1st"] is not None else "—"
+        p75 = f"{row['p75_1st']:.3f}" if row["p75_1st"] is not None else "—"
+        a(f"| {row['name']} | {row['perspectives']:,} | {mean1_s} | {p25} | {p50} | {p75} | {row['below_floor']} |")
+    a("")
+    a("(Full table — and the per-player 50-game-bucket view — saved as sidecar CSV.)")
+    a("")
+
+    return "\n".join(lines)
+
+
+def write_buckets_csv(bucket_rows: list[dict], path: Path) -> None:
+    cols = ["name", "total_games"]
+    for i in range(NUM_BUCKETS):
+        cols += [f"b{i}_wr", f"b{i}_n"]
+    with path.open("w", newline="", encoding="utf-8") as fh:
+        w = csv.DictWriter(fh, fieldnames=cols)
+        w.writeheader()
+        for row in bucket_rows:
+            w.writerow(row)
+
+
 # --- Main --------------------------------------------------------------------
 
 
@@ -689,8 +935,6 @@ def main() -> None:
 
     log.info("section 3: perspective-level stats")
     section3 = compute_section_3(conn, curated)
-
-    # TODO: markdown rendering in next commit.
     raw_dump = {
         "generated_at": dt.datetime.now().isoformat(timespec="seconds"),
         "curated_list": {
@@ -711,9 +955,18 @@ def main() -> None:
     }
     ts = dt.datetime.now().strftime("%Y%m%d-%H%M%S")
     TMP_DIR.mkdir(parents=True, exist_ok=True)
-    out = TMP_DIR / f"filter_counts_raw-{ts}.json"
-    out.write_text(json.dumps(raw_dump, indent=2))
-    log.info("wrote %s", out)
+
+    raw_path = TMP_DIR / f"filter_counts_raw-{ts}.json"
+    raw_path.write_text(json.dumps(raw_dump, indent=2))
+    log.info("wrote %s", raw_path)
+
+    md_path = TMP_DIR / f"filter_counts_report-{ts}.md"
+    md_path.write_text(render_markdown(raw_dump))
+    log.info("wrote %s", md_path)
+
+    buckets_path = TMP_DIR / f"filter_counts_buckets-{ts}.csv"
+    write_buckets_csv(section3.get("buckets", []), buckets_path)
+    log.info("wrote %s", buckets_path)
 
 
 if __name__ == "__main__":
