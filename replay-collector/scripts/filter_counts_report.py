@@ -26,7 +26,8 @@ import json
 import logging
 import sys
 import time
-from collections import Counter
+import statistics
+from collections import Counter, defaultdict
 from pathlib import Path
 
 from replay_collector import wire
@@ -281,6 +282,371 @@ def corpus_at_a_glance(conn) -> dict:
     }
 
 
+# --- Section 2: standalone counts on survivors -------------------------------
+
+
+def _quartiles(values: list[int]) -> tuple[float, float, float]:
+    """(p25, p50, p75) via stdlib linear interpolation."""
+    if len(values) < 2:
+        v = values[0] if values else 0
+        return (v, v, v)
+    qs = statistics.quantiles(values, n=4, method="inclusive")
+    return (qs[0], qs[1], qs[2])
+
+
+def _games_without_curated(
+    conn, survivor_ids: list[str], curated: list[str]
+) -> dict:
+    """Return {"count": int, "sample": [first 10 ids]} for survivor games whose
+    ranking contains no curated-list player. Uses a temp table to keep the
+    IN-clause cost off the survivor side."""
+    conn.execute("DROP TABLE IF EXISTS _filter_counts_survivor_ids")
+    conn.execute("CREATE TEMP TABLE _filter_counts_survivor_ids (id TEXT PRIMARY KEY)")
+    conn.executemany(
+        "INSERT INTO _filter_counts_survivor_ids VALUES (?)",
+        [(s,) for s in survivor_ids],
+    )
+
+    if not curated:
+        return {"count": len(survivor_ids), "sample": survivor_ids[:10]}
+
+    placeholders = ",".join("?" * len(curated))
+    rows = conn.execute(
+        f"""
+        SELECT DISTINCT s.id
+        FROM _filter_counts_survivor_ids s
+        JOIN replay_players rp ON rp.replay_id = s.id
+        JOIN players p ON p.id = rp.player_id
+        WHERE p.name IN ({placeholders})
+        """,
+        list(curated),
+    ).fetchall()
+    with_curated = {row[0] for row in rows}
+    without = [sid for sid in survivor_ids if sid not in with_curated]
+    return {"count": len(without), "sample": without[:10]}
+
+
+def compute_section_2(survivors: list[dict], curated: list[str], conn) -> dict:
+    """Aggregate the §2 standalone counts from the in-memory survivor list,
+    plus the D check (games without any curated-list player) via SQL."""
+    n = len(survivors)
+    if n == 0:
+        return {}
+
+    # generalTrades — overall and by-version. Slot 27 is v ≥ 16 only, so
+    # per-version rate is the more honest read; the overall number is
+    # diluted by v15 games that can't have the field at all.
+    gt_nonempty = sum(1 for s in survivors if s["general_trades_count"] > 0)
+    by_version_total: Counter[int] = Counter()
+    by_version_gt: Counter[int] = Counter()
+    for s in survivors:
+        v = s["version"]
+        by_version_total[v] += 1
+        if s["general_trades_count"] > 0:
+            by_version_gt[v] += 1
+    gt_by_version = {
+        v: {
+            "non_empty": by_version_gt[v],
+            "total": by_version_total[v],
+            "rate": round(by_version_gt[v] / by_version_total[v], 4),
+        }
+        for v in sorted(by_version_total)
+    }
+
+    # Map dims and aspect
+    dim_hist: Counter[tuple] = Counter((s["map_w"], s["map_h"]) for s in survivors)
+    aspect: Counter[str] = Counter()
+    for s in survivors:
+        w, h = s["map_w"], s["map_h"]
+        if w is None or h is None:
+            aspect["unknown"] += 1
+        elif w == h:
+            aspect["square"] += 1
+        elif w > h:
+            aspect["wide"] += 1
+        else:
+            aspect["tall"] += 1
+
+    # Game length by version (half-turns, per A.F3)
+    lengths_by_version: dict[int, list[int]] = defaultdict(list)
+    for s in survivors:
+        lengths_by_version[s["version"]].append(s["turns"])
+    length_stats = {}
+    for v, lengths in sorted(lengths_by_version.items()):
+        p25, p50, p75 = _quartiles(sorted(lengths))
+        length_stats[v] = {
+            "n": len(lengths),
+            "mean": round(statistics.fmean(lengths), 1),
+            "p25": round(p25, 1),
+            "p50": round(p50, 1),
+            "p75": round(p75, 1),
+        }
+
+    # D check — survivor games with no curated player in ranking
+    no_curated = _games_without_curated(conn, [s["id"] for s in survivors], curated)
+
+    return {
+        "general_trades": {
+            "non_empty_overall": gt_nonempty,
+            "non_empty_overall_rate": round(gt_nonempty / n, 4),
+            "by_version": gt_by_version,
+        },
+        "map_dims_top_10": [
+            {"w": w, "h": h, "n": cnt} for (w, h), cnt in dim_hist.most_common(10)
+        ],
+        "map_aspect": dict(aspect),
+        "length_half_turns_by_version": length_stats,
+        "games_without_curated_player": no_curated,
+    }
+
+
+# --- Section 3: perspective-level stats --------------------------------------
+
+ROLLING_WINDOW = 100
+PRIOR_GAMES_FLOOR = 50
+RATE_HIST_BUCKETS = [round(i * 0.05, 2) for i in range(21)]  # 0.00, 0.05, ..., 1.00
+THRESHOLD_1ST = 0.25
+THRESHOLD_TOP3 = 0.375  # random baseline for 8-player FFA
+BUCKET_SIZE = 50
+NUM_BUCKETS = 10
+BUCKET_WINDOW = BUCKET_SIZE * NUM_BUCKETS  # 500
+
+
+def _curated_perspective_count_distribution(conn, curated: list[str]) -> dict:
+    """Per-survivor-game count of curated players in the ranking. Survivors
+    live in the temp table `_filter_counts_survivor_ids` populated by section 2."""
+    placeholders = ",".join("?" * len(curated))
+    rows = conn.execute(
+        f"""
+        SELECT s.id, COUNT(DISTINCT p.id) AS curated_count
+        FROM _filter_counts_survivor_ids s
+        LEFT JOIN replay_players rp ON rp.replay_id = s.id
+        LEFT JOIN players p
+          ON p.id = rp.player_id AND p.name IN ({placeholders})
+        GROUP BY s.id
+        """,
+        list(curated),
+    ).fetchall()
+    dist: Counter[int] = Counter()
+    for _, n in rows:
+        dist[n if n < 4 else 4] += 1  # bucket as 0,1,2,3,4+
+    total = sum(dist.values())
+    mean = sum(k * v for k, v in dist.items()) / total if total else 0
+    return {
+        "distribution": {
+            "0": dist[0],
+            "1": dist[1],
+            "2": dist[2],
+            "3": dist[3],
+            "4+": dist[4],
+        },
+        "mean_curated_per_game": round(mean, 3),
+        "total_games": total,
+    }
+
+
+def _fetch_rolling_perspectives(conn, curated: list[str]) -> list[tuple]:
+    """Per (curated player, FFA game) tuple, compute rolling stats. Returns
+    only rows for survivor games. Window is over the player's *full* FFA
+    history (any version, any player_count) — this is the skill estimate
+    at game-time, not corpus membership."""
+    placeholders = ",".join("?" * len(curated))
+    sql = f"""
+    WITH perspectives AS (
+        SELECT
+            rp.replay_id,
+            p.name AS player_name,
+            rp.position,
+            r.started,
+            AVG(CASE WHEN rp.position = 0 THEN 1.0 ELSE 0.0 END) OVER w AS rolling_1st_rate,
+            AVG(CASE WHEN rp.position <= 2 THEN 1.0 ELSE 0.0 END) OVER w AS rolling_top3_rate,
+            COUNT(*) OVER (
+                PARTITION BY p.id
+                ORDER BY r.started, r.id
+                ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
+            ) AS prior_games_count
+        FROM replay_players rp
+        JOIN players p ON p.id = rp.player_id
+        JOIN replays r ON r.id = rp.replay_id
+        WHERE p.name IN ({placeholders})
+          AND r.ladder_id = 'ffa'
+        WINDOW w AS (
+            PARTITION BY p.id
+            ORDER BY r.started, r.id
+            ROWS BETWEEN {ROLLING_WINDOW} PRECEDING AND 1 PRECEDING
+        )
+    )
+    SELECT replay_id, player_name, position, started,
+           rolling_1st_rate, rolling_top3_rate, prior_games_count
+    FROM perspectives
+    WHERE replay_id IN (SELECT id FROM _filter_counts_survivor_ids)
+    """
+    return conn.execute(sql, list(curated)).fetchall()
+
+
+def _bucket_rate(rate: float | None) -> str | None:
+    if rate is None:
+        return None
+    if rate >= 1.0:
+        return "1.00"
+    edge = int(rate * 20) * 0.05
+    return f"{edge:.2f}"
+
+
+def _aggregate_perspectives(rows: list[tuple]) -> dict:
+    """Build histograms + per-player summaries from the window-function output."""
+    hist_1st_all: Counter[str] = Counter()
+    hist_top3_all: Counter[str] = Counter()
+    hist_1st_above_floor: Counter[str] = Counter()
+    hist_top3_above_floor: Counter[str] = Counter()
+    above_25 = 0
+    below_25 = 0
+    above_375_top3 = 0
+    below_375_top3 = 0
+    below_floor = 0
+    null_window = 0  # perspective with no preceding games at all
+
+    per_player_1st: defaultdict[str, list[float]] = defaultdict(list)
+    per_player_top3: defaultdict[str, list[float]] = defaultdict(list)
+    per_player_below_floor: Counter[str] = Counter()
+    per_player_perspectives: Counter[str] = Counter()
+
+    for _replay_id, name, _pos, _started, r1, r3, prior in rows:
+        per_player_perspectives[name] += 1
+
+        if r1 is None or r3 is None:
+            null_window += 1
+            continue
+
+        per_player_1st[name].append(r1)
+        per_player_top3[name].append(r3)
+
+        hist_1st_all[_bucket_rate(r1)] += 1
+        hist_top3_all[_bucket_rate(r3)] += 1
+
+        if r1 >= THRESHOLD_1ST:
+            above_25 += 1
+        else:
+            below_25 += 1
+        if r3 >= THRESHOLD_TOP3:
+            above_375_top3 += 1
+        else:
+            below_375_top3 += 1
+
+        if prior < PRIOR_GAMES_FLOOR:
+            below_floor += 1
+            per_player_below_floor[name] += 1
+        else:
+            hist_1st_above_floor[_bucket_rate(r1)] += 1
+            hist_top3_above_floor[_bucket_rate(r3)] += 1
+
+    per_player_table = []
+    for name in sorted(per_player_perspectives, key=lambda n: -per_player_perspectives[n]):
+        rates_1st = per_player_1st[name]
+        if not rates_1st:
+            per_player_table.append({
+                "name": display_name(name),
+                "perspectives": per_player_perspectives[name],
+                "below_floor": per_player_below_floor[name],
+                "mean_1st": None,
+                "p25_1st": None,
+                "p50_1st": None,
+                "p75_1st": None,
+            })
+            continue
+        sorted_1st = sorted(rates_1st)
+        p25, p50, p75 = _quartiles(sorted_1st)
+        per_player_table.append({
+            "name": display_name(name),
+            "perspectives": per_player_perspectives[name],
+            "below_floor": per_player_below_floor[name],
+            "mean_1st": round(statistics.fmean(rates_1st), 4),
+            "p25_1st": round(p25, 4),
+            "p50_1st": round(p50, 4),
+            "p75_1st": round(p75, 4),
+        })
+
+    return {
+        "total_perspectives": sum(per_player_perspectives.values()),
+        "null_window_perspectives": null_window,
+        "histograms": {
+            "rolling_1st_rate_all": dict(hist_1st_all),
+            "rolling_1st_rate_above_floor": dict(hist_1st_above_floor),
+            "rolling_top3_rate_all": dict(hist_top3_all),
+            "rolling_top3_rate_above_floor": dict(hist_top3_above_floor),
+        },
+        "thresholds": {
+            "above_25pct_1st": above_25,
+            "below_25pct_1st": below_25,
+            "above_375pct_top3": above_375_top3,
+            "below_375pct_top3": below_375_top3,
+            "below_floor": below_floor,
+        },
+        "per_player_table": per_player_table,
+    }
+
+
+def _compute_50_game_buckets(conn, curated: list[str]) -> list[dict]:
+    """Per-curated-player: 10 buckets of 50 most-recent FFA games each.
+    Bucket 0 = most recent. Position == 0 is winner. Matches
+    `winrate_star_buckets.py` conventions."""
+    rows: list[dict] = []
+    for name in curated:
+        cur = conn.execute(
+            """
+            SELECT rp.position
+            FROM replay_players rp
+            JOIN players p ON p.id = rp.player_id
+            JOIN replays r ON r.id = rp.replay_id
+            WHERE p.name = ?
+              AND r.ladder_id = 'ffa'
+            ORDER BY r.started DESC, r.id
+            LIMIT ?
+            """,
+            (name, BUCKET_WINDOW),
+        ).fetchall()
+        positions = [row[0] for row in cur]
+        row = {"name": display_name(name), "total_games": len(positions)}
+        for i in range(NUM_BUCKETS):
+            chunk = positions[i * BUCKET_SIZE : (i + 1) * BUCKET_SIZE]
+            if chunk:
+                wins = sum(1 for p in chunk if p == 0)
+                row[f"b{i}_wr"] = round(wins / len(chunk), 4)
+                row[f"b{i}_n"] = len(chunk)
+            else:
+                row[f"b{i}_wr"] = ""
+                row[f"b{i}_n"] = 0
+        rows.append(row)
+    return rows
+
+
+def compute_section_3(conn, curated: list[str]) -> dict:
+    if not curated:
+        return {}
+    log.info("  curated count distribution per survivor game")
+    counts = _curated_perspective_count_distribution(conn, curated)
+    log.info("    %s mean=%s", counts["distribution"], counts["mean_curated_per_game"])
+
+    log.info("  rolling-window perspectives (SQL window)")
+    rows = _fetch_rolling_perspectives(conn, curated)
+    log.info("    fetched %d curated perspectives in survivor games", len(rows))
+
+    perspectives = _aggregate_perspectives(rows)
+    log.info("    above-25%% 1st-rate: %d / below: %d / below-floor: %d",
+             perspectives["thresholds"]["above_25pct_1st"],
+             perspectives["thresholds"]["below_25pct_1st"],
+             perspectives["thresholds"]["below_floor"])
+
+    log.info("  per-player 50-game bucket view")
+    buckets = _compute_50_game_buckets(conn, curated)
+
+    return {
+        "curated_count_per_game": counts,
+        "rolling_perspectives": perspectives,
+        "buckets": buckets,
+    }
+
+
 # --- Main --------------------------------------------------------------------
 
 
@@ -313,7 +679,18 @@ def main() -> None:
     if funnel["rule5_per_array_breakdown"]:
         log.info("  rule 5 per-array breakdown: %s", funnel["rule5_per_array_breakdown"])
 
-    # TODO: section 2 + section 3 + markdown rendering in subsequent commits.
+    log.info("section 2: standalone counts on survivors")
+    section2 = compute_section_2(funnel["survivors"], curated, conn)
+    log.info("  generalTrades non-empty by version: %s",
+             {v: d["rate"] for v, d in section2["general_trades"]["by_version"].items()})
+    log.info("  map aspect: %s", section2["map_aspect"])
+    log.info("  games without curated player: %d",
+             section2["games_without_curated_player"]["count"])
+
+    log.info("section 3: perspective-level stats")
+    section3 = compute_section_3(conn, curated)
+
+    # TODO: markdown rendering in next commit.
     raw_dump = {
         "generated_at": dt.datetime.now().isoformat(timespec="seconds"),
         "curated_list": {
@@ -329,6 +706,8 @@ def main() -> None:
             "scanned": funnel["scanned"],
             "survivor_count": len(funnel["survivors"]),
         },
+        "section_2": section2,
+        "section_3": section3,
     }
     ts = dt.datetime.now().strftime("%Y%m%d-%H%M%S")
     TMP_DIR.mkdir(parents=True, exist_ok=True)
