@@ -93,7 +93,7 @@ What the parser must do (v1 scope):
 - **Wire-shape decode** — done in `replay_collector`.
 - **Wire → typed records**, with version gating (chat ≥ v9, `generalTrades` ≥ v16, strongholds ≥ v18). Wraps positional arrays into named-field records.
 - **Map-orientation handling** (`player_transforms` slot 25): per-player flip-x / flip-y / transpose flag the live client uses for fairness. Must be applied per-perspective so each player's general appears in a consistent orientation. High blast radius if missed — easy to forget, produces silently inconsistent training data.
-- **Game simulator** (the hard part): per-turn production (general + each owned city), per-round land tick (every 25 turns, +1 on every owned tile), move resolution with the priority sort + inward-first dependency check (`game-mechanics.md` §6), capture mechanics (army halving, territory transfer, captured general → city), AFK lifecycle driven by the `afks` array (paired kill / neutralize events).
+- **Game simulator** (the hard part): per-turn production (general + each owned city), per-round land tick (every 25 turns, +1 on every owned tile), move resolution with the priority sort + inward-first dependency check (`game-mechanics.md` §6), capture mechanics (army halving, territory transfer, captured general → city), AFK lifecycle driven by the `afks` array (paired kill / neutralize events — often only the kill event when capture or game-end pre-empts the countdown; e.g., a 2nd-to-last-player surrender ends the game immediately. See §11.1).
 - **Per-perspective state tracking**: raw simulator state is per-game; action targets are per-perspective.
 - **Action extraction**: each `[index, start, end, is50, turn]` is the supervised target for the moving player at that timestep; non-moving frames target "pass". Action space is settled in `network-architecture-design.md` §4: per-cell `[pass + 4 directions × 2 splits]`.
   - **Pass-frame rate** (napkin-math from user experience; verify empirically once parser produces samples): ~30–45% corpus-wide. Decomposes into:
@@ -114,7 +114,7 @@ What the parser must do (v1 scope):
 6. Every 50th timestep: each owned tile gains +1 army (the land tick).
 7. Recompute scores; check for game-end (one player remaining, or one of the synthetic fallbacks in `game-mechanics.md` §9 fires).
 
-Stop processing pending AFK events the moment game-end is reached — empirically, ~63% of AFK'd players have only the kill event in their replay record because the game ended or another player captured them before the 50-step neutralize countdown expired.
+Stop processing pending AFK events the moment game-end is reached — the second AFK event often never fires in practice (see §11.1).
 
 ---
 
@@ -152,7 +152,7 @@ Stop processing pending AFK events the moment game-end is reached — empiricall
 
 The v1 quality gate is **placement-outcome ranking-match** across the filtered corpus. Other signals are useful checks but secondary.
 
-- **Primary: placement-outcome ranking-match.** For each filtered replay, the simulator's deduced final ranking must equal the listings-API ranking stored in `replay_players` in the collector DB. The ranking is computed from end-of-game state via the bundle's `lbSort` tiebreak (players with kills outrank kill-less players regardless of army totals; then alive > dead; then dead-players by reverse death order; then total army desc, tile count desc, player index asc). **Target ≥ 99.9%** match across ~170k filtered games (≤ ~170 mismatches); stretch ≥ 99.99%. Bundle-independent server-truth signal.
+- **Primary: placement-outcome ranking-match.** For each filtered replay, the simulator's deduced final ranking must equal the listings-API ranking stored in `replay_players` in the collector DB. The ranking is computed from end-of-game state via the bundle's `lbSort` tiebreak (players with kills outrank kill-less players regardless of army totals; then alive > dead; then dead-players by reverse death order; then total army desc, tile count desc, player index asc). **Target ≥ 99.9%** match across ~170k filtered games (≤ ~170 mismatches); stretch ≥ 99.99%. The validator runs over the full §4 vanilla-FFA-filtered corpus (~170k games), independent of the §5 perspective-quality filter that produces the smaller ~81k figure in §8 sample-volume math — simulator correctness doesn't depend on which perspectives we ultimately train on. Bundle-independent server-truth signal.
 - **Spot checks**: dump rendered timesteps from a few games, compare against the in-browser replay player on generals.io. Cheap qualitative check during parser development.
 - **JS bundle diff (deferred until needed).** Node-side harness using the saved JS bundle's `deserialize` (`research/gior-format/generals-main-prod-v31.4.1-d51b92c0.js`) to dump per-tile per-timestep state; diff against parser output. The bundle is our most-documented reference implementation, but it is the replay-viewer's reconstruction — historical bugs exist. Useful for diagnosing per-tile drift if ranking-match plateaus below target, but not a primary gate.
 - **Wire-slot cross-check**: first 14 slots vs. legacy JS parser (`vzhou842/generals.io-Replay-Utils`) — useful for slot decoding only, not v18 mechanics.
@@ -161,9 +161,9 @@ The v1 quality gate is **placement-outcome ranking-match** across the filtered c
 
 ---
 
-## 11. Early-implementation TODOs
+## 11. Resolved mechanics references
 
-Resolved 2026-05-11 via JS bundle reading + empirical sanity checks. Player-facing rules folded into `generals-io-game-mechanics.md`; bundle line refs preserved in its appendix.
+Implementation-relevant mechanics decisions for the simulator. Full player-facing statement of these rules: `generals-io-game-mechanics.md` §6, §7, §9. Bundle line refs: its appendix.
 
 ### 11.1 Surrender / AFK countdown — Resolved
 

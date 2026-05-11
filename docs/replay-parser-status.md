@@ -19,7 +19,7 @@ Next concrete step: Phase 2 — stand up `replay-parser/` as a sibling of `repla
 
 ## Phases
 
-1. **JS bundle reading session.** Resolve `game-mechanics.md` §11 and `replay-parser-design.md` §11. Output: spec updates to those docs sharp enough to port from. *Done (2026-05-11).*
+1. **JS bundle reading session.** Resolve the open mechanics ambiguities (formerly tracked in §11 of both `game-mechanics.md` and `replay-parser-design.md`); fold answers into the canonical rules. *Done (2026-05-11).*
 2. **Stand up `replay-parser/` subproject** as a sibling to `replay-collector/`. *Not started.*
 3. **Wire → typed records.** Pure decode layer; no simulation logic. *Not started.*
 4. **Simulator (NumPy).** Direct port of the JS bundle's replay-mode class. *Not started.*
@@ -32,12 +32,7 @@ Next concrete step: Phase 2 — stand up `replay-parser/` as a sibling of `repla
 
 Ranking-match accuracy **≥ 99.9%** (≤ ~170 mismatches across ~170k filtered games); stretch ≥ 99.99%. Compares the simulator's deduced final ranking against the listings-API ranking stored in `replay_players`.
 
-## Validation strategy
-
-- **Primary signal:** placement-outcome ranking-match per replay. Server-truth, bundle-independent.
-- **Implementation reference, not ground truth:** the JS bundle's replay-mode class. The bundle is the replay-viewer's reconstruction, not the server's authoritative logic, and has had known bugs historically.
-- **Deferred unless ranking-match plateaus below target:** live-game observation capture (per-timestep server-truth via WebSocket; gold-standard but a real chunk of work to build).
-- **Subtle per-tile errors:** acceptable for BC v1. Live ladder eval is the real generalization test for the trained bot.
+Validation strategy details: `replay-parser-design.md` §10.
 
 ## Subproject layout
 
@@ -50,3 +45,7 @@ Ranking-match accuracy **≥ 99.9%** (≤ ~170 mismatches across ~170k filtered 
 - Train/val split policy beyond the tentative spec in `replay-parser-design.md` §9.
 - Exact on-disk format for C-output (gzipped `.npz` per game is the working default).
 - Phase 2 self-play simulator (separate fork-from-strakam effort if it happens).
+
+## Doc debt (low priority, revisit later)
+
+- **Appendix file framing tension.** `game-mechanics-appendix-resolved-ambiguities.md` is currently framed as "Historical reference" but in practice serves as the live implementation-reference for parser developers (bundle line refs, etc.). A future consolidation / restructure pass could rename or reframe. OK as-is for now.

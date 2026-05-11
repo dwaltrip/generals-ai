@@ -58,6 +58,8 @@ The game clock has three levels of time granularity:
 
 When other docs refer to "turn 50" or "1800-turn game," the unit is turns (i.e., pairs of timesteps).
 
+**A naming note: "half-turn" = timestep.** The atomic unit is sometimes called a "half-turn" in the community, and in the project's wire-format and DB schemas the field named `turn` is actually a half-turn (= timestep), not a full turn. Same word, two referents — watch for it when reading data fields vs. mechanics prose.
+
 ---
 
 ## 4. Army generation
@@ -157,7 +159,7 @@ The scoreboard is symmetric — opponents can make the same inferences about you
 
 ---
 
-## 9. Elimination and inheritance
+## 9. Elimination, surrender, and game end
 
 **Elimination:** capturing a player's general eliminates them from the game.
 
@@ -170,13 +172,6 @@ The scoreboard is symmetric — opponents can make the same inferences about you
 
 * The message identifies both the eliminated player and the capturing player by username and color.
 * E.g. "Player 1 (blue square) has captured Player 3 (green square)"
-
-**Game end:** the game ends when only one general remains.
-
-**Synthetic game-end conditions.** In rare situations where the normal one-general condition doesn't trigger, the game ends via one of two safety fallbacks:
-
-- **All-AFK fallback.** If no moves are made by any player for 2000 consecutive timesteps (~17 minutes at normal speed), all remaining players except the strongest (by total army count, then tile count) are eliminated — the strongest is declared the winner.
-- **Maximum game length.** Games are capped at 50000 timesteps (~7 hours at normal speed). At the cap, the same "kill all but the leader" fallback fires.
 
 **Surrender / disconnect:** a player may surrender at any time. Surrender is not instant — there is a **25-turn countdown** (50 timesteps, 25 seconds at normal game speed; one full round) during which the surrendering player is still in the game and their general is still capturable. This countdown exists to protect opponents who were actively fighting the surrendering player: without it, a surrender would deny them the capture and inheritance they were about to earn.
 
@@ -194,6 +189,13 @@ After the countdown expires:
 
 - **Captured first.** If another player captures the surrendering player's general before the countdown expires, the normal capture-and-inheritance rules apply. No neutralization happens — the player is already captured, and the captor inherits everything per the rules above.
 - **Game ends first.** If the surrender drops the game to a single remaining player (a common outcome of late-game surrender), the game ends immediately. No neutralization needed.
+
+**Game end:** the game ends when only one general remains.
+
+**Synthetic game-end conditions.** In rare situations where the normal one-general condition doesn't trigger, the game ends via one of two safety fallbacks:
+
+- **All-AFK fallback.** If no moves are made by any player for 2000 consecutive timesteps (~17 minutes at normal speed), all remaining players except the strongest (by total army count, then tile count) are eliminated — the strongest is declared the winner.
+- **Maximum game length.** Games are capped at 50000 timesteps (~7 hours at normal speed). At the cap, the same "kill all but the leader" fallback fires.
 
 ---
 
