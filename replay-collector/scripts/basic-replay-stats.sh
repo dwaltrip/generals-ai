@@ -3,10 +3,8 @@ echo "=== Totals ==="
 
 sqlite3 --column --header data/generals.sqlite "
        SELECT
-              COUNT(*) AS total,
-              SUM(wire_data IS NOT NULL) AS with_wire_data
-       FROM replays
-       WHERE ladder_id = 'ffa';"
+              (SELECT COUNT(*) FROM replays WHERE ladder_id = 'ffa') AS total,
+              (SELECT COUNT(*) FROM replays WHERE ladder_id = 'ffa' AND wire_data IS NOT NULL) AS with_wire_data;"
 
 echo "" && echo "=== By month (raw fetched) ==="
 

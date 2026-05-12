@@ -84,6 +84,14 @@ CREATE INDEX IF NOT EXISTS idx_replay_players_current_name ON replay_players(cur
 CREATE INDEX IF NOT EXISTS idx_replays_started             ON replays(started);
 CREATE INDEX IF NOT EXISTS idx_replays_type                ON replays(type);
 CREATE INDEX IF NOT EXISTS idx_replays_ladder_id           ON replays(ladder_id);
+-- Partial covering index for the basic-replay-stats.sh query set: any
+-- `WHERE ladder_id=? AND wire_data IS NOT NULL` aggregation reads only
+-- this ~8 MB index instead of the 600 MB-of-leaf-pages main table.
+-- Partial (not expression-column) because SQLite reliably matches the
+-- partial predicate against a query's WHERE clause; an indexed
+-- `wire_data IS NOT NULL` expression-column did not match and still
+-- triggered per-row heap fetches.
+CREATE INDEX IF NOT EXISTS idx_replays_stats               ON replays(ladder_id, version, started, player_count) WHERE wire_data IS NOT NULL;
 
 -- If the Pass-2 work-set query slows as the pending backlog grows, add:
 --   CREATE INDEX IF NOT EXISTS idx_replays_pending_ffa
