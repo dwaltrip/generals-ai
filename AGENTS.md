@@ -17,3 +17,7 @@ Operates at a safe and reasonable rate to avoid placing strain on the generals.i
 - [`docs/generals-io-api.md`](./docs/generals-io-api.md) — generals.io HTTP + WebSocket API surface.
 
 The collector entry point is `replay_collector.runner.collect_many` (see `replay-collector/replay_collector/runner.py`).
+
+## Tools
+
+- [`tools/docs_info.py`](./tools/docs_info.py) — list project docs with mtime + recent git history (commit hash, date, diff size, subject). Useful when judging doc freshness or finding what changed recently. In-doc `Date:` headers are origination dates and don't always reflect last edits; this tool is the authoritative signal. Run `uv run tools/docs_info.py -h` for options.
