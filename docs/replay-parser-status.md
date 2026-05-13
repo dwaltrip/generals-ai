@@ -15,18 +15,20 @@
 
 Phase 1 done as of 2026-05-11. JS bundle traced end-to-end on the replay-mode game class; mechanics-doc ambiguities resolved and folded into the canonical rules (with a side appendix preserving the trace + bundle line refs); design-doc §11 TBDs closed; empirical sanity checks against ~5000 sampled replays confirmed the bundle's claims (modulo one reframe: 1-event AFK records are common, not edge-case). Detailed findings + line refs preserved in `2026-05/5.11-2-bundle-reading.md`.
 
-Next concrete step: Phase 2 — stand up `replay-parser/` as a sibling of `replay-collector/`.
+Phase 2 is done as well. `replay-parser/` skeleton is up. Smoke test that imports utils and db helpers from `replay-collector/` is working. Cross-package imports are contained within a bridge module: `replay_parser/_colloctor`.
+
+Next up: finish designing the replay parser + simluator. And then ipmlement it.
 
 ## Phases
 
 1. **JS bundle reading session.** Resolve the open mechanics ambiguities (formerly tracked in §11 of both `game-mechanics.md` and `replay-parser-design.md`); fold answers into the canonical rules. *Done (2026-05-11).*
-2. **Stand up `replay-parser/` subproject** as a sibling to `replay-collector/`. *Not started.*
+2. **Stand up `replay-parser/` subproject** as a sibling to `replay-collector/`. *Done (2026-05-12).*
 3. **Wire → typed records.** Pure decode layer; no simulation logic. *Not started.*
 4. **Simulator (NumPy).** Direct port of the JS bundle's replay-mode class. *Not started.*
 5. **Ranking-match validator.** Built alongside (4); the v1 quality gate. *Not started.*
 6. **Action extraction + per-perspective state + C-format writer.** Begin once (5) clears the target. *Not started.*
 
-**v1 done** = phases 1–6 complete, ranking-match target hit, C-format intermediate written for the filtered corpus.
+**v1 done** = phases 1–6 complete, ranking-match target hit, parser output format produced and saved for the main corpus.
 
 ## Quality gate
 

@@ -1,8 +1,10 @@
 # Replay Parser Design — v1 Working Spec
 
-**Date:** 2026.05.07
+**Date:** 2026.05.07 (last revised 2026.05.12)
 
 **Status:** **Working draft.** High-level design and key decisions captured; nitty-gritty implementation details deferred.
+
+**Stale numbers:** Inline corpus-size, filter-survival, and sample-volume figures (§2, §3, §4 lines 63–64, §8, §10 denominator) lag the current corpus. As of 2026-05-12: ~178k v15+ replays / ~170k post-§4-filter (up from the doc's ~140–145k baseline). The expansion doesn't break any structural decisions — more data gives the §5 training-time quality filter more headroom, and Option C storage scales linearly with games (well within hobby budgets at any plausible corpus size). Refresh stats via `replay-collector/scripts/basic-replay-stats.sh` and `replay-collector/scripts/filter_counts_report.py`.
 
 **Companion docs:**
 - `replay-format.md` — `.gior` wire format reference (v18)
@@ -32,20 +34,18 @@
 
 ---
 
-## 3. Output design — C (lean intermediate) — **Locked**
+## 3. Output design — compact per-game intermediate — **Locked**
 
 - Parser writes a **compact per-game intermediate**, not materialized observation tensors.
 - Channel assembly happens in the **dataloader**, not the parser.
 - This decouples the parser from obs-tensor schema → revisions to `observation-tensor-design.md` cause dataloader changes only, not corpus re-parses.
 - Per-game contents:
-  - **Game-static**: id, version, map dims, mountains, cities + initial cityArmies, neutrals + initial neutralArmies, generals, ranking, modifiers list, `player_transforms`.
-  - **Per timestep, raw state**: ownership (H×W int8) + armies (H×W int16 — sufficient; single-tile stacks rarely exceed 32k in serious play, and games where they do are non-competitive and filtered out by the strong-player skill cut) + cities mask (H×W, bitpacked), ≈ 3 KB/timestep (at 30×30). Cities mask is dynamic because eliminated generals become cities; storing per-timestep is simpler than reconstructing from capture events in the dataloader, with negligible storage cost (cities are well under mountain density of ~20%).
+  - **Game-static**: id, version, map dims, mountains, cities + initial cityArmies, neutrals + initial neutralArmies, generals, ranking, modifiers list
+  - **Per timestep, raw state**: ownership (H×W int8) + armies (H×W int16 — single-tile stacks above 32k aren't expected in competitive FFA play; the parser asserts this during simulation and logs+skips any violating game) + cities mask (H×W, bitpacked), ≈ 3 KB/timestep (at 30×30). Cities mask is dynamic because eliminated generals become cities; storing per-timestep is simpler than reconstructing from capture events in the dataloader, with negligible storage cost (cities are well under mountain density of ~20%).
   - **Per perspective**: action stream (supervised targets), per-game metadata (player_id, stars-at-start, placement, elim turn, perspective index).
 - Sizing: ~2 MB/game raw, ~160 GB raw / **~50–65 GB gzipped** at 81k filtered replays.
-- Storage rationale (three options considered):
-  - **Option A** — materialize the full ~106-channel observation tensor per perspective, per timestep, at parse time. The dataloader just reads tensors and feeds them straight to the GPU. ≈ 5 TB at this corpus scale; any obs-tensor revision forces a full re-parse of the corpus.
-  - **Option B** — store per-timestep raw game state *plus* per-perspective precomputed fog state (last-seen owner / armies / turns-since-seen, has-seen masks, etc.); the dataloader assembles obs channels on the fly. ≈ 480 GB; supports true random-frame access (any `(game, perspective, timestep)` is one disk read).
-  - **Option C (chosen)** — store *only* per-timestep raw game state; the dataloader walks each trajectory forward online, accumulating fog state as it goes. ≈ 50–65 GB gzipped. Random-frame access is approximated via a shuffle buffer + chunk prefetch in the dataloader (§9), preserving approximate i.i.d. minibatch composition *given a sufficiently large shuffle buffer* (§9 specifies the floor — load-bearing for the methodology argument). Decouples parser from obs-tensor schema completely — any channel change is a dataloader change only.
+- **Storage approach:** store *only* per-timestep raw game state; the dataloader walks each trajectory forward online, accumulating fog state as it goes. ≈ 50–65 GB gzipped. Random-frame access is approximated via a shuffle buffer + chunk prefetch in the dataloader (§9), preserving approximate i.i.d. minibatch composition *given a sufficiently large shuffle buffer* (§9 specifies the floor — load-bearing for the methodology argument). Decouples parser from obs-tensor schema completely — any channel change is a dataloader change only.
+- **Alternatives considered and rejected on size:** materializing full obs tensors at parse time, and storing per-perspective precomputed fog state alongside raw game state. Both were prohibitively large for hobby-tier storage at this corpus scale (appendix A.1 has size comparisons).
 
 ---
 
@@ -56,7 +56,7 @@
   - `teams` slot null (FFA only — team modes overlap on player_count and would otherwise sneak in)
   - `version ≥ 15` (avoids pre-v15 mechanics changes — `old_priority_v2`, city-regen rules. v15 is the largest single version in the current corpus and ~80–85% of replays are v15+. Confirms via filter-counts report.)
   - `modifiers` slot empty
-  - All modifier tile arrays empty (swamps, deserts, tunnels, lookouts, observatories, strongholds) — defensive cross-check against the `modifiers` slot
+  - All modifier tile arrays empty (swamps, deserts, tunnels, lookouts, observatories, strongholds) — modifier tiles sometimes appear in regular FFA ladder games during weekend events even with the `modifiers` slot empty. The parser doesn't implement modifier-tile mechanics.
   - Custom map slot (`map`) null
   - Chess-clock slot (`chessClockTimingsByMove`) null
   - `generalTrades` slot empty (mutual-general-swap mechanic; ~1.8% of v16+ FFA games per the filter-counts report — cheap drop, mechanic implementation deferred per §11.3)
@@ -65,15 +65,65 @@
 
 ---
 
-## 5. Perspective selection — **Tentative** (most likely section to evolve before first BC training run)
+## 5. Perspective selection — **Locked** (parse-time architecture); **Open / TBD** (training-time thresholds)
 
-- **Primary filter — curated players.txt** (the leaderboard-tracked tier-1 list, already built and used to drive `replay-collector/`). Trusted-source signal; sidesteps the seasonal-volatility issues of stars-based filtering.
-- **Secondary filter — rolling-window win-rate at game-time:** for each emitted perspective, compute the player's 1st-place rate over their most recent ~100 games as of that game's date; exclude perspectives where the rate dipped below threshold (initial baseline ~25% for 8-player FFA — random is 12.5% — but tunable via filter-counts report). Skip perspectives where the player has fewer than ~50 prior games at game-time (unstable signal). Source data: placement is already in `replay_players` for every cached game.
-  - Top-3 rate may be added as a complementary metric if 1st-rate alone is too noisy at low game counts.
-- **Stars-at-game-start** (slot 5): captured as **metadata only**, *not* used as a parse-time filter. Stars are season-volatile (10-week seasons reset the distribution; early-season everyone is low, late-season stratification is sharp), so a fixed threshold is unreliable. Seasonal-relative implementation is deferred — the curated list + win-rate filter cover the main quality concerns.
-- **Placement at end of game:** captured as **metadata only**, not a parse-time filter (per MVP §2 — placement-based filters should be config-toggleable at training time, not baked into the corpus).
-- **Per-game perspective yield:** the ~1.4 average from `compute-considerations.md` was computed under the prior stars-threshold plan. Under curated-list-only, yield depends on how often two curated players collide in the same game — likely similar but worth re-measuring via the filter-counts report. Sample-volume in §8 may need light revision.
-- **Forward pointer — corpus enhancement work:** the curated list is expected to grow via win-rate-based discovery from the cached corpus — find candidate strong players in existing games (lax stars pre-filter is fine since the real test is win-rate), fetch their listing histories (metadata-only via the existing collector, cheap), promote those whose recent win-rate clears threshold. Bonus: discovery surfaces new strong players we can extend `.gior` collection to. Iterative — converges in 2–3 rounds. Full spec deferred to a separate corpus-quality / filtering doc when that pipeline gets built.
+The parser emits all curated-player perspectives along with rich per-perspective metadata. Quality filtering — picking the skill bar, ablating thresholds — is a training-time concern; threshold tuning happens via config, not via corpus re-parse. The parser itself applies only a conservative random-baseline noise floor as architectural defense against upstream collection changes.
+
+### 5.1 Three-layer filtering pipeline
+
+- **Upstream (collection)** — curated player list, controlled by `replay-collector/`. Determines which usernames we fetch replays for at all.
+- **Parse-time (this section)** — emit all curated-player perspectives; apply the conservative noise floor (§5.3); emit rich per-perspective metadata (§5.2).
+- **Training-time (config)** — quality thresholds, threshold ablation, trajectory-quality filters (long-game, bad-start, died-quickly, etc.).
+
+### 5.2 Per-perspective metadata emitted
+
+For each curated-player perspective in each game's ranking:
+
+- `player_id`
+- `perspective_index` — slot ordinal in this game's ranking.
+- `rolling_1st_rate_at_game_time` — 1st-place rate over the player's most recent 200 games strictly prior to this game's start (capped at 200; if fewer prior games available, computed over what's available, subject to the noise-floor minimum in §5.3).
+- `rolling_top3_rate_at_game_time` — top-3 rate over the same window.
+- `prior_games_count_at_game_time` — count of the player's prior FFA games at this game's start. Drives the noise-floor minimum in §5.3 and is useful at training time for weighting by sample reliability.
+- `stars_at_start` — slot 5; captured for training-time use (season-volatile due to 10-week stars resets, so absolute thresholding is unreliable — rolling win-rate and top-3 are the seasonally-immune alternatives).
+- `placement` — final placement from `replay_players`.
+- `elim_turn` — turn the player was eliminated; `null` if they survived to game-end.
+
+Rolling rates are computed via a per-player chronological walk (`ORDER BY started ASC` per player) so "most recent N games" means "the N games immediately preceding this one in time" — same convention as the filter-counts report.
+
+### 5.3 Parse-time noise floor
+
+Conservative random-baseline thresholds, applied per perspective (all AND-ed):
+
+- `rolling_1st_rate > 12.5%` (random baseline for 8-player FFA win rate)
+- `rolling_top3_rate > 37.5%` (random baseline for 8-player FFA top-3 placement)
+- `prior_games_count >= 50`
+
+The win-rate cuts sit below where any real serious player lives — they catch sub-random outliers like `kickapp` (rolling 1st-rate ~0.06 per the filter-counts report). The prior-games floor drops each player's first 50 games entirely; rolling rates over very small samples are noise, not signal.
+
+Expected to be a near-no-op on the current curated corpus by design. Its purpose is architectural defense: if the upstream collection pipeline ever broadens (e.g., non-curated sources), the parser still emits only plausibly-real-player perspectives.
+
+### 5.4 Why quality filtering is training-time, not parse-time
+
+The right skill bar (elite-only vs. very-strong vs. broader strong-player slice) depends on questions we cannot answer without training experiments:
+
+- **Some perspective-quality filters need parser output to define.** Trajectory-based filters (long-game, bad-start, died-quickly) operate on the parsed move sequence and per-turn state; they don't exist yet.
+- **Sample-volume target depends on compute shape.** At ~170k §4-filtered games and ~268k curated perspectives (filter-counts report), we're well above Strakam's 16k BC anchor under any reasonable cut.
+- **The right strictness is empirical.** Stricter cut → cleaner data + smaller corpus; looser → more data + more noise. Which balance trains a better BC agent is an experimental question.
+- **Relative leverage vs. architecture / obs-tensor / training hyperparams is unknown.** Without runs, we can't tell whether skill-cut tuning matters more or less than other knobs.
+
+The architecture above makes threshold ablation a config change — no corpus re-parse needed.
+
+### 5.5 Related corpus enhancement work (future / optional)
+
+**Note:** This is *not* part of the parser design, but it came up when discussing various noise and player skill level thresholds.
+
+The curated list can grow via win-rate-based discovery from the cached corpus. We can:
+
+* Find candidate strong players in existing games (using a lax stars pre-filter, which is fine as the real test is win-rate)
+* Fetch their full listing histories (metadata-only via the existing collector, cheap) and then calculate win-rate statistics. The exact metric is TBD (career win-rate probably isn't correct)
+* The new players with sufficiently high win-rates then get passed to `fetch-gior` , adding their replays to the corpus.
+
+This could be iteratively repeated (like convergence after 2–3 rounds). It's an optional future enhancement, especially if we decide we want more data.
 
 ---
 
@@ -91,8 +141,9 @@
 What the parser must do (v1 scope):
 
 - **Wire-shape decode** — done in `replay_collector`.
-- **Wire → typed records**, with version gating (chat ≥ v9, `generalTrades` ≥ v16, strongholds ≥ v18). Wraps positional arrays into named-field records.
-- **Map-orientation handling** (`player_transforms` slot 25): per-player flip-x / flip-y / transpose flag the live client uses for fairness. Must be applied per-perspective so each player's general appears in a consistent orientation. High blast radius if missed — easy to forget, produces silently inconsistent training data.
+- **Wire → typed records and arrays**, with version gating (`generalTrades` ≥ v16, strongholds ≥ v18):
+  - **Hot-loop data** (`moves`, `afks`): columnar NumPy arrays at decode time — `moves_index: int8[N]`, `moves_start: int32[N]`, `moves_end: int32[N]`, `moves_is50: uint8[N]`, `moves_turn: int32[N]`. Per-tick simulator loop slices by precomputed turn-range offsets for fast access.
+  - **Low-volume data** (game-static metadata, `chat`, `pings`): named-field records.
 - **Game simulator** (the hard part): per-turn production (general + each owned city), per-round land tick (every 25 turns, +1 on every owned tile), move resolution with the priority sort + inward-first dependency check (`game-mechanics.md` §6), capture mechanics (army halving, territory transfer, captured general → city), AFK lifecycle driven by the `afks` array (paired kill / neutralize events — often only the kill event when capture or game-end pre-empts the countdown; e.g., a 2nd-to-last-player surrender ends the game immediately. See §11.1).
 - **Per-perspective state tracking**: raw simulator state is per-game; action targets are per-perspective.
 - **Action extraction**: each `[index, start, end, is50, turn]` is the supervised target for the moving player at that timestep; non-moving frames target "pass". Action space is settled in `network-architecture-design.md` §4: per-cell `[pass + 4 directions × 2 splits]`.
@@ -188,7 +239,6 @@ Full statement of these rules: `generals-io-game-mechanics.md` §6, §7, §9.
 ## 12. Mechanics hot zones (high blast radius if wrong)
 
 - **Move-priority chain rule** (inward-first) — `game-mechanics.md` §6. Must match server resolution exactly.
-- **`player_transforms` orientation** — easy to forget; produces silently inconsistent map orientation across training data if missed.
 - **Half-turn vs. turn semantics** — DB and wire `turn`/`turns` fields are half-turns (= timesteps = one move per player). No ×2 conversion. Notational landmine.
 
 ---
@@ -204,7 +254,6 @@ Full statement of these rules: `generals-io-game-mechanics.md` §6, §7, §9.
 ## 14. Deferred / lower-level
 
 - Exact on-disk format for C output (gzipped `.npz` per game suffices for v1; HDF5 / Zarr / webdataset are graduation paths if file-count or per-file ops become a bottleneck).
-- Win-rate threshold value + top-3 vs. 1st-place metric mix — tune empirically via filter-counts report; see §5.
 - Chunk-prefetch depth — dataloader-level tuning. Buffer-size floor itself is spec'd in §9.
 - Phase 2 self-play simulator (separate effort if Phase 2 happens; likely fork strakam's JAX `game.py`).
 
@@ -214,16 +263,19 @@ Full statement of these rules: `generals-io-game-mechanics.md` §6, §7, §9.
 
 Brief notes on calls where the doc records the conclusion but the reasoning is light. For future readers re-visiting the design.
 
-### A.1 Option C over A and B (§3)
+### A.1 Compact per-game intermediate, over alternatives (§3)
 
-- Initial back-of-envelope used the stale corpus size from `replay-collector/README.md` (~6.7k full-data replays). Corrected mid-discussion to ~140–145k. Recomputed sizes: A ≈ 30 TB (infeasible), B ≈ 3 TB (painful at hobby scale), C ≈ 130 GB raw / 50–65 GB gzipped (decisively manageable).
-- Beyond storage: C decouples parser from obs-tensor schema, so any channel-layout revision is a dataloader change only — no corpus re-parse. Compounds across the planned ~5 epochs of multi-experiment iteration.
+- Initial back-of-envelope used the stale corpus size from `replay-collector/README.md` (~6.7k full-data replays). Corrected mid-discussion to ~140–145k. Recomputed sizes:
+  - Full obs tensor materialized per perspective: ≈ 30 TB (infeasible).
+  - Raw game state + per-perspective precomputed fog state: ≈ 3 TB (painful at hobby scale).
+  - Raw game state only (the chosen format): ≈ 130 GB raw / 50–65 GB gzipped (decisively manageable).
+- Beyond storage: the chosen format decouples parser from obs-tensor schema, so any channel-layout revision is a dataloader change only — no corpus re-parse. Compounds across the planned ~5 epochs of multi-experiment iteration.
 
-### A.2 Curated player list as primary filter (§5)
+### A.2 Choice of curated list over stars-based filtering (§5)
 
-- Original v1 plan was stars-at-game-start threshold as primary filter. Rejected after recognizing stars are season-cycle volatile (10-week resets; early-season suppressed across all players, including elite). A fixed threshold either excludes legitimate early-season elite play or admits late-season tier-2 play.
-- Curated list is robust because tier-1 *player identity* is reasonably stable across seasons even when their absolute stars are not.
-- Win-rate secondary filter is seasonally-immune by construction (rolling per-player metric, decoupled from absolute stars).
+- Original v1 plan was stars-at-game-start as the primary skill signal. Rejected after recognizing stars are season-cycle volatile (10-week resets; early-season suppressed across all players, including elite). A fixed threshold either excludes legitimate early-season elite play or admits late-season tier-2 play.
+- Curated list is robust because tier-1 *player identity* is reasonably stable across seasons even when their absolute stars are not. Drives upstream collection in `replay-collector/`.
+- Rolling win-rate and top-3 rate signals are seasonally-immune by construction (rolling per-player metrics, decoupled from absolute stars) — they feed the parse-time noise floor (§5.3) and training-time quality filtering (§5.4).
 
 ### A.3 NumPy parser, PyTorch trainer (§6)
 
@@ -234,9 +286,9 @@ Brief notes on calls where the doc records the conclusion but the reasoning is l
 ### A.4 Threshold and parameter values (§5, §9)
 
 - **Shuffle buffer ≥ 30× mean trajectory length:** ensures ~30+ concurrent trajectories in buffer, comfortably above the ~15 below-which mini-batches show visible correlation. Below 15 concurrent, BC trains but val signal is noisier.
-- **100-game rolling win-rate window:** large enough for statistical stability, small enough to track recent skill drift.
-- **25% 1st-place rate baseline (8-player FFA):** reference points are random = 12.5%, "consistently above average" ≥ 50%, tier-1 typically ≥ 25%. Tunable via filter-counts report.
-- **Top-3 rate (random = 37.5% in 8-player):** complementary metric if 1st-rate alone is too noisy at low game counts.
+- **200-game rolling win-rate window:** large enough for statistical stability, small enough to track recent skill drift. Capped at the most recent 200; below 50 prior games the perspective is dropped by the §5.3 noise floor.
+- **Random-baseline parse-time noise floor (§5.3):** 1st-rate > 12.5% and top-3 > 37.5% (8-player FFA random baselines) — set deliberately below where any real serious player sits, so the cuts catch sub-random outliers without making skill-quality judgments at parse time.
+- **Training-time skill threshold (§5.4):** intentionally Open / TBD. Reference points: random = 12.5% (1st), 37.5% (top-3); "consistently above average" ≥ 50% (1st); tier-1 typically ≥ 25% (1st). Resolved empirically via BC runs at different settings.
 - **~33–45% pass-frame rate (§7):** napkin estimate from user experience; ~20% of games are open-turtle (~50–80% pass) + ~80% normal (~25% pass). Verify empirically once parser produces samples.
 
 ### A.5 Strakam as BC reference (§8, §9)
