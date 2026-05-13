@@ -20,7 +20,8 @@ def test_decode_one_wire_blob_from_collector_db():
     conn = sqlite3.connect(DB_PATH)
     try:
         row = conn.execute(
-            "SELECT wire_data FROM replays WHERE wire_data IS NOT NULL LIMIT 1"
+            """SELECT wire_data FROM replays
+            WHERE wire_data IS NOT NULL and version = 15 LIMIT 1"""
         ).fetchone()
     finally:
         conn.close()
