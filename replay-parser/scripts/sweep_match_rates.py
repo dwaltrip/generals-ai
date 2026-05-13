@@ -11,19 +11,18 @@ picks the pre/post v30.9.2 lbSort rule from `started`.
 Usage (from replay-parser/):
     uv run python scripts/sweep_match_rates.py
 """
+from collections import defaultdict
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
 import random
 import sqlite3
 import sys
-from collections import defaultdict
-from datetime import datetime, timedelta, timezone
-from pathlib import Path
 
 from tabulate import tabulate
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(REPO_ROOT / "replay-parser"))
-
 from replay_parser._collector.config import DB_PATH
+from replay_parser._collector.sql_helpers import version_range, wire_data_filter
 from replay_parser._collector.wire import decode as decode_blob
 from replay_parser._shared import is_vanilla_ffa
 from replay_parser.errors import ArmyOverflowError
@@ -34,10 +33,43 @@ from replay_parser.validator import (
     deduce_ranking_for_replay,
 )
 
-OUT_DIR = REPO_ROOT / "replay-parser" / "tmp"
-PROGRESS_EVERY = 1000
-SAMPLE_PER_BUCKET = 100   # random replays per week-bucket
+OUT_DIR = Path(__file__).resolve().parent.parent / "tmp"
+PROGRESS_EVERY = 100
+# SAMPLE_PER_BUCKET = 100   # random replays per week-bucket
+SAMPLE_PER_BUCKET = 20   # random replays per week-bucket
 RANDOM_SEED = 42
+MAX_ERROR_SAMPLES = 20
+MAX_MISS_IDS_PER_BUCKET = 3
+
+
+# replay id | started (epoch ms, UTC) | version num
+type ReplayInfo = tuple[str, int, int]
+
+
+@dataclass
+class Bucket:
+    total: int = 0
+    match: int = 0
+    miss: int = 0
+    nameskip: int = 0
+    overflow: int = 0
+    parse_err: int = 0
+    nonvanilla: int = 0
+    versions: set[int] = field(default_factory=set)
+    miss_ids: list[str] = field(default_factory=list)
+
+
+@dataclass
+class SweepData:
+    total_candidates: int
+    sampled_replays: list[ReplayInfo]
+    blobs_by_id: dict[str, bytes]
+    listings_by_id: dict[str, list[str]]
+
+
+
+def log(msg: str) -> None:
+    print(msg, file=sys.stderr)
 
 
 def week_start(started_ms: int) -> str:
@@ -46,39 +78,41 @@ def week_start(started_ms: int) -> str:
     return monday.strftime("%Y-%m-%d")
 
 
-def main():
+def get_sweep_data() -> SweepData:
     conn = sqlite3.connect(DB_PATH)
     try:
-        print("Fetching candidate metadata...", file=sys.stderr)
+        log("Fetching candidate metadata...")
         candidates = conn.execute(
-            """SELECT id, started, version FROM replays
-               WHERE type = 'classic'
-                 AND version >= 15
-                 AND wire_data IS NOT NULL
+            f"""SELECT id, started, version FROM replays
+               WHERE ladder_id = 'ffa'
+                 AND {version_range('replays', min_version=15)}
+                 AND {wire_data_filter('replays')}
                ORDER BY started ASC"""
         ).fetchall()
         total_candidates = len(candidates)
-        print(f"  {total_candidates:,} candidate replays", file=sys.stderr)
+        log(f"  {total_candidates:,} candidate replays")
 
         # Bucket candidates by week, then random-sample SAMPLE_PER_BUCKET per
         # bucket. We do vanilla-FFA filtering AFTER sampling (decoding the wire
         # is part of the per-replay cost we want to bound).
-        rng = random.Random(RANDOM_SEED)
-        bucket_pool: dict[str, list[tuple]] = defaultdict(list)
+        bucket_pool: dict[str, list[ReplayInfo]] = defaultdict(list)
         for replay_id, started, version in candidates:
             if PRE_V30_9_2_CUTOFF_MS < started < POST_V30_9_2_CUTOFF_MS:
                 continue
             wk = week_start(started)
             bucket_pool[wk].append((replay_id, started, version))
 
-        sampled: list[tuple[str, int, int]] = []
+        sampled: list[ReplayInfo] = []
+        rng = random.Random(RANDOM_SEED)
         for wk, pool in bucket_pool.items():
             if len(pool) <= SAMPLE_PER_BUCKET:
                 sampled.extend(pool)
             else:
                 sampled.extend(rng.sample(pool, SAMPLE_PER_BUCKET))
+
         sampled.sort(key=lambda r: r[1])
-        print(f"  sampled {len(sampled):,} replays across {len(bucket_pool)} buckets", file=sys.stderr)
+        num_weeks = len(bucket_pool)
+        log(f"  sampled {len(sampled):,} replays across {num_weeks} weeks")
 
         # Pre-fetch blobs + listings only for sampled IDs. We chunk the IN clause
         # to stay under SQLite's parameter limit.
@@ -86,7 +120,7 @@ def main():
         blobs: dict[str, bytes] = {}
         listings_by_id: dict[str, list[str]] = defaultdict(list)
         CHUNK = 500
-        print("Fetching blobs + listings for sampled replays...", file=sys.stderr)
+        log("Fetching blobs + listings for sampled replays...")
         for i in range(0, len(sampled_ids), CHUNK):
             chunk = sampled_ids[i:i+CHUNK]
             placeholders = ",".join("?" * len(chunk))
@@ -100,91 +134,47 @@ def main():
                 chunk,
             ):
                 listings_by_id[rid].append(name)
-        print(f"  fetched {len(blobs):,} blobs", file=sys.stderr)
+        log(f"  fetched {len(blobs):,} blobs")
     finally:
         conn.close()
 
-    # Per-bucket counters
-    bucket_total: dict[str, int] = defaultdict(int)
-    bucket_match: dict[str, int] = defaultdict(int)
-    bucket_miss: dict[str, int] = defaultdict(int)
-    bucket_nameskip: dict[str, int] = defaultdict(int)
-    bucket_overflow: dict[str, int] = defaultdict(int)
-    bucket_parse_err: dict[str, int] = defaultdict(int)
-    bucket_versions: dict[str, set[int]] = defaultdict(set)
-    bucket_miss_ids: dict[str, list[str]] = defaultdict(list)
-    parse_error_samples: list[tuple[str, str, str]] = []  # (id, type, msg)
+    return SweepData(
+        total_candidates=total_candidates,
+        sampled_replays=sampled,
+        blobs_by_id=blobs,
+        listings_by_id=listings_by_id,
+    )
 
-    nonvanilla = 0
-    processed = 0
-
-    for replay_id, started, version in sampled:
-        processed += 1
-        if processed % PROGRESS_EVERY == 0:
-            print(f"  ... {processed:,}/{len(sampled):,}", file=sys.stderr)
-
-        blob = blobs[replay_id]
-        try:
-            wire = decode_blob(blob)
-        except Exception as e:
-            wk = week_start(started)
-            bucket_total[wk] += 1
-            bucket_versions[wk].add(version)
-            bucket_parse_err[wk] += 1
-            if len(parse_error_samples) < 20:
-                parse_error_samples.append((replay_id, type(e).__name__, str(e)))
-            print(f"  decode error {replay_id}: {type(e).__name__}: {e}", file=sys.stderr)
-            continue
-
-        if not is_vanilla_ffa(wire):
-            nonvanilla += 1
-            continue
-
-        wk = week_start(started)
-        bucket_total[wk] += 1
-        bucket_versions[wk].add(version)
-
-        try:
-            state, replay = parse_replay(blob)
-        except ArmyOverflowError:
-            bucket_overflow[wk] += 1
-            continue
-        except Exception as e:
-            bucket_parse_err[wk] += 1
-            if len(parse_error_samples) < 20:
-                parse_error_samples.append((replay_id, type(e).__name__, str(e)))
-            print(f"  parse error {replay_id}: {type(e).__name__}: {e}", file=sys.stderr)
-            continue
-
-        listings_names = listings_by_id.get(replay_id, [])
-        usernames = replay.static.usernames
-        try:
-            listings_slots = [usernames.index(name) for name in listings_names]
-        except ValueError:
-            bucket_nameskip[wk] += 1
-            continue
-
-        deduced = deduce_ranking_for_replay(state, started)
-        if listings_slots == deduced:
-            bucket_match[wk] += 1
-        else:
-            bucket_miss[wk] += 1
-            if len(bucket_miss_ids[wk]) < 3:
-                bucket_miss_ids[wk].append(replay_id)
-
-    weeks = sorted(bucket_total)
+def write_report(
+    buckets: dict[str, Bucket],
+    *,
+    sampled_count: int,
+    total_candidates: int,
+    nonvanilla: int,
+    parse_error_samples: list[tuple[str, str, str]],
+    out_dir: Path,
+) -> Path:
+    """Build the markdown report and write it. Returns the output path."""
     table_rows = []
-    for wk in weeks:
-        match = bucket_match[wk]
-        miss = bucket_miss[wk]
-        nameskip = bucket_nameskip[wk]
-        overflow = bucket_overflow[wk]
-        parse_err = bucket_parse_err[wk]
-        denom = match + miss
-        pct = f"{100 * match / denom:.1f}%" if denom else "-"
-        versions = "{" + ",".join(str(v) for v in sorted(bucket_versions[wk])) + "}"
-        sample = " ".join(bucket_miss_ids[wk])
-        table_rows.append([wk, bucket_total[wk], match, miss, nameskip, overflow, parse_err, pct, versions, sample])
+    for wk in sorted(buckets):
+        b = buckets[wk]
+        denom = b.match + b.miss
+        pct = f"{100 * b.match / denom:.1f}%" if denom else "-"
+        versions = "{" + ",".join(str(v) for v in sorted(b.versions)) + "}"
+        sample = " ".join(b.miss_ids)
+        table_rows.append([
+            wk,
+            b.total,
+            b.match,
+            b.miss,
+            b.nameskip,
+            b.overflow,
+            b.parse_err,
+            b.nonvanilla,
+            pct,
+            versions,
+            sample,
+        ])
 
     table = tabulate(
         table_rows,
@@ -196,6 +186,7 @@ def main():
             "name-skip",
             "overflow",
             "parse-err",
+            "non-vanilla",
             "%match",
             "versions",
             "sample mismatch ids",
@@ -203,40 +194,113 @@ def main():
         tablefmt="github",
     )
 
-    OUT_DIR.mkdir(parents=True, exist_ok=True)
-    now = datetime.now(tz=timezone.utc).strftime("%Y%m%d-%H%M")
-    out_path = OUT_DIR / f"sweep_match_rates-{now}.md"
-
-    header_lines = [
-        f"# Sweep: listings vs deduced ranking match rates",
-        f"",
-        f"Generated: {datetime.now(tz=timezone.utc).isoformat()}",
+    now = datetime.now(tz=timezone.utc)
+    lines = [
+        "# Sweep: listings vs deduced ranking match rates",
+        "",
+        f"Generated: {now.isoformat()}",
         f"Total v15+ classic candidates: {total_candidates:,}",
         f"Sample target: {SAMPLE_PER_BUCKET}/week (random, seed={RANDOM_SEED})",
-        f"Sampled (after gap-skip): {len(sampled):,} across {len(bucket_pool)} buckets",
-        f"Non-vanilla in sample (filtered out): {nonvanilla:,}",
-        f"",
-        f"%match denominator = match + miss (excludes name-skip, overflow, parse-err).",
-        f"",
+        f"Sampled (after gap-skip): {sampled_count:,} across {len(buckets)} buckets",
+        f"Non-vanilla in sample: {nonvanilla:,}",
+        "",
+        "%match denominator = match + miss (excludes name-skip, overflow, parse-err, non-vanilla).",
+        "",
         table,
         "",
     ]
     if parse_error_samples:
-        header_lines.extend([
+        lines.extend([
             "",
             f"## Parse error samples (first {len(parse_error_samples)})",
             "",
         ])
         for rid, err_type, msg in parse_error_samples:
-            header_lines.append(f"- `{rid}`  {err_type}: {msg}")
-        header_lines.append("")
-    out_path.write_text("\n".join(header_lines))
+            lines.append(f"- `{rid}`  {err_type}: {msg}")
+        lines.append("")
 
-    print(f"Wrote: {out_path}", file=sys.stderr)
-    print(f"Total candidates: {total_candidates:,}", file=sys.stderr)
-    print(f"Sampled: {len(sampled):,}", file=sys.stderr)
-    print(f"  non-vanilla: {nonvanilla:,}", file=sys.stderr)
-    print(f"  buckets: {len(weeks)}", file=sys.stderr)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out_path = out_dir / f"sweep_match_rates-{now.strftime('%Y%m%d-%H%M')}.md"
+    out_path.write_text("\n".join(lines))
+    return out_path
+
+
+def main():
+    data = get_sweep_data()
+    total = len(data.sampled_replays)
+
+    buckets: dict[str, Bucket] = defaultdict(Bucket)
+    parse_error_samples: list[tuple[str, str, str]] = []  # (id, type, msg)
+
+    nonvanilla = 0
+    processed = 0
+
+    for replay_id, started, version in data.sampled_replays:
+        processed += 1
+        if processed % PROGRESS_EVERY == 0:
+            log(f"  ... {processed:,}/{total:,}")
+
+        def handle_parse_error(bucket, label, e):
+            bucket.parse_err += 1
+            if len(parse_error_samples) < MAX_ERROR_SAMPLES:
+                parse_error_samples.append((replay_id, type(e).__name__, str(e)))
+            log(f"  {label} {replay_id}: {type(e).__name__}: {e}")
+
+        b = buckets[week_start(started)]
+        b.total += 1
+        b.versions.add(version)
+
+        blob = data.blobs_by_id[replay_id]
+        try:
+            wire = decode_blob(blob)
+        except Exception as e:
+            handle_parse_error(b, 'decode error', e)
+            continue
+
+        if not is_vanilla_ffa(wire):
+            nonvanilla += 1
+            b.nonvanilla += 1
+            continue
+
+        try:
+            state, replay = parse_replay(blob)
+        except ArmyOverflowError:
+            b.overflow += 1
+            continue
+        except Exception as e:
+            handle_parse_error(b, 'parse error', e)
+            continue
+
+        listings_names = data.listings_by_id.get(replay_id, [])
+        usernames = replay.static.usernames
+        try:
+            listings_slots = [usernames.index(name) for name in listings_names]
+        except ValueError:
+            b.nameskip += 1
+            continue
+
+        deduced = deduce_ranking_for_replay(state, started)
+        if listings_slots == deduced:
+            b.match += 1
+        else:
+            b.miss += 1
+            if len(b.miss_ids) < MAX_MISS_IDS_PER_BUCKET:
+                b.miss_ids.append(replay_id)
+
+    out_path = write_report(
+        buckets,
+        sampled_count=total,
+        total_candidates=data.total_candidates,
+        nonvanilla=nonvanilla,
+        parse_error_samples=parse_error_samples,
+        out_dir=OUT_DIR,
+    )
+
+    log(f"Wrote: {out_path}")
+    log(f"Total candidates: {data.total_candidates:,}")
+    log(f"Sampled: {total:,}")
+    log(f"  non-vanilla: {nonvanilla:,}")
+    log(f"  buckets: {len(buckets)}")
 
 
 if __name__ == "__main__":
