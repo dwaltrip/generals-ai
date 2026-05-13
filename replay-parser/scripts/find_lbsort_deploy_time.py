@@ -29,27 +29,13 @@ sys.path.insert(0, str(REPO_ROOT / "replay-parser"))
 
 from replay_parser._collector.config import DB_PATH
 from replay_parser._collector.wire import decode as decode_blob
+from replay_parser._shared import is_vanilla_ffa
 from replay_parser.parser import parse_replay
 from replay_parser.validator import deduce_ranking
 
 # Window: 2 days centered on the changelog date.
 WINDOW_START_MS = 1764288000000  # 2025-11-28 00:00 UTC
 WINDOW_END_MS = 1764547200000    # 2025-12-01 00:00 UTC
-
-
-def is_vanilla_ffa(wire: list) -> bool:
-    if wire[12] is not None: return False
-    if wire[13] is not None: return False
-    if wire[16]: return False
-    if wire[21]: return False
-    if len(wire) > 22 and wire[22]: return False
-    if len(wire) > 23 and wire[23]: return False
-    if len(wire) > 24 and wire[24]: return False
-    if len(wire) > 27 and wire[27]: return False
-    if len(wire) > 28 and wire[28]: return False
-    if len(wire) > 30 and wire[30] is not None: return False
-    if len(wire) > 34 and wire[34]: return False
-    return True
 
 
 def classify(state, replay, listings) -> str:

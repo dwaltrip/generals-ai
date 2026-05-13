@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 import numpy as np
 
 from replay_parser.decode import ReplayData
+from replay_parser.errors import ArmyOverflowError
 from replay_parser.types import (
     CaptureEvent,
     DeathEvent,
@@ -13,6 +14,37 @@ from replay_parser.types import (
     TileIndex,
     Timestep,
 )
+
+# state.armies is int16 (design doc §44). Stacks beyond this don't occur in
+# competitive FFA; replays that hit it are skipped via ArmyOverflowError.
+_ARMY_MAX = 32767
+
+
+def set_army(state: "State", target, value) -> None:
+    """Write `value` to one or more tiles in `state.armies`, raising
+    ArmyOverflowError if any result would exceed int16. `target` is anything
+    numpy indexing accepts: int tile index, list of indices, or boolean mask.
+    All armies writes during simulation should go through this helper (or
+    `increase_army`) so the overflow invariant is enforced in exactly one
+    place.
+
+    Callers must do arithmetic in a wide enough dtype to avoid int16 wrap
+    before passing the value — e.g. cast via `int()` for scalars or
+    `.astype(np.int32)` for array slices.
+    """
+    arr = np.asarray(value, dtype=np.int32)
+    if np.any(arr > _ARMY_MAX):
+        raise ArmyOverflowError(
+            f"army > {_ARMY_MAX} at t={state.timestep}"
+        )
+    state.armies[target] = arr
+
+
+def increase_army(state: "State", target, delta) -> None:
+    """Convenience wrapper around `set_army` for the common `+= delta` case.
+    Handles the int32 promotion internally so callers don't have to.
+    """
+    set_army(state, target, state.armies[target].astype(np.int32) + delta)
 
 
 # All-AFK fallback can fire at most 2000 timesteps after the last move; pad a little

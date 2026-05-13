@@ -1,7 +1,7 @@
 import numpy as np
 
 from replay_parser.decode import Moves
-from replay_parser.state import State
+from replay_parser.state import State, set_army
 from replay_parser.types import CaptureEvent, DeathEvent, MoveRowIndex, PlayerIndex
 
 
@@ -15,18 +15,20 @@ def attack(state: State, move_idx: MoveRowIndex, moves: Moves) -> None:
     move_reserve = (src_army + 1) // 2 if is50 else 1
     incoming = src_army - move_reserve
 
-    state.armies[source] -= incoming  # subtracted regardless of outcome
+    set_army(state, source, src_army - incoming)  # subtracted regardless of outcome
 
     dest_owner = int(state.ownership[dest])
     dest_army = int(state.armies[dest])
 
     if dest_owner == mover:
-        state.armies[dest] = dest_army + incoming
+        # Only growth path in combat: same-owner accumulation. The other
+        # branches produce values <= incoming, which already fits in int16.
+        set_army(state, dest, dest_army + incoming)
     elif dest_army >= incoming:
         # Defender holds (includes the equal-armies tie — defender's advantage).
-        state.armies[dest] = dest_army - incoming
+        set_army(state, dest, dest_army - incoming)
     else:
-        state.armies[dest] = incoming - dest_army
+        set_army(state, dest, incoming - dest_army)
         state.ownership[dest] = mover
 
 
@@ -48,7 +50,7 @@ def execute_player_capture(state: State, captured: PlayerIndex, captor: PlayerIn
     # excludes it — only the captured player's *other* tiles get halved.
     mask = state.ownership == captured
     state.ownership[mask] = captor
-    state.armies[mask] = (state.armies[mask] + 1) // 2  # halved, rounded upward
+    set_army(state, mask, (state.armies[mask].astype(np.int32) + 1) // 2)  # halved, rounded upward
 
     state.has_kill[captor] = True
 
