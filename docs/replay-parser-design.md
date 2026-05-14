@@ -4,6 +4,8 @@
 
 **Status:** **Working draft.** High-level design and key decisions captured; nitty-gritty implementation details deferred.
 
+**Post-design implementation update (2026-05-14):** The initial implementation was Python + NumPy as described below. After it was working and ranking-match-validated, the timestep loop (decode → state → combat/moves → step) was ported to Rust as the `sim_core` PyO3 extension (`sim-core/`); `parse_replay` is now a thin orchestrator that decodes (still Python) and calls `sim_core.simulate(replay)` once per game. The high-level structural decisions in this doc are unaffected. Implementation details below that describe the Python sim (state representation, step body, parity oracle, etc.) are historical — current state lives in `sim-core/src/state.rs` and the `sim_core` `.pyi` stub. We may eventually archive or convert this doc to a session note; for now treat it as design-rationale-with-stale-implementation-details.
+
 **Stale numbers:** Inline corpus-size, filter-survival, and sample-volume figures (§2, §3, §4 lines 63–64, §8, §10 denominator) lag the current corpus. As of 2026-05-12: ~178k v15+ replays / ~170k post-§4-filter (up from the doc's ~140–145k baseline). The expansion doesn't break any structural decisions — more data gives the §5 training-time quality filter more headroom, and the per-game intermediate scales linearly with games (well within hobby budgets at any plausible corpus size). Refresh stats via `replay-collector/scripts/basic-replay-stats.sh` and `replay-collector/scripts/filter_counts_report.py`.
 
 **Companion docs:**

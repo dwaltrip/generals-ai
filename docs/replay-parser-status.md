@@ -4,6 +4,10 @@
 **Last updated:** 2026-05-13
 **Purpose:** Lightweight project-management doc for the replay-parser sub-project. Owns the high-level work plan and current state. Decision rationale lives in `replay-parser-design.md`; this doc points at it rather than duplicating it.
 
+> **TODO — update needed (flagged 2026-05-14).** The body below predates the Rust port + cleanup arc. **Mini-update:** the simulator core was ported from Python to Rust (`sim_core` PyO3 extension at `sim-core/`); `parse_replay` now calls `sim_core.simulate(replay)` once per game. The Python sim modules have been deleted. Validation backing: 8,387/8,387 timestep-level parity vs the Python sim before deletion (per-snapshot + events + damage matrices, 8.7k-replay sweep), plus 100% `sweep_match_rates` against server-side ground-truth rankings at n=2,900 and ~99.85% at n=11,600 (the residual is pre-existing rare ranking edge cases, not Rust regressions). Full rewrite of the doc is queued; treat sections below describing the Python sim as historical.
+
+
+
 ## Companion docs
 
 - [`replay-parser-design.md`](./replay-parser-design.md) — locked design decisions + rationale.
