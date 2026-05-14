@@ -21,6 +21,15 @@ class DeathEvent:
 
 
 @dataclass(frozen=True, slots=True)
+class NeutralizeEvent:
+    """Recorded when a surrendered player's tiles fully revert to neutral.
+    Marks the moment after which the player no longer occupies the board.
+    """
+    timestep: Timestep
+    player: PlayerIndex
+
+
+@dataclass(frozen=True, slots=True)
 class PerspectiveMetadata:
     player_id: PlayerIndex
     perspective_index: PerspectiveIndex

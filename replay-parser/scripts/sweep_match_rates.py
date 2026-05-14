@@ -36,7 +36,7 @@ from replay_parser.validator import (
 OUT_DIR = Path(__file__).resolve().parent.parent / "tmp"
 PROGRESS_EVERY = 100
 # SAMPLE_PER_BUCKET = 100   # random replays per week-bucket
-SAMPLE_PER_BUCKET = 20   # random replays per week-bucket
+SAMPLE_PER_BUCKET = 50   # random replays per week-bucket
 RANDOM_SEED = 42
 MAX_ERROR_SAMPLES = 20
 MAX_MISS_IDS_PER_BUCKET = 3
@@ -82,6 +82,11 @@ def get_sweep_data() -> SweepData:
     conn = sqlite3.connect(DB_PATH)
     try:
         log("Fetching candidate metadata...")
+        # ---------------------------------------------------------------------
+        # TODO: Look into restricting to player_count range: [4, 8]
+        # Could this explain some of the non-matches we see?
+        # I think the sweep is currently not handling `player_count`...
+        # ---------------------------------------------------------------------
         candidates = conn.execute(
             f"""SELECT id, started, version FROM replays
                WHERE ladder_id = 'ffa'

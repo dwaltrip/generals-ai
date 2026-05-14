@@ -29,17 +29,59 @@ def deduce_ranking_for_replay(
     if started_ms <= PRE_V30_9_2_CUTOFF_MS:
         return deduce_ranking(state, partition_kill_no_kill=False)
     if started_ms >= POST_V30_9_2_CUTOFF_MS:
-        return deduce_ranking(state, partition_kill_no_kill=True)
+        return deduce_ranking(
+            state,
+            partition_kill_no_kill=True,
+            has_kill=apply_surrender_bonus(state),
+        )
     raise ValueError(
         f"started_ms={started_ms} falls inside the v30.9.2 deploy ambiguity "
         f"window ({PRE_V30_9_2_CUTOFF_MS}, {POST_V30_9_2_CUTOFF_MS})"
     )
 
 
+def apply_surrender_bonus(state: State) -> list[bool]:
+    """Return effective has_kill after applying the server's surrender-bonus
+    rule: each surrender awards +1 has_kill to the top offense-only damager
+    who is still alive when the surrenderer's tiles fully revert to neutral.
+
+    Captured deaths don't trigger the bonus (the capture itself already credits
+    the captor via execute_player_capture). The "alive at neutralization"
+    qualifier — rather than "alive at surrender" — handles cases where the
+    top damager gets killed during the AFK countdown: they forfeit the credit
+    to the next-highest damager who survives long enough. If the surrenderer
+    never fully neutralizes (game ends first), end-of-game is used as the
+    cutoff.
+    """
+    captured = {ce.captured for ce in state.capture_events}
+    death_t = {de.player: de.timestep for de in state.death_events}
+    neutralize_t = {ne.player: ne.timestep for ne in state.neutralize_events}
+    end_t = state.timestep
+    has_kill = list(state.has_kill)
+    n = state.num_players
+    for de in state.death_events:
+        if de.player in captured:
+            continue
+        cutoff = neutralize_t.get(de.player, end_t)
+        best, best_val = None, 0
+        for q in range(n):
+            if q == de.player:
+                continue
+            if death_t.get(q, float("inf")) <= cutoff:
+                continue   # damager died before surrenderer neutralized
+            v = int(state.damage_off_all[q, de.player])
+            if v > best_val:
+                best, best_val = q, v
+        if best is not None:
+            has_kill[best] = True
+    return has_kill
+
+
 def deduce_ranking(
     state: State,
     *,
     partition_kill_no_kill: bool = True,
+    has_kill: list[bool] | None = None,
 ) -> list[PlayerIndex]:
     """Compute the final ranking from a parsed State per the bundle's lbSort.
     Returns slot indices in rank order (winner first).
@@ -70,10 +112,12 @@ def deduce_ranking(
         armies_per_p = np.zeros(state.num_players, dtype=np.int64)
         tiles_per_p = np.zeros(state.num_players, dtype=np.int64)
 
+    if has_kill is None:
+        has_kill = state.has_kill
     death_order = {de.player: i for i, de in enumerate(state.death_events)}
 
     def sort_key(p: PlayerIndex) -> tuple:
-        partition = (0 if state.has_kill[p] else 1,) if partition_kill_no_kill else ()
+        partition = (0 if has_kill[p] else 1,) if partition_kill_no_kill else ()
         return (
             *partition,
             0 if state.alive[p] else 1,

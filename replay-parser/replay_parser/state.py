@@ -9,6 +9,7 @@ from replay_parser.types import (
     CaptureEvent,
     DeathEvent,
     MoveRowIndex,
+    NeutralizeEvent,
     PerspectiveIndex,
     PlayerIndex,
     TileIndex,
@@ -94,6 +95,21 @@ class State:
     # Event lists (game-level output)
     death_events: list[DeathEvent]
     capture_events: list[CaptureEvent]
+    neutralize_events: list[NeutralizeEvent]
+
+    # Four variants of the "army of player j destroyed by player i" matrix,
+    # used to investigate which definition matches the server's surrender-
+    # bonus kill-credit rule. All shape int32[num_players, num_players].
+    #
+    #   sym vs off : do we credit both sides of a combat (defender also
+    #                destroyed some of attacker's army) or only the attacker?
+    #   all vs pre : do we count damage to player j throughout the game, or
+    #                only while alive[j] is still True (i.e., before they
+    #                surrendered / were captured)?
+    damage_sym_all: np.ndarray
+    damage_sym_pre: np.ndarray
+    damage_off_all: np.ndarray
+    damage_off_pre: np.ndarray
 
     # Per-perspective output (curated players only)
     perspective_indices: dict[PlayerIndex, PerspectiveIndex]
@@ -164,6 +180,11 @@ def build_initial_state(
         moves_cursor=0,
         death_events=[],
         capture_events=[],
+        neutralize_events=[],
+        damage_sym_all=np.zeros((num_players, num_players), dtype=np.int32),
+        damage_sym_pre=np.zeros((num_players, num_players), dtype=np.int32),
+        damage_off_all=np.zeros((num_players, num_players), dtype=np.int32),
+        damage_off_pre=np.zeros((num_players, num_players), dtype=np.int32),
         perspective_indices=perspective_indices,
         actions_source=np.full((k, action_len), -1, dtype=np.int16),
         actions_dest=np.full((k, action_len), -1, dtype=np.int16),

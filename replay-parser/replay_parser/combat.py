@@ -2,7 +2,13 @@ import numpy as np
 
 from replay_parser.decode import Moves
 from replay_parser.state import State, set_army
-from replay_parser.types import CaptureEvent, DeathEvent, MoveRowIndex, PlayerIndex
+from replay_parser.types import (
+    CaptureEvent,
+    DeathEvent,
+    MoveRowIndex,
+    NeutralizeEvent,
+    PlayerIndex,
+)
 
 
 def attack(state: State, move_idx: MoveRowIndex, moves: Moves) -> None:
@@ -20,16 +26,33 @@ def attack(state: State, move_idx: MoveRowIndex, moves: Moves) -> None:
     dest_owner = int(state.ownership[dest])
     dest_army = int(state.armies[dest])
 
+    damage = 0
     if dest_owner == mover:
         # Only growth path in combat: same-owner accumulation. The other
         # branches produce values <= incoming, which already fits in int16.
         set_army(state, dest, dest_army + incoming)
     elif dest_army >= incoming:
         # Defender holds (includes the equal-armies tie — defender's advantage).
+        # Both sides lose `incoming` in the exchange.
         set_army(state, dest, dest_army - incoming)
+        damage = incoming
     else:
+        # Attacker wins. Both sides lose `dest_army`: defenders all die;
+        # attackers spend `dest_army` units neutralizing them before flipping.
         set_army(state, dest, incoming - dest_army)
         state.ownership[dest] = mover
+        damage = dest_army
+
+    if damage and dest_owner >= 0:
+        state.damage_sym_all[mover, dest_owner] += damage
+        state.damage_sym_all[dest_owner, mover] += damage
+        state.damage_off_all[mover, dest_owner] += damage
+        # "pre-surrender" variants only count damage taken while alive — damage
+        # during the surrender countdown shouldn't feed the surrender-bonus rule.
+        if state.alive[dest_owner]:
+            state.damage_sym_pre[mover, dest_owner] += damage
+            state.damage_sym_pre[dest_owner, mover] += damage
+            state.damage_off_pre[mover, dest_owner] += damage
 
 
 def execute_attack(state: State, move_idx: MoveRowIndex, moves: Moves) -> None:
@@ -77,6 +100,9 @@ def try_neutralize_player(state: State, p: PlayerIndex) -> None:
     # Without nulling generals[p], the per-turn general-tick keeps incrementing
     # a now-neutral tile every 2 timesteps.
     state.generals[p] = -1
+    state.neutralize_events.append(
+        NeutralizeEvent(timestep=state.timestep, player=p)
+    )
 
 
 def kill_player(state: State, p: PlayerIndex) -> None:
