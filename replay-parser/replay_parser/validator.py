@@ -1,6 +1,6 @@
 import numpy as np
+import sim_core
 
-from replay_parser.state import State
 from replay_parser.types import PlayerIndex
 
 
@@ -20,7 +20,7 @@ POST_V30_9_2_CUTOFF_MS = 1764482381217  # 2025-11-30 05:59:41.217 UTC — first 
 
 
 def deduce_ranking_for_replay(
-    state: State,
+    state: sim_core.State,
     started_ms: int,
 ) -> list[PlayerIndex]:
     """Compute the ranking using the lbSort rule that was live when the game
@@ -78,7 +78,7 @@ def apply_surrender_bonus(state: State) -> list[bool]:
 
 
 def deduce_ranking(
-    state: State,
+    state: sim_core.State,
     *,
     partition_kill_no_kill: bool = True,
     has_kill: list[bool] | None = None,

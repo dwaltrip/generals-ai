@@ -4,18 +4,10 @@ mod state;
 
 use state::{army_overflow_pyerr, CaptureEvent, DeathEvent, NeutralizeEvent, State};
 
+/// Run the full simulator on a Python `ReplayData`. Returns a finished
+/// Rust State after running to game-over.
 #[pyfunction]
-fn ping() {}
-
-/// Run the full simulator on a Python `ReplayData`. Equivalent to calling
-/// build_initial_state + step() to completion. Returns a finished Rust State.
-#[pyfunction]
-#[pyo3(signature = (replay, perspective_player_ids = vec![]))]
-fn simulate(
-    py: Python<'_>,
-    replay: &Bound<'_, PyAny>,
-    perspective_player_ids: Vec<usize>,
-) -> PyResult<State> {
+fn simulate(py: Python<'_>, replay: &Bound<'_, PyAny>) -> PyResult<State> {
     use numpy::PyReadonlyArray1;
 
     let static_data = replay.getattr("static")?;
@@ -51,12 +43,6 @@ fn simulate(
     let a_ts = a_timestep.as_slice()?;
     let a_idx = a_index.as_slice()?;
 
-    let t_last_move: i32 = if m_ts.is_empty() {
-        0
-    } else {
-        *m_ts.iter().max().unwrap_or(&0)
-    };
-
     let mut state = State::build_initial(
         map_size,
         num_players,
@@ -66,10 +52,8 @@ fn simulate(
         &initial_generals,
         &initial_neutrals,
         &initial_neutral_armies,
-        t_last_move,
-        &perspective_player_ids,
     );
-    // Initial snapshot — mirrors parse_replay's pre-loop append.
+    // Initial snapshot — mirrors the pre-loop append in the old Python parser.
     state.snapshot().map_err(|e| army_overflow_pyerr(py, e))?;
 
     let result = py.detach(|| -> Result<(), state::ArmyOverflow> {
@@ -87,7 +71,6 @@ fn simulate(
 
 #[pymodule]
 fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add_function(wrap_pyfunction!(ping, m)?)?;
     m.add_function(wrap_pyfunction!(simulate, m)?)?;
     m.add_class::<State>()?;
     m.add_class::<DeathEvent>()?;

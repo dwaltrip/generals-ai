@@ -3,7 +3,6 @@ from sim_core._native import (
     DeathEvent,
     NeutralizeEvent,
     State,
-    ping,
     simulate,
 )
 
@@ -12,6 +11,5 @@ __all__ = [
     "DeathEvent",
     "CaptureEvent",
     "NeutralizeEvent",
-    "ping",
     "simulate",
 ]

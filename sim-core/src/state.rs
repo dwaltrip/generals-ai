@@ -1,26 +1,32 @@
-use std::collections::{HashMap, VecDeque};
+use std::collections::VecDeque;
 
-use numpy::{IntoPyArray, PyArray1, PyArray2, PyReadonlyArray1};
+use numpy::{IntoPyArray, PyArray1, PyArray2};
 use pyo3::prelude::*;
 
 const ARMY_MAX: i32 = 32767;
-const ACTION_BUFFER_HEADROOM: usize = 2100;
 const MAX_ALL_AFK_TIMESTEPS: i32 = 2000;
 const MAX_GAME_TIMESTEPS: i32 = 50000;
 
-// TODO: PyO3 0.28 deprecates #[pyclass(get_all)] (3 warnings on the event
-// types below). Replace each `#[pyclass(get_all)]` with bare `#[pyclass]`
-// plus a `#[pymethods] impl Foo { #[getter] fn timestep(&self) -> i32 { ... } }`
-// block per field. Non-blocking; revisit before declaring victory.
-
-#[pyclass(get_all)]
+#[pyclass]
 #[derive(Clone, Debug)]
 pub struct DeathEvent {
     pub timestep: i32,
     pub player: usize,
 }
 
-#[pyclass(get_all)]
+#[pymethods]
+impl DeathEvent {
+    #[getter]
+    fn timestep(&self) -> i32 {
+        self.timestep
+    }
+    #[getter]
+    fn player(&self) -> usize {
+        self.player
+    }
+}
+
+#[pyclass]
 #[derive(Clone, Debug)]
 pub struct CaptureEvent {
     pub timestep: i32,
@@ -28,11 +34,39 @@ pub struct CaptureEvent {
     pub captured: usize,
 }
 
-#[pyclass(get_all)]
+#[pymethods]
+impl CaptureEvent {
+    #[getter]
+    fn timestep(&self) -> i32 {
+        self.timestep
+    }
+    #[getter]
+    fn captor(&self) -> usize {
+        self.captor
+    }
+    #[getter]
+    fn captured(&self) -> usize {
+        self.captured
+    }
+}
+
+#[pyclass]
 #[derive(Clone, Debug)]
 pub struct NeutralizeEvent {
     pub timestep: i32,
     pub player: usize,
+}
+
+#[pymethods]
+impl NeutralizeEvent {
+    #[getter]
+    fn timestep(&self) -> i32 {
+        self.timestep
+    }
+    #[getter]
+    fn player(&self) -> usize {
+        self.player
+    }
 }
 
 #[derive(Debug)]
@@ -61,21 +95,11 @@ pub struct State {
     pub afks_cursor: usize,
     pub moves_cursor: usize,
 
-    pub damage_sym_all: Vec<i32>,
-    pub damage_sym_pre: Vec<i32>,
     pub damage_off_all: Vec<i32>,
-    pub damage_off_pre: Vec<i32>,
 
     pub death_events: Vec<DeathEvent>,
     pub capture_events: Vec<CaptureEvent>,
     pub neutralize_events: Vec<NeutralizeEvent>,
-
-    pub perspective_indices: HashMap<usize, usize>,
-    pub actions_source: Vec<i16>,
-    pub actions_dest: Vec<i16>,
-    pub actions_is50: Vec<u8>,
-    pub k: usize,
-    pub t_max: usize,
 
     pub snapshots_ownership: Vec<Vec<i8>>,
     pub snapshots_armies: Vec<Vec<i16>>,
@@ -85,104 +109,12 @@ pub struct State {
 }
 
 // ============================================================================
-// Python surface (#[pymethods]) — constructors, getters, dispatchers
+// Python surface (#[pymethods]) — getters only. Inner sim logic in the plain
+// `impl State` block below; the hot path runs without GIL.
 // ============================================================================
 
 #[pymethods]
 impl State {
-    /// Construct a Rust State from a Python `replay_parser.state.State`. Used by
-    /// parity tests to mirror the Python sim's state at any timestep.
-    #[classmethod]
-    #[pyo3(name = "from_python")]
-    fn py_from_python(
-        _cls: &Bound<'_, pyo3::types::PyType>,
-        py_state: &Bound<'_, PyAny>,
-    ) -> PyResult<Self> {
-        let ownership: PyReadonlyArray1<i8> = py_state.getattr("ownership")?.extract()?;
-        let armies: PyReadonlyArray1<i32> = py_state.getattr("armies")?.extract()?;
-        let cities_mask_arr: PyReadonlyArray1<bool> = py_state.getattr("cities_mask")?.extract()?;
-
-        let cities_mask: Vec<u8> = cities_mask_arr
-            .as_slice()?
-            .iter()
-            .map(|&b| b as u8)
-            .collect();
-        let map_size = ownership.len()?;
-
-        let cities: Vec<i32> = py_state.getattr("cities")?.extract()?;
-        let generals: Vec<i32> = py_state.getattr("generals")?.extract()?;
-        let alive: Vec<bool> = py_state.getattr("alive")?.extract()?;
-        let has_kill: Vec<bool> = py_state.getattr("has_kill")?.extract()?;
-
-        let raw_buffers: Vec<Vec<usize>> = py_state.getattr("input_buffer")?.extract()?;
-        let input_buffer: Vec<VecDeque<usize>> =
-            raw_buffers.into_iter().map(VecDeque::from).collect();
-
-        let perspective_indices: HashMap<usize, usize> =
-            py_state.getattr("perspective_indices")?.extract()?;
-
-        let damage_sym_all = flatten_2d_i32(py_state.getattr("damage_sym_all")?)?;
-        let damage_sym_pre = flatten_2d_i32(py_state.getattr("damage_sym_pre")?)?;
-        let damage_off_all = flatten_2d_i32(py_state.getattr("damage_off_all")?)?;
-        let damage_off_pre = flatten_2d_i32(py_state.getattr("damage_off_pre")?)?;
-        let (actions_source, k, t_max) = flatten_2d_i16(py_state.getattr("actions_source")?)?;
-        let (actions_dest, _, _) = flatten_2d_i16(py_state.getattr("actions_dest")?)?;
-        let (actions_is50, _, _) = flatten_2d_u8(py_state.getattr("actions_is50")?)?;
-
-        let death_events = extract_events_2(py_state.getattr("death_events")?, "player")?
-            .into_iter()
-            .map(|(timestep, player)| DeathEvent { timestep, player })
-            .collect();
-        let neutralize_events =
-            extract_events_2(py_state.getattr("neutralize_events")?, "player")?
-                .into_iter()
-                .map(|(timestep, player)| NeutralizeEvent { timestep, player })
-                .collect();
-        let capture_events = extract_capture_events(py_state.getattr("capture_events")?)?;
-
-        let timestep: i32 = py_state.getattr("timestep")?.extract()?;
-        let num_players: usize = py_state.getattr("num_players")?.extract()?;
-        let alive_count: usize = py_state.getattr("alive_count")?.extract()?;
-        let updates_since_move: i32 = py_state.getattr("updates_since_move")?.extract()?;
-        let afks_cursor: usize = py_state.getattr("afks_cursor")?.extract()?;
-        let moves_cursor: usize = py_state.getattr("moves_cursor")?.extract()?;
-
-        Ok(State {
-            ownership: ownership.as_slice()?.to_vec(),
-            armies: armies.as_slice()?.to_vec(),
-            cities_mask,
-            cities,
-            generals,
-            alive,
-            has_kill,
-            input_buffer,
-            timestep,
-            num_players,
-            alive_count,
-            updates_since_move,
-            afks_cursor,
-            moves_cursor,
-            damage_sym_all,
-            damage_sym_pre,
-            damage_off_all,
-            damage_off_pre,
-            death_events,
-            capture_events,
-            neutralize_events,
-            perspective_indices,
-            actions_source,
-            actions_dest,
-            actions_is50,
-            k,
-            t_max,
-            snapshots_ownership: Vec::new(),
-            snapshots_armies: Vec::new(),
-            snapshots_cities_mask: Vec::new(),
-            map_size,
-        })
-    }
-
-    // --- Scalar / list getters ---
     #[getter]
     fn timestep(&self) -> i32 {
         self.timestep
@@ -194,18 +126,6 @@ impl State {
     #[getter]
     fn num_players(&self) -> usize {
         self.num_players
-    }
-    #[getter]
-    fn moves_cursor(&self) -> usize {
-        self.moves_cursor
-    }
-    #[getter]
-    fn afks_cursor(&self) -> usize {
-        self.afks_cursor
-    }
-    #[getter]
-    fn updates_since_move(&self) -> i32 {
-        self.updates_since_move
     }
     #[getter]
     fn alive(&self) -> Vec<bool> {
@@ -236,7 +156,6 @@ impl State {
         self.neutralize_events.clone()
     }
 
-    // --- Numpy getters (one fresh array per call) ---
     #[getter]
     fn ownership<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<i8>> {
         self.ownership.clone().into_pyarray(py)
@@ -249,49 +168,12 @@ impl State {
     fn cities_mask<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<u8>> {
         self.cities_mask.clone().into_pyarray(py)
     }
-    #[getter]
-    fn actions_source<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<i16>> {
-        self.actions_source.clone().into_pyarray(py)
-    }
-    #[getter]
-    fn actions_dest<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<i16>> {
-        self.actions_dest.clone().into_pyarray(py)
-    }
-    #[getter]
-    fn actions_is50<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<u8>> {
-        self.actions_is50.clone().into_pyarray(py)
-    }
-    #[getter]
-    fn input_buffer_lengths(&self) -> Vec<usize> {
-        self.input_buffer.iter().map(|d| d.len()).collect()
-    }
-    #[getter]
-    fn input_buffer_contents(&self) -> Vec<Vec<usize>> {
-        self.input_buffer
-            .iter()
-            .map(|d| d.iter().copied().collect())
-            .collect()
-    }
 
-    // Damage matrices reshape to [P,P] for downstream parity with numpy.
-    #[getter]
-    fn damage_sym_all<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray2<i32>>> {
-        damage_to_pyarray2(py, &self.damage_sym_all, self.num_players)
-    }
-    #[getter]
-    fn damage_sym_pre<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray2<i32>>> {
-        damage_to_pyarray2(py, &self.damage_sym_pre, self.num_players)
-    }
     #[getter]
     fn damage_off_all<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray2<i32>>> {
         damage_to_pyarray2(py, &self.damage_off_all, self.num_players)
     }
-    #[getter]
-    fn damage_off_pre<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray2<i32>>> {
-        damage_to_pyarray2(py, &self.damage_off_pre, self.num_players)
-    }
 
-    // Snapshot getters — list of fresh numpy arrays
     #[getter]
     fn snapshots_ownership<'py>(&self, py: Python<'py>) -> Vec<Bound<'py, PyArray1<i8>>> {
         self.snapshots_ownership
@@ -316,196 +198,6 @@ impl State {
     #[getter]
     fn snapshots_len(&self) -> usize {
         self.snapshots_ownership.len()
-    }
-
-    // ---------------------------------------------------------------------
-    // Step-body method dispatchers (#[pymethods])
-    // Internals live in plain `impl State` blocks below.
-    // ---------------------------------------------------------------------
-
-    fn apply_production(&mut self) {
-        self.apply_production_impl();
-    }
-
-    #[pyo3(name = "buffer_pending_moves")]
-    fn py_buffer_pending_moves(
-        &mut self,
-        m_timestep: PyReadonlyArray1<i32>,
-        m_index: PyReadonlyArray1<i8>,
-    ) -> PyResult<()> {
-        self.buffer_pending_moves(m_timestep.as_slice()?, m_index.as_slice()?);
-        Ok(())
-    }
-
-    #[pyo3(name = "select_candidates")]
-    fn py_select_candidates(
-        &mut self,
-        m_index: PyReadonlyArray1<i8>,
-        m_source: PyReadonlyArray1<i16>,
-        m_dest: PyReadonlyArray1<i16>,
-    ) -> PyResult<Vec<usize>> {
-        Ok(self.select_candidates(
-            m_index.as_slice()?,
-            m_source.as_slice()?,
-            m_dest.as_slice()?,
-        ))
-    }
-
-    #[pyo3(name = "is_valid")]
-    fn py_is_valid(
-        &self,
-        move_idx: usize,
-        m_index: PyReadonlyArray1<i8>,
-        m_source: PyReadonlyArray1<i16>,
-        m_dest: PyReadonlyArray1<i16>,
-    ) -> PyResult<bool> {
-        Ok(self.is_valid(
-            move_idx,
-            m_index.as_slice()?,
-            m_source.as_slice()?,
-            m_dest.as_slice()?,
-        ))
-    }
-
-    #[pyo3(name = "record_action")]
-    fn py_record_action(
-        &mut self,
-        move_idx: usize,
-        m_index: PyReadonlyArray1<i8>,
-        m_source: PyReadonlyArray1<i16>,
-        m_dest: PyReadonlyArray1<i16>,
-        m_is50: PyReadonlyArray1<u8>,
-    ) -> PyResult<()> {
-        self.record_action(
-            move_idx,
-            m_index.as_slice()?,
-            m_source.as_slice()?,
-            m_dest.as_slice()?,
-            m_is50.as_slice()?,
-        );
-        Ok(())
-    }
-
-    #[pyo3(name = "attack")]
-    fn py_attack(
-        &mut self,
-        move_idx: usize,
-        m_index: PyReadonlyArray1<i8>,
-        m_source: PyReadonlyArray1<i16>,
-        m_dest: PyReadonlyArray1<i16>,
-        m_is50: PyReadonlyArray1<u8>,
-    ) -> PyResult<()> {
-        self.attack(
-            move_idx,
-            m_index.as_slice()?,
-            m_source.as_slice()?,
-            m_dest.as_slice()?,
-            m_is50.as_slice()?,
-        );
-        Ok(())
-    }
-
-    #[pyo3(name = "execute_attack")]
-    fn py_execute_attack(
-        &mut self,
-        move_idx: usize,
-        m_index: PyReadonlyArray1<i8>,
-        m_source: PyReadonlyArray1<i16>,
-        m_dest: PyReadonlyArray1<i16>,
-        m_is50: PyReadonlyArray1<u8>,
-    ) -> PyResult<()> {
-        self.execute_attack(
-            move_idx,
-            m_index.as_slice()?,
-            m_source.as_slice()?,
-            m_dest.as_slice()?,
-            m_is50.as_slice()?,
-        );
-        Ok(())
-    }
-
-    #[pyo3(name = "execute_player_capture")]
-    fn py_execute_player_capture(&mut self, captured: usize, captor: usize) {
-        self.execute_player_capture(captured, captor);
-    }
-
-    #[pyo3(name = "try_neutralize_player")]
-    fn py_try_neutralize_player(&mut self, p: usize) {
-        self.try_neutralize_player(p);
-    }
-
-    #[pyo3(name = "kill_player")]
-    fn py_kill_player(&mut self, p: usize) {
-        self.kill_player(p);
-    }
-
-    fn kill_all_but_strongest(&mut self) {
-        self.kill_all_but_strongest_impl();
-    }
-
-    #[pyo3(name = "priority_sort")]
-    fn py_priority_sort(
-        &self,
-        candidates: Vec<usize>,
-        m_index: PyReadonlyArray1<i8>,
-        m_source: PyReadonlyArray1<i16>,
-        m_dest: PyReadonlyArray1<i16>,
-    ) -> PyResult<Vec<usize>> {
-        Ok(self.priority_sort(
-            &candidates,
-            m_index.as_slice()?,
-            m_source.as_slice()?,
-            m_dest.as_slice()?,
-        ))
-    }
-
-    #[pyo3(name = "dependency_loop")]
-    fn py_dependency_loop(
-        &self,
-        sorted_candidates: Vec<usize>,
-        m_source: PyReadonlyArray1<i16>,
-        m_dest: PyReadonlyArray1<i16>,
-    ) -> PyResult<Vec<usize>> {
-        Ok(self.dependency_loop(&sorted_candidates, m_source.as_slice()?, m_dest.as_slice()?))
-    }
-
-    #[pyo3(name = "process_pending_afks")]
-    fn py_process_pending_afks(
-        &mut self,
-        a_timestep: PyReadonlyArray1<i32>,
-        a_index: PyReadonlyArray1<i8>,
-    ) -> PyResult<()> {
-        self.process_pending_afks(a_timestep.as_slice()?, a_index.as_slice()?);
-        Ok(())
-    }
-
-    #[pyo3(name = "snapshot")]
-    fn py_snapshot(&mut self, py: Python<'_>) -> PyResult<()> {
-        self.snapshot().map_err(|e| army_overflow_pyerr(py, e))
-    }
-
-    #[pyo3(name = "step")]
-    fn py_step(
-        &mut self,
-        py: Python<'_>,
-        m_timestep: PyReadonlyArray1<i32>,
-        m_index: PyReadonlyArray1<i8>,
-        m_source: PyReadonlyArray1<i16>,
-        m_dest: PyReadonlyArray1<i16>,
-        m_is50: PyReadonlyArray1<u8>,
-        a_timestep: PyReadonlyArray1<i32>,
-        a_index: PyReadonlyArray1<i8>,
-    ) -> PyResult<bool> {
-        self.step(
-            m_timestep.as_slice()?,
-            m_index.as_slice()?,
-            m_source.as_slice()?,
-            m_dest.as_slice()?,
-            m_is50.as_slice()?,
-            a_timestep.as_slice()?,
-            a_index.as_slice()?,
-        )
-        .map_err(|e| army_overflow_pyerr(py, e))
     }
 }
 
@@ -580,24 +272,6 @@ impl State {
             && self.armies[source] >= 2
     }
 
-    pub(crate) fn record_action(
-        &mut self,
-        move_idx: usize,
-        m_index: &[i8],
-        m_source: &[i16],
-        m_dest: &[i16],
-        m_is50: &[u8],
-    ) {
-        let p = m_index[move_idx] as usize;
-        let Some(&ps) = self.perspective_indices.get(&p) else {
-            return;
-        };
-        let row = ps * self.t_max + self.timestep as usize;
-        self.actions_source[row] = m_source[move_idx];
-        self.actions_dest[row] = m_dest[move_idx];
-        self.actions_is50[row] = m_is50[move_idx];
-    }
-
     // --- Combat (combat.py mirror) ---
 
     pub(crate) fn attack(
@@ -638,14 +312,7 @@ impl State {
             let m = mover as usize;
             let d = dest_owner as usize;
             let p = self.num_players;
-            self.damage_sym_all[m * p + d] += damage;
-            self.damage_sym_all[d * p + m] += damage;
             self.damage_off_all[m * p + d] += damage;
-            if self.alive[d] {
-                self.damage_sym_pre[m * p + d] += damage;
-                self.damage_sym_pre[d * p + m] += damage;
-                self.damage_off_pre[m * p + d] += damage;
-            }
         }
     }
 
@@ -868,10 +535,6 @@ impl State {
         self.buffer_pending_moves(m_timestep, m_index);
         let candidates = self.select_candidates(m_index, m_source, m_dest);
 
-        for &i in &candidates {
-            self.record_action(i, m_index, m_source, m_dest, m_is50);
-        }
-
         let any_ran = {
             let sorted = self.priority_sort(&candidates, m_index, m_source, m_dest);
             let ordered = self.dependency_loop(&sorted, m_source, m_dest);
@@ -900,7 +563,6 @@ impl State {
         Ok(true)
     }
 
-    // --- Initial-state constructor (mirrors state.py:build_initial_state) ---
     pub(crate) fn build_initial(
         map_size: usize,
         num_players: usize,
@@ -910,8 +572,6 @@ impl State {
         initial_generals: &[i32],
         initial_neutrals: &[i32],
         initial_neutral_armies: &[i32],
-        t_last_move: i32,
-        perspective_player_ids: &[usize],
     ) -> Self {
         let mut ownership = vec![-1i8; map_size];
         let mut armies = vec![0i32; map_size];
@@ -947,17 +607,6 @@ impl State {
             armies[idx as usize] = army;
         }
 
-        let action_len = (t_last_move as usize) + ACTION_BUFFER_HEADROOM;
-        let k = perspective_player_ids.len();
-        let mut perspective_indices: HashMap<usize, usize> = HashMap::with_capacity(k);
-        for (i, &p) in perspective_player_ids.iter().enumerate() {
-            perspective_indices.insert(p, i);
-        }
-
-        let actions_source = vec![-1i16; k * action_len];
-        let actions_dest = vec![-1i16; k * action_len];
-        let actions_is50 = vec![0u8; k * action_len];
-
         State {
             ownership,
             armies,
@@ -973,19 +622,10 @@ impl State {
             updates_since_move: 0,
             afks_cursor: 0,
             moves_cursor: 0,
-            damage_sym_all: vec![0i32; num_players * num_players],
-            damage_sym_pre: vec![0i32; num_players * num_players],
             damage_off_all: vec![0i32; num_players * num_players],
-            damage_off_pre: vec![0i32; num_players * num_players],
             death_events: Vec::new(),
             capture_events: Vec::new(),
             neutralize_events: Vec::new(),
-            perspective_indices,
-            actions_source,
-            actions_dest,
-            actions_is50,
-            k,
-            t_max: action_len,
             snapshots_ownership: Vec::new(),
             snapshots_armies: Vec::new(),
             snapshots_cities_mask: Vec::new(),
@@ -997,49 +637,6 @@ impl State {
 // ============================================================================
 // Helpers
 // ============================================================================
-
-fn flatten_2d_i32(arr: Bound<'_, PyAny>) -> PyResult<Vec<i32>> {
-    arr.call_method0("ravel")?.extract()
-}
-
-fn flatten_2d_i16(arr: Bound<'_, PyAny>) -> PyResult<(Vec<i16>, usize, usize)> {
-    let shape: (usize, usize) = arr.getattr("shape")?.extract()?;
-    let ravel: Vec<i16> = arr.call_method0("ravel")?.extract()?;
-    Ok((ravel, shape.0, shape.1))
-}
-
-fn flatten_2d_u8(arr: Bound<'_, PyAny>) -> PyResult<(Vec<u8>, usize, usize)> {
-    let shape: (usize, usize) = arr.getattr("shape")?.extract()?;
-    let ravel: Vec<u8> = arr.call_method0("ravel")?.extract()?;
-    Ok((ravel, shape.0, shape.1))
-}
-
-fn extract_events_2(events: Bound<'_, PyAny>, second_field: &str) -> PyResult<Vec<(i32, usize)>> {
-    let mut out = Vec::new();
-    for e in events.try_iter()? {
-        let e = e?;
-        let t: i32 = e.getattr("timestep")?.extract()?;
-        let p: usize = e.getattr(second_field)?.extract()?;
-        out.push((t, p));
-    }
-    Ok(out)
-}
-
-fn extract_capture_events(events: Bound<'_, PyAny>) -> PyResult<Vec<CaptureEvent>> {
-    let mut out = Vec::new();
-    for e in events.try_iter()? {
-        let e = e?;
-        let timestep: i32 = e.getattr("timestep")?.extract()?;
-        let captor: usize = e.getattr("captor")?.extract()?;
-        let captured: usize = e.getattr("captured")?.extract()?;
-        out.push(CaptureEvent {
-            timestep,
-            captor,
-            captured,
-        });
-    }
-    Ok(out)
-}
 
 fn damage_to_pyarray2<'py>(
     py: Python<'py>,
