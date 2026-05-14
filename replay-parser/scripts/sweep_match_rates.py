@@ -41,8 +41,9 @@ from _sweep_common import (
 )
 
 OUT_DIR = Path(__file__).resolve().parent.parent / "tmp"
-PROGRESS_EVERY = 100
-SAMPLE_PER_BUCKET = 50   # random replays per week-bucket
+PROGRESS_EVERY = 500
+# random replays per week-bucket
+SAMPLE_PER_BUCKET = 200
 RANDOM_SEED = 42
 MAX_ERROR_SAMPLES = 20
 MAX_MISS_IDS_PER_BUCKET = 3
