@@ -4,6 +4,14 @@ from sim_core._native import (
     NeutralizeEvent,
     State,
     ping,
+    simulate,
 )
 
-__all__ = ["State", "DeathEvent", "CaptureEvent", "NeutralizeEvent", "ping"]
+__all__ = [
+    "State",
+    "DeathEvent",
+    "CaptureEvent",
+    "NeutralizeEvent",
+    "ping",
+    "simulate",
+]
