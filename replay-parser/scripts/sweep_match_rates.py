@@ -13,16 +13,13 @@ Usage (from replay-parser/):
 """
 from collections import defaultdict
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from pathlib import Path
-import random
 import sqlite3
-import sys
 
 from tabulate import tabulate
 
 from replay_parser._collector.config import DB_PATH
-from replay_parser._collector.sql_helpers import version_range, wire_data_filter
 from replay_parser._collector.wire import decode as decode_blob
 from replay_parser._shared import is_vanilla_ffa
 from replay_parser.errors import ArmyOverflowError
@@ -33,17 +30,22 @@ from replay_parser.validator import (
     deduce_ranking_for_replay,
 )
 
+from _sweep_common import (
+    ReplayInfo,
+    bucket_and_sample,
+    fetch_blobs,
+    fetch_candidates,
+    fetch_listings,
+    log,
+    week_start,
+)
+
 OUT_DIR = Path(__file__).resolve().parent.parent / "tmp"
 PROGRESS_EVERY = 100
-# SAMPLE_PER_BUCKET = 100   # random replays per week-bucket
 SAMPLE_PER_BUCKET = 50   # random replays per week-bucket
 RANDOM_SEED = 42
 MAX_ERROR_SAMPLES = 20
 MAX_MISS_IDS_PER_BUCKET = 3
-
-
-# replay id | started (epoch ms, UTC) | version num
-type ReplayInfo = tuple[str, int, int]
 
 
 @dataclass
@@ -67,15 +69,11 @@ class SweepData:
     listings_by_id: dict[str, list[str]]
 
 
-
-def log(msg: str) -> None:
-    print(msg, file=sys.stderr)
-
-
-def week_start(started_ms: int) -> str:
-    dt = datetime.fromtimestamp(started_ms / 1000, tz=timezone.utc)
-    monday = dt - timedelta(days=dt.weekday())
-    return monday.strftime("%Y-%m-%d")
+def _in_ambiguity_window(info: ReplayInfo) -> bool:
+    """v30.9.2 lbSort cutoff: replays inside the deploy window have
+    indeterminate rankings (we don't know which ruleset the server used)."""
+    _, started, _ = info
+    return PRE_V30_9_2_CUTOFF_MS < started < POST_V30_9_2_CUTOFF_MS
 
 
 def get_sweep_data() -> SweepData:
@@ -87,58 +85,25 @@ def get_sweep_data() -> SweepData:
         # Could this explain some of the non-matches we see?
         # I think the sweep is currently not handling `player_count`...
         # ---------------------------------------------------------------------
-        candidates = conn.execute(
-            f"""SELECT id, started, version FROM replays
-               WHERE ladder_id = 'ffa'
-                 AND {version_range('replays', min_version=15)}
-                 AND {wire_data_filter('replays')}
-               ORDER BY started ASC"""
-        ).fetchall()
+        candidates = fetch_candidates(conn, min_version=15)
         total_candidates = len(candidates)
         log(f"  {total_candidates:,} candidate replays")
 
-        # Bucket candidates by week, then random-sample SAMPLE_PER_BUCKET per
-        # bucket. We do vanilla-FFA filtering AFTER sampling (decoding the wire
-        # is part of the per-replay cost we want to bound).
-        bucket_pool: dict[str, list[ReplayInfo]] = defaultdict(list)
-        for replay_id, started, version in candidates:
-            if PRE_V30_9_2_CUTOFF_MS < started < POST_V30_9_2_CUTOFF_MS:
-                continue
-            wk = week_start(started)
-            bucket_pool[wk].append((replay_id, started, version))
+        # Bucket and sample (skip the v30.9.2 ambiguity window — ground-truth
+        # ranking is indeterminate there). Vanilla-FFA filtering happens AFTER
+        # sampling, in the main loop, since it requires decoding the wire.
+        bucket_pool, sampled = bucket_and_sample(
+            candidates,
+            per_bucket=SAMPLE_PER_BUCKET,
+            seed=RANDOM_SEED,
+            skip_fn=_in_ambiguity_window,
+        )
+        log(f"  sampled {len(sampled):,} replays across {len(bucket_pool)} weeks")
 
-        sampled: list[ReplayInfo] = []
-        rng = random.Random(RANDOM_SEED)
-        for wk, pool in bucket_pool.items():
-            if len(pool) <= SAMPLE_PER_BUCKET:
-                sampled.extend(pool)
-            else:
-                sampled.extend(rng.sample(pool, SAMPLE_PER_BUCKET))
-
-        sampled.sort(key=lambda r: r[1])
-        num_weeks = len(bucket_pool)
-        log(f"  sampled {len(sampled):,} replays across {num_weeks} weeks")
-
-        # Pre-fetch blobs + listings only for sampled IDs. We chunk the IN clause
-        # to stay under SQLite's parameter limit.
         sampled_ids = [r[0] for r in sampled]
-        blobs: dict[str, bytes] = {}
-        listings_by_id: dict[str, list[str]] = defaultdict(list)
-        CHUNK = 500
         log("Fetching blobs + listings for sampled replays...")
-        for i in range(0, len(sampled_ids), CHUNK):
-            chunk = sampled_ids[i:i+CHUNK]
-            placeholders = ",".join("?" * len(chunk))
-            for rid, blob in conn.execute(
-                f"SELECT id, wire_data FROM replays WHERE id IN ({placeholders})", chunk,
-            ):
-                blobs[rid] = blob
-            for rid, name in conn.execute(
-                f"SELECT replay_id, current_name FROM replay_players "
-                f"WHERE replay_id IN ({placeholders}) ORDER BY replay_id, position",
-                chunk,
-            ):
-                listings_by_id[rid].append(name)
+        blobs = fetch_blobs(conn, sampled_ids)
+        listings = fetch_listings(conn, sampled_ids)
         log(f"  fetched {len(blobs):,} blobs")
     finally:
         conn.close()
@@ -147,7 +112,7 @@ def get_sweep_data() -> SweepData:
         total_candidates=total_candidates,
         sampled_replays=sampled,
         blobs_by_id=blobs,
-        listings_by_id=listings_by_id,
+        listings_by_id=listings,
     )
 
 def write_report(
