@@ -10,7 +10,7 @@ def parse_replay(
 ) -> tuple[State, ReplayData]:
     replay = decode_wire(raw)
     state = build_initial_state(replay, perspective_player_ids)
-    state.snapshots.append(state.ownership, state.armies, state.cities_mask)
+    state.snapshots.append(state.ownership, state.armies, state.cities_mask, state.timestep)
     while step(state, replay):
         pass
     return state, replay

@@ -1,7 +1,7 @@
 import numpy as np
 
 from replay_parser.decode import Moves
-from replay_parser.state import State, set_army
+from replay_parser.state import State
 from replay_parser.types import (
     CaptureEvent,
     DeathEvent,
@@ -21,25 +21,23 @@ def attack(state: State, move_idx: MoveRowIndex, moves: Moves) -> None:
     move_reserve = (src_army + 1) // 2 if is50 else 1
     incoming = src_army - move_reserve
 
-    set_army(state, source, src_army - incoming)  # subtracted regardless of outcome
+    state.armies[source] = src_army - incoming  # subtracted regardless of outcome
 
     dest_owner = int(state.ownership[dest])
     dest_army = int(state.armies[dest])
 
     damage = 0
     if dest_owner == mover:
-        # Only growth path in combat: same-owner accumulation. The other
-        # branches produce values <= incoming, which already fits in int16.
-        set_army(state, dest, dest_army + incoming)
+        state.armies[dest] = dest_army + incoming
     elif dest_army >= incoming:
         # Defender holds (includes the equal-armies tie — defender's advantage).
         # Both sides lose `incoming` in the exchange.
-        set_army(state, dest, dest_army - incoming)
+        state.armies[dest] = dest_army - incoming
         damage = incoming
     else:
         # Attacker wins. Both sides lose `dest_army`: defenders all die;
         # attackers spend `dest_army` units neutralizing them before flipping.
-        set_army(state, dest, incoming - dest_army)
+        state.armies[dest] = incoming - dest_army
         state.ownership[dest] = mover
         damage = dest_army
 
@@ -73,7 +71,7 @@ def execute_player_capture(state: State, captured: PlayerIndex, captor: PlayerIn
     # excludes it — only the captured player's *other* tiles get halved.
     mask = state.ownership == captured
     state.ownership[mask] = captor
-    set_army(state, mask, (state.armies[mask].astype(np.int32) + 1) // 2)  # halved, rounded upward
+    state.armies[mask] = (state.armies[mask] + 1) // 2  # halved, rounded upward
 
     state.has_kill[captor] = True
 

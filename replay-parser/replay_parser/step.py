@@ -11,7 +11,7 @@ from replay_parser.moves import (
     priority_sort,
     record_action,
 )
-from replay_parser.state import State, increase_army
+from replay_parser.state import State
 from replay_parser.types import MoveRowIndex
 
 
@@ -39,7 +39,7 @@ def step(state: State, replay: ReplayData) -> bool:
 
     state.timestep += 1
     apply_production(state)
-    state.snapshots.append(state.ownership, state.armies, state.cities_mask)
+    state.snapshots.append(state.ownership, state.armies, state.cities_mask, state.timestep)
     return True
 
 
@@ -92,9 +92,9 @@ def apply_production(state: State) -> None:
     if state.timestep % 2 == 0:
         for gen in state.generals:
             if gen >= 0:
-                increase_army(state, gen, 1)
+                state.armies[gen] += 1
         for c in state.cities:
             if state.ownership[c] >= 0:
-                increase_army(state, c, 1)
+                state.armies[c] += 1
     if state.timestep % 50 == 0:
-        increase_army(state, state.ownership >= 0, 1)
+        state.armies[state.ownership >= 0] += 1

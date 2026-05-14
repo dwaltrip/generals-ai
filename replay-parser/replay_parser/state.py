@@ -16,36 +16,11 @@ from replay_parser.types import (
     Timestep,
 )
 
-# state.armies is int16 (design doc §44). Stacks beyond this don't occur in
-# competitive FFA; replays that hit it are skipped via ArmyOverflowError.
+# `state.armies` is int32 during simulation, narrowed to int16 at snapshot time
+# (the per-tick output dtype per design doc §3 / §44). Stacks beyond int16
+# don't occur in competitive FFA; the snapshot narrow is the overflow gate —
+# any tile > _ARMY_MAX raises ArmyOverflowError and the caller skips the game.
 _ARMY_MAX = 32767
-
-
-def set_army(state: "State", target, value) -> None:
-    """Write `value` to one or more tiles in `state.armies`, raising
-    ArmyOverflowError if any result would exceed int16. `target` is anything
-    numpy indexing accepts: int tile index, list of indices, or boolean mask.
-    All armies writes during simulation should go through this helper (or
-    `increase_army`) so the overflow invariant is enforced in exactly one
-    place.
-
-    Callers must do arithmetic in a wide enough dtype to avoid int16 wrap
-    before passing the value — e.g. cast via `int()` for scalars or
-    `.astype(np.int32)` for array slices.
-    """
-    arr = np.asarray(value, dtype=np.int32)
-    if np.any(arr > _ARMY_MAX):
-        raise ArmyOverflowError(
-            f"army > {_ARMY_MAX} at t={state.timestep}"
-        )
-    state.armies[target] = arr
-
-
-def increase_army(state: "State", target, delta) -> None:
-    """Convenience wrapper around `set_army` for the common `+= delta` case.
-    Handles the int32 promotion internally so callers don't have to.
-    """
-    set_army(state, target, state.armies[target].astype(np.int32) + delta)
 
 
 # All-AFK fallback can fire at most 2000 timesteps after the last move; pad a little
@@ -56,12 +31,14 @@ _ACTION_BUFFER_HEADROOM = 2100
 @dataclass(slots=True)
 class SnapshotBuffer:
     ownership: list[np.ndarray] = field(default_factory=list)
-    armies: list[np.ndarray] = field(default_factory=list)
+    armies: list[np.ndarray] = field(default_factory=list)   # int16 (narrowed from int32 working state)
     cities_mask: list[np.ndarray] = field(default_factory=list)
 
-    def append(self, ownership: np.ndarray, armies: np.ndarray, cities_mask: np.ndarray) -> None:
+    def append(self, ownership: np.ndarray, armies: np.ndarray, cities_mask: np.ndarray, timestep: int = -1) -> None:
+        if armies.max(initial=0) > _ARMY_MAX:
+            raise ArmyOverflowError(f"army > {_ARMY_MAX} at t={timestep}")
         self.ownership.append(ownership.copy())
-        self.armies.append(armies.copy())
+        self.armies.append(armies.astype(np.int16))   # copies and narrows in one pass
         self.cities_mask.append(cities_mask.copy())
 
     def __len__(self) -> int:
@@ -72,7 +49,7 @@ class SnapshotBuffer:
 class State:
     # Grid (mutated in place)
     ownership: np.ndarray     # int8[H*W];  -2=mountain, -1=neutral, p>=0 owned
-    armies: np.ndarray        # int16[H*W]
+    armies: np.ndarray        # int32[H*W] (snapshots narrow to int16 — see SnapshotBuffer.append)
     cities_mask: np.ndarray   # bool[H*W];  in lockstep with `cities`
 
     # Structures (lists)
@@ -130,7 +107,7 @@ def build_initial_state(
     num_players = len(static.usernames)
 
     ownership = np.full(n_cells, -1, dtype=np.int8)
-    armies = np.zeros(n_cells, dtype=np.int16)
+    armies = np.zeros(n_cells, dtype=np.int32)
     cities_mask = np.zeros(n_cells, dtype=bool)
 
     if static.mountains:
