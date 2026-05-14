@@ -88,6 +88,12 @@ def execute_player_capture(state: State, captured: PlayerIndex, captor: PlayerIn
 
 
 def try_neutralize_player(state: State, p: PlayerIndex) -> None:
+    if state.generals[p] == -1:
+        # Already captured/neutralized — execute_player_capture already turned
+        # the general tile into a city and transferred any owned tiles. Without
+        # this guard, general_tile = -1 silently negative-indexes into cities_mask
+        # and appends -1 to state.cities, corrupting production.
+        return
     general_tile = state.generals[p]
 
     mask = state.ownership == p

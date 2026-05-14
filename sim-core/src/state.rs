@@ -8,6 +8,11 @@ const ACTION_BUFFER_HEADROOM: usize = 2100;
 const MAX_ALL_AFK_TIMESTEPS: i32 = 2000;
 const MAX_GAME_TIMESTEPS: i32 = 50000;
 
+// TODO: PyO3 0.28 deprecates #[pyclass(get_all)] (3 warnings on the event
+// types below). Replace each `#[pyclass(get_all)]` with bare `#[pyclass]`
+// plus a `#[pymethods] impl Foo { #[getter] fn timestep(&self) -> i32 { ... } }`
+// block per field. Non-blocking; revisit before declaring victory.
+
 #[pyclass(get_all)]
 #[derive(Clone, Debug)]
 pub struct DeathEvent {
@@ -696,6 +701,9 @@ impl State {
     }
 
     pub(crate) fn try_neutralize_player(&mut self, p: usize) {
+        if self.generals[p] < 0 {
+            return;
+        }
         let general_tile = self.generals[p] as usize;
 
         for i in 0..self.map_size {
