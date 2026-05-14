@@ -4,7 +4,7 @@
 
 **Status:** **Working draft.** High-level design and key decisions captured; nitty-gritty implementation details deferred.
 
-**Stale numbers:** Inline corpus-size, filter-survival, and sample-volume figures (§2, §3, §4 lines 63–64, §8, §10 denominator) lag the current corpus. As of 2026-05-12: ~178k v15+ replays / ~170k post-§4-filter (up from the doc's ~140–145k baseline). The expansion doesn't break any structural decisions — more data gives the §5 training-time quality filter more headroom, and Option C storage scales linearly with games (well within hobby budgets at any plausible corpus size). Refresh stats via `replay-collector/scripts/basic-replay-stats.sh` and `replay-collector/scripts/filter_counts_report.py`.
+**Stale numbers:** Inline corpus-size, filter-survival, and sample-volume figures (§2, §3, §4 lines 63–64, §8, §10 denominator) lag the current corpus. As of 2026-05-12: ~178k v15+ replays / ~170k post-§4-filter (up from the doc's ~140–145k baseline). The expansion doesn't break any structural decisions — more data gives the §5 training-time quality filter more headroom, and the per-game intermediate scales linearly with games (well within hobby budgets at any plausible corpus size). Refresh stats via `replay-collector/scripts/basic-replay-stats.sh` and `replay-collector/scripts/filter_counts_report.py`.
 
 **Companion docs:**
 - `replay-format.md` — `.gior` wire format reference (v18)
@@ -179,7 +179,7 @@ Stop processing pending AFK events the moment game-end is reached — the second
 
 ---
 
-## 9. Dataloader pattern (informs the C decision)
+## 9. Dataloader pattern (informs the intermediate-format decision)
 
 - `IterableDataset` + worker-per-process trajectory walking.
 - Each worker picks a game file at random, walks t=0..T accumulating fog state online, emits frames.
@@ -245,7 +245,7 @@ Full statement of these rules: `generals-io-game-mechanics.md` §6, §7, §9.
 
 ## 13. Hard prerequisites still in flight
 
-- **Obs-tensor consolidation** (`5.06-1` §"Obs-tensor consolidation pass"). C insulates the parser from channel layout, but the dataloader's channel-assembly code is downstream of this consolidation.
+- **Obs-tensor consolidation** (`5.06-1` §"Obs-tensor consolidation pass"). The per-game intermediate insulates the parser from channel layout, but the dataloader's channel-assembly code is downstream of this consolidation.
 
 (Action space was previously in flight; now resolved per `network-architecture-design.md` §4 — referenced from §7.)
 
@@ -253,7 +253,7 @@ Full statement of these rules: `generals-io-game-mechanics.md` §6, §7, §9.
 
 ## 14. Deferred / lower-level
 
-- Exact on-disk format for C output (gzipped `.npz` per game suffices for v1; HDF5 / Zarr / webdataset are graduation paths if file-count or per-file ops become a bottleneck).
+- Exact on-disk format for the per-game intermediate (gzipped `.npz` per game suffices for v1; HDF5 / Zarr / webdataset are graduation paths if file-count or per-file ops become a bottleneck).
 - Chunk-prefetch depth — dataloader-level tuning. Buffer-size floor itself is spec'd in §9.
 - Phase 2 self-play simulator (separate effort if Phase 2 happens; likely fork strakam's JAX `game.py`).
 
