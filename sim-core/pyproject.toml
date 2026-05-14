@@ -1,0 +1,21 @@
+[build-system]
+requires = ["maturin>=1.7,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "sim-core"
+version = "0.0.1"
+description = "Rust core for the generals.io replay simulator"
+requires-python = ">=3.14"
+
+[tool.maturin]
+module-name = "sim_core._native"
+python-source = "python"
+features = ["pyo3/extension-module"]
+
+[tool.uv]
+cache-keys = [
+    { file = "pyproject.toml" },
+    { file = "Cargo.toml" },
+    { file = "**/*.rs" },
+]

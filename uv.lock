@@ -7,6 +7,7 @@ members = [
     "generals-ai-workspace",
     "replay-collector",
     "replay-parser",
+    "sim-core",
 ]
 
 [[package]]
@@ -344,12 +345,14 @@ source = { editable = "replay-parser" }
 dependencies = [
     { name = "numpy" },
     { name = "replay-collector" },
+    { name = "sim-core" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "numpy", specifier = ">=2.0" },
     { name = "replay-collector", editable = "replay-collector" },
+    { name = "sim-core", editable = "sim-core" },
 ]
 
 [[package]]
@@ -389,6 +392,11 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/33/f1/9614e03e1cdcbf9437570b5400ced8a720b5db22b28d8e0f1bda429f660d/ruff-0.15.12-py3-none-win_amd64.whl", hash = "sha256:c87a162d61ab3adca47c03f7f717c68672edec7d1b5499e652331780fe74950d", size = 11837758, upload-time = "2026-04-24T18:17:00.113Z" },
     { url = "https://files.pythonhosted.org/packages/c0/98/6beb4b351e472e5f4c4613f7c35a5290b8be2497e183825310c4c3a3984b/ruff-0.15.12-py3-none-win_arm64.whl", hash = "sha256:a538f7a82d061cee7be55542aca1d86d1393d55d81d4fcc314370f4340930d4f", size = 11120821, upload-time = "2026-04-24T18:16:57.979Z" },
 ]
+
+[[package]]
+name = "sim-core"
+version = "0.0.1"
+source = { editable = "sim-core" }
 
 [[package]]
 name = "tabulate"
