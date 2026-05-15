@@ -57,6 +57,7 @@ def build_html(replay_id: str) -> str:
         "{{ REPLAY_ID }}": replay_id,
         "{{ NEUTRAL_BG }}": constants.NEUTRAL_TILE_BG,
         "{{ MOUNTAIN_BG }}": constants.MOUNTAIN_TILE_BG,
+        "{{ NEUTRAL_CITY_BG }}": constants.NEUTRAL_CITY_BG,
         "{{ TILE_BORDER }}": constants.TILE_BORDER,
         "{{ DEAD_PLAYER_BG }}": constants.DEAD_PLAYER_BG,
         "{{ EVENT_LOG_BG }}": constants.EVENT_LOG_BG,

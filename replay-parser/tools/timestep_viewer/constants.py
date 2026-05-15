@@ -32,9 +32,10 @@ SLOT_COLORS: list[str] = [
 
 # Tile background / styling. Approximated from replay-viewer-map-screenshot.png;
 # tune against the live viewer during Step 4 iteration.
-NEUTRAL_TILE_BG = "rgb(220, 220, 220)"   # empty owned-by-nobody land
-MOUNTAIN_TILE_BG = "rgb(187, 187, 187)"  # tile background under the mountain SVG
-TILE_BORDER = "rgb(170, 170, 170)"       # thin gridline between tiles
+NEUTRAL_TILE_BG = "rgb(255, 255, 255)"      # empty owned-by-nobody land
+MOUNTAIN_TILE_BG = "rgb(200, 200, 200)"     # tile background under the mountain SVG
+NEUTRAL_CITY_BG = "rgb(160, 160, 160)"      # tile background for an uncaptured neutral city
+TILE_BORDER = "rgb(0, 0, 0)"                # 1px gridline between tiles (rendered via .board gap)
 
 # Leaderboard / event-log treatment, approximated from the screenshots.
 DEAD_PLAYER_BG = "rgb(80, 80, 80)"       # heavily-desaturated row for AFK / no-tiles

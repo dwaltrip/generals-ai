@@ -2,42 +2,55 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>generals.io timestep viewer — {{ REPLAY_ID }}</title>
+<title>{{ REPLAY_ID }} — timestep viewer</title>
 <style>
   :root {
     --neutral-bg: {{ NEUTRAL_BG }};
     --mountain-bg: {{ MOUNTAIN_BG }};
+    --neutral-city-bg: {{ NEUTRAL_CITY_BG }};
     --tile-border: {{ TILE_BORDER }};
     --dead-bg: {{ DEAD_PLAYER_BG }};
     --event-log-bg: {{ EVENT_LOG_BG }};
   }
   body {
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-    margin: 0; padding: 16px; background: #fafafa; color: #222;
+    margin: 0; padding: 16px;
+    height: 100vh;
+    box-sizing: border-box;
+    background: #333;
+    color: #eee;
   }
   header {
     display: flex; gap: 18px; align-items: baseline; margin-bottom: 12px;
   }
   header h1 { margin: 0; font-size: 1.15em; }
   header a { text-decoration: none; color: #06c; }
-  header #step-readout { margin-left: auto; font-variant-numeric: tabular-nums; }
+
   .layout { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 16px; align-items: start; }
+  .right-col { display: flex; flex-direction: column; gap: 12px; } 
+  #step-readout {
+    font-variant-numeric: tabular-nums; font-size: 14px;
+    padding: 6px 10px; background: white; color: #222;
+    border: 1px solid #ddd; border-radius: 4px;
+  }
+
   .board {
-    display: grid; gap: 0;
+    display: grid; gap: 1px;
+    background: var(--tile-border);
     border: 1px solid var(--tile-border);
     width: max-content;
   }
   .tile {
     position: relative;
-    width: 22px; height: 22px;
-    border: 1px solid var(--tile-border);
+    width: 24px; height: 24px;
     background: var(--neutral-bg);
     color: #333;
     display: flex; align-items: center; justify-content: center;
-    font-size: 11px; font-weight: 600;
+    font-size: 9px; font-weight: 600;
     line-height: 1; font-variant-numeric: tabular-nums;
   }
   .tile.mountain { background: var(--mountain-bg); }
+  .tile.neutral-city { background: var(--neutral-city-bg); color: white; }
   .tile.owned { color: white; }
 {{ SLOT_COLOR_RULES }}
   .tile .icon {
@@ -47,31 +60,49 @@
   }
   .tile .icon svg { width: 100%; height: 100%; display: block; }
   .tile .army { position: relative; z-index: 1; }
+
   .controls {
     display: flex; gap: 6px; align-items: center;
     margin-top: 10px; flex-wrap: wrap;
   }
   .controls button {
-    padding: 5px 10px; border: 1px solid #ccc; background: white;
+    padding: 5px 10px; border: 1px solid #ccc; background: white; color: #222;
     border-radius: 4px; cursor: pointer; font-size: 13px;
   }
   .controls button:hover { background: #f0f0f0; }
-  .controls input { width: 70px; padding: 5px; border: 1px solid #ccc; border-radius: 4px; }
-  .controls .spacer { width: 12px; }
-  .leaderboard table { border-collapse: collapse; width: 100%; font-size: 13px; }
-  .leaderboard th { background: white; padding: 6px 8px; border: 1px solid #ddd; text-align: left; }
-  .leaderboard td { padding: 6px 8px; border: 1px solid #ddd; }
-  .leaderboard td.player {
-    color: white; font-weight: 600; min-width: 110px;
+  .controls input {
+    width: 70px; padding: 5px; border: 1px solid #ccc; background: white; color: #222;
+    border-radius: 4px;
   }
+  .controls .spacer { width: 12px; }
+
+  .leaderboard { color: black; }
+  .leaderboard table { border-collapse: collapse; width: 100%; font-size: 13px; }
+  .leaderboard th {
+    background: white;
+    padding: 6px 8px;
+    border: 1px solid black;
+    text-align: left;
+  }
+  .leaderboard td { padding: 6px 8px; border: 1px solid black; }
+  .leaderboard td.player { color: white; font-weight: 600; min-width: 110px; }
   .leaderboard td.stat { background: white; font-variant-numeric: tabular-nums; }
   .leaderboard tr.dead td.player { opacity: 0.55; filter: grayscale(35%); }
   .leaderboard tr.dead td.stat { background: var(--dead-bg); color: #ccc; }
-  .leaderboard .skull { margin-right: 6px; }
+  .leaderboard .skull {
+    font-size: 15px;
+    margin-right: 10px;
+    display: inline-block;
+    width: 13px;
+    margin-top: -2px;
+    margin-bottom: -2px;
+  }
+
   #events {
     background: var(--event-log-bg); color: white;
-    padding: 12px; margin-top: 16px; border-radius: 6px;
+    padding: 12px; border-radius: 6px;
     max-height: 320px; overflow-y: auto;
+    min-height: 80px;
     font-size: 13px;
   }
   .event {
@@ -89,10 +120,8 @@
 <body>
 
 <header>
-  <h1>generals.io timestep viewer</h1>
-  <span><code>{{ REPLAY_ID }}</code></span>
+  <h1>timestep viewer — <code>{{ REPLAY_ID }}</code></h1>
   <a href="https://generals.io/replays/{{ REPLAY_ID }}" target="_blank" rel="noopener">↗ open live viewer</a>
-  <span id="step-readout"></span>
 </header>
 
 <!-- Hidden SVG defs — icons referenced via <use> from each tile -->
@@ -114,24 +143,26 @@
       <button data-step="-25">−25</button>
       <button data-step="25">+25</button>
       <span class="spacer"></span>
-      <button data-step="home">⏮ Home</button>
+      <button data-step="start">⏮ Start</button>
       <button data-step="end">End ⏭</button>
       <span class="spacer"></span>
       <label>jump: <input id="jump" type="number" min="0" /></label>
     </div>
   </div>
 
-  <div class="leaderboard">
-    <table>
-      <thead><tr><th>Player</th><th>Army</th><th>Land</th></tr></thead>
-      <tbody id="lb-body"></tbody>
-    </table>
+  <div class="right-col">
+    <div id="step-readout"></div>
+    <div class="leaderboard">
+      <table>
+        <thead><tr><th>Player</th><th>Army</th><th>Land</th></tr></thead>
+        <tbody id="lb-body"></tbody>
+      </table>
+    </div>
+    <section id="events"></section>
   </div>
 </div>
 
-<section id="events"></section>
-
-<script>
+<script type="text/javascript">
 const DATA = {{ DATA_JSON }};
 const COLORS = {{ SLOT_COLORS_JSON }};
 
@@ -244,7 +275,7 @@ function hasKillBy(p, stepT) {
 
 function buildBoard() {
   const board = document.getElementById('board');
-  board.style.gridTemplateColumns = `repeat(${W}, 22px)`;
+  board.style.gridTemplateColumns = `repeat(${W}, 24px)`;
   const cells = [];
   for (let i = 0; i < N; i++) {
     const tile = document.createElement('div');
@@ -327,6 +358,7 @@ function renderBoard(stepT) {
     } else if (cities.has(i)) {
       setTileIcon(tile, 'city');
       setTileArmy(tile, armies[i]);
+      if (o === -1) tile.classList.add('neutral-city');
     } else {
       setTileIcon(tile, null);
       setTileArmy(tile, armies[i]);
@@ -341,7 +373,7 @@ function renderLeaderboard(stepT) {
     row.classList.toggle('dead', !isPlayerAlive(p, stepT));
     row.querySelector('.army').textContent = army[p];
     row.querySelector('.land').textContent = tiles[p];
-    row.querySelector('.skull').textContent = hasKillBy(p, stepT) ? '💀' : '';
+    row.querySelector('.skull').textContent = hasKillBy(p, stepT) ? '☠️' : '';
   }
 }
 
@@ -355,13 +387,25 @@ function eventHTML(e) {
   const u = DATA.static.usernames;
   const swatch = p => `<span class="swatch" style="background:${COLORS[p]}"></span>`;
   if (e.kind === 'capture') {
-    return `<div class="event">${swatch(e.captor)}${escapeHtml(u[e.captor])} captured ${swatch(e.captured)}${escapeHtml(u[e.captured])}. <span class="t">${e.t}</span></div>`;
+    return [
+      '<div class="event">',
+      `${swatch(e.captor)}${escapeHtml(u[e.captor])} captured ${swatch(e.captured)}${escapeHtml(u[e.captured])}. `
+      `<span class="t">${e.t}</span></div>`,
+      ].join('')
   }
   if (e.kind === 'surrender') {
-    return `<div class="event">${swatch(e.player)}${escapeHtml(u[e.player])} surrendered. <span class="t">${e.t}</span></div>`;
+    return [
+      '<div class="event">',
+      `${swatch(e.player)}${escapeHtml(u[e.player])} surrendered. `,
+      `<span class="t">${e.t}</span></div>`,
+    ].join('')
   }
   if (e.kind === 'win') {
-    return `<div class="event win">${swatch(e.player)}${escapeHtml(u[e.player])} wins! <span class="t">${e.t}</span></div>`;
+    return [
+      '<div class="event win">',
+      `${swatch(e.player)}${escapeHtml(u[e.player])} wins! `,
+      `<span class="t">${e.t}</span></div>`,
+    ].join('')
   }
   return '';
 }
@@ -397,7 +441,7 @@ function setStep(newT) {
 document.querySelectorAll('.controls button').forEach(btn => {
   btn.addEventListener('click', () => {
     const v = btn.dataset.step;
-    if (v === 'home') setStep(0);
+    if (v === 'start') setStep(0);
     else if (v === 'end') setStep(T_MAX);
     else setStep(t + parseInt(v, 10));
   });
@@ -411,12 +455,17 @@ document.getElementById('jump').addEventListener('change', e => {
 document.addEventListener('keydown', e => {
   if (e.target.tagName === 'INPUT') return;
   switch (e.key) {
+    case 'a':          setStep(t - 1);  e.preventDefault(); break;
     case 'ArrowLeft':  setStep(t - 1);  e.preventDefault(); break;
+
+    case 'd':          setStep(t + 1);  e.preventDefault(); break;
     case 'ArrowRight': setStep(t + 1);  e.preventDefault(); break;
+
+    case 'w':          setStep(t - 25); e.preventDefault(); break;
     case 'ArrowUp':    setStep(t - 25); e.preventDefault(); break;
+
+    case 's':          setStep(t + 25); e.preventDefault(); break;
     case 'ArrowDown':  setStep(t + 25); e.preventDefault(); break;
-    case 'Home':       setStep(0);      e.preventDefault(); break;
-    case 'End':        setStep(T_MAX);  e.preventDefault(); break;
   }
 });
 
