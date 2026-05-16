@@ -16,7 +16,7 @@ const ARMY_MAX: i32 = 32767;
 const MAX_ALL_AFK_TIMESTEPS: i32 = 2000;
 const MAX_GAME_TIMESTEPS: i32 = 50000;
 
-#[pyclass]
+#[pyclass(skip_from_py_object)]
 #[derive(Clone, Debug)]
 pub struct DeathEvent {
     pub timestep: i32,
@@ -35,7 +35,7 @@ impl DeathEvent {
     }
 }
 
-#[pyclass]
+#[pyclass(skip_from_py_object)]
 #[derive(Clone, Debug)]
 pub struct CaptureEvent {
     pub timestep: i32,
@@ -59,7 +59,7 @@ impl CaptureEvent {
     }
 }
 
-#[pyclass]
+#[pyclass(skip_from_py_object)]
 #[derive(Clone, Debug)]
 pub struct NeutralizeEvent {
     pub timestep: i32,
@@ -659,7 +659,7 @@ fn damage_to_pyarray2<'py>(
 }
 
 pub fn army_overflow_pyerr(py: Python<'_>, e: ArmyOverflow) -> PyErr {
-    let msg = format!("army > {} at t={}", ARMY_MAX, e.timestep);
+    let msg = format!("army={} > {} at t={}", e.value, ARMY_MAX, e.timestep);
     match py
         .import("replay_parser.errors")
         .and_then(|m| m.getattr("ArmyOverflowError"))
