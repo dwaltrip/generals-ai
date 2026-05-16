@@ -13,11 +13,14 @@ Data shape rationale:
     a general tile into a city tile. The user-facing event log uses a
     separate `ui_events` list that suppresses neutralize entries (the
     official viewer doesn't surface them).
-  - `general_death_t[p]` = first timestep where player p's general tile
-    becomes a city, or null if the player still has their general at
-    game-end. Cheap derivation on the JS side: a tile is a general at
-    timestep t iff some p has initial_generals[p] == tile AND
-    (general_death_t[p] is null OR t < general_death_t[p]).
+  - `general_death_t[p]` = the sim-timestep at which the action capturing
+    or neutralizing player p occurred, or null if the player still has
+    their general at game-end. The general tile is still drawn as a
+    general in SNAPS[general_death_t[p]] (that's the pre-resolution
+    snapshot); it flips to a city starting at SNAPS[general_death_t[p]+1].
+    JS rule: a tile is a general at displayed step t iff some p has
+    initial_generals[p] == tile AND (general_death_t[p] is null OR
+    t <= general_death_t[p]).
 """
 from __future__ import annotations
 
@@ -105,8 +108,11 @@ def _build_payload(replay_id: str, state: sim_core.State, replay) -> dict:
         })
     alive_at_end = [p for p in range(state.num_players) if state.alive[p]]
     if len(alive_at_end) == 1:
+        # state.timestep at loop exit is one past the last step that ran;
+        # subtract 1 so the win appears at the same displayed step as the
+        # deciding action under the JS-side `e.t < stepT` rule.
         ui_events.append({
-            "t": state.timestep,
+            "t": state.timestep - 1,
             "kind": "win",
             "player": alive_at_end[0],
         })

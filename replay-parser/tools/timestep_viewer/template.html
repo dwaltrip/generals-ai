@@ -267,12 +267,19 @@ DATA.static.initial_generals.forEach((tile, p) => {
 
 // ============================================================================
 // Per-timestep derived state
+//
+// SNAPS[stepT] is the state slice at sim-timestep stepT — the state the
+// player saw when submitting actions tagged m_timestep=stepT. An event
+// with e.t = T is the action that took SNAPS[T] → SNAPS[T+1], so its
+// consequences are visible starting at displayed step T+1. All
+// "is this annotation visible yet?" checks below compare strictly
+// against stepT for that reason.
 // ============================================================================
 
 function citySetAt(stepT) {
   const s = new Set(INITIAL_CITIES_SET);
   for (const b of DATA.city_births) {
-    if (b.t > stepT) break;
+    if (b.t >= stepT) break;
     s.add(b.tile);
   }
   return s;
@@ -282,18 +289,18 @@ function isGeneralAt(tile, stepT) {
   const p = GENERAL_TILE_TO_PLAYER.get(tile);
   if (p === undefined) return false;
   const death = DATA.static.general_death_t[p];
-  return death === null || stepT < death;
+  return death === null || stepT <= death;
 }
 
 function isPlayerAlive(p, stepT) {
   if (DATA.static.initial_generals[p] < 0) return false;
   const death = DATA.static.general_death_t[p];
-  return death === null || stepT < death;
+  return death === null || stepT <= death;
 }
 
 function hasKillBy(p, stepT) {
   const k = FIRST_KILL_T[p];
-  return k !== null && k <= stepT;
+  return k !== null && k < stepT;
 }
 
 // ============================================================================
@@ -434,7 +441,7 @@ function renderLeaderboard(stepT) {
 
 function renderEvents(stepT) {
   const root = document.getElementById('events');
-  const evs = DATA.ui_events.filter(e => e.t <= stepT);
+  const evs = DATA.ui_events.filter(e => e.t < stepT);
   root.innerHTML = evs.map(eventHTML).join('');
 }
 
