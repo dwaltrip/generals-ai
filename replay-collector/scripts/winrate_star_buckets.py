@@ -28,6 +28,7 @@ from replay_collector.cli._shared import load_players_raw
 from replay_collector.db import create_conn
 from replay_collector.sql_helpers import ffa_match_filter, from_player_games
 from replay_collector.usernames import display_name, filter_valid
+from utils.docstring import doc_summary
 
 
 BUCKET_SIZE = 50
@@ -121,7 +122,7 @@ def fieldnames() -> list[str]:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser = argparse.ArgumentParser(description=doc_summary(__doc__))
     parser.add_argument(
         "players_file",
         type=Path,

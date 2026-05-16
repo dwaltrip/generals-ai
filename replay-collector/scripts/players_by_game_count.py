@@ -19,6 +19,7 @@ import sys
 from replay_collector.db import create_conn
 from replay_collector.sql_helpers import ffa_match_filter, from_player_games, wire_data_filter
 from replay_collector.usernames import display_name
+from utils.docstring import doc_summary
 
 
 def fetch_by_game_count(top_n: int, require_wire_data: bool) -> list[tuple[str, int]]:
@@ -43,7 +44,7 @@ def fetch_by_game_count(top_n: int, require_wire_data: bool) -> list[tuple[str, 
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser = argparse.ArgumentParser(description=doc_summary(__doc__))
     parser.add_argument("-n", type=int, default=20, help="number of players to show")
     parser.add_argument(
         "--require-wire-data",

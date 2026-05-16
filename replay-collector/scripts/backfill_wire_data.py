@@ -29,6 +29,7 @@ from replay_collector import wire
 from replay_collector.db import create_conn
 from replay_collector.db_utils import columns
 from replay_collector.generals_api import decompress_gior
+from utils.docstring import doc_summary
 
 
 DEFAULT_WORKERS = 8
@@ -146,7 +147,7 @@ def verify_backfill(limit: int | None) -> None:
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap = argparse.ArgumentParser(description=doc_summary(__doc__))
     ap.add_argument("--workers", type=int, default=DEFAULT_WORKERS)
     ap.add_argument("--limit", type=int, default=None,
                     help="cap total rows processed (smoke testing)")

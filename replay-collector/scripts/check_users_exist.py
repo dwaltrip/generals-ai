@@ -26,10 +26,11 @@ from replay_collector.cli._shared import load_players_raw
 from replay_collector.client import RateLimiter, TrackedClient, make_client
 from replay_collector.runner import DEFAULT_RATES
 from replay_collector.usernames import is_valid_username
+from utils.docstring import doc_summary
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser = argparse.ArgumentParser(description=doc_summary(__doc__))
     parser.add_argument("input", type=Path, help="txt file with one username per line")
     args = parser.parse_args()
 

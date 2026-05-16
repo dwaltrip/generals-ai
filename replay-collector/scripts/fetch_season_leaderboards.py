@@ -19,6 +19,7 @@ import sys
 import time
 
 from replay_collector.leaderboard import fetch_season_state
+from utils.docstring import doc_summary
 
 
 OUTPUT_DIR = Path("data/leaderboards")
@@ -26,7 +27,7 @@ SLEEP_SECONDS = 1.0
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser = argparse.ArgumentParser(description=doc_summary(__doc__))
     parser.add_argument("start", type=int, help="first season number (inclusive)")
     parser.add_argument(
         "end",

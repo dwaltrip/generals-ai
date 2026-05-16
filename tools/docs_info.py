@@ -13,6 +13,8 @@ import sys
 
 from tabulate import tabulate
 
+from utils.docstring import doc_summary
+
 
 COMMIT_MARK = "===COMMIT==="
 
@@ -34,7 +36,7 @@ class DocInfo:
 
 
 def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    p = argparse.ArgumentParser(description=doc_summary(__doc__))
     p.add_argument("root", nargs="?", default="docs", type=Path,
                    help="folder to search (default: ./docs)")
     p.add_argument("-i", "--include", default="",

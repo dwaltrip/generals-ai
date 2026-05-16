@@ -21,6 +21,8 @@ import sys
 
 import matplotlib.pyplot as plt
 
+from utils.docstring import doc_summary
+
 
 METRICS = ["ffa", "ffawin", "ffacombat", "ffakills"]
 DATA_DIR = Path("data/leaderboards")
@@ -259,7 +261,7 @@ def plot_followup(season: int, by_metric: dict[str, list[float]]) -> Path:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser = argparse.ArgumentParser(description=doc_summary(__doc__))
     parser.add_argument("season", type=int, nargs="?", default=42)
     args = parser.parse_args()
 

@@ -15,10 +15,11 @@ from pathlib import Path
 import sys
 
 from replay_collector.cli._shared import load_players_raw
+from utils.docstring import doc_summary
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser = argparse.ArgumentParser(description=doc_summary(__doc__))
     parser.add_argument("primary", type=Path, help="primary player-list file")
     parser.add_argument("others", nargs="+", type=Path, help="one or more other player-list files")
     mode = parser.add_mutually_exclusive_group()

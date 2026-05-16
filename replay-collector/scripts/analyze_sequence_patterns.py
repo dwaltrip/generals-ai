@@ -27,6 +27,8 @@ import json
 from pathlib import Path
 import sys
 
+from utils.docstring import doc_summary
+
 
 METRIC = "ffa"
 DATA_DIR = Path("data/leaderboards")
@@ -150,7 +152,7 @@ def print_segmented(
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser = argparse.ArgumentParser(description=doc_summary(__doc__))
     parser.add_argument("season", type=int, nargs="?", default=42)
     args = parser.parse_args()
 

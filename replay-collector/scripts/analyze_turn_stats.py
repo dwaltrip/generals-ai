@@ -13,6 +13,7 @@ import statistics
 import sys
 
 from replay_collector.db import create_conn
+from utils.docstring import doc_summary
 
 
 PERCENTILES = [1, 5, 10, 25, 50, 75, 90, 95, 99]
@@ -39,7 +40,7 @@ def percentile(sorted_values: list[int], pct: float) -> int:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser = argparse.ArgumentParser(description=doc_summary(__doc__))
     parser.add_argument("--type", dest="replay_type", default="classic")
     parser.add_argument("--player-count", type=int, default=8)
     parser.add_argument(

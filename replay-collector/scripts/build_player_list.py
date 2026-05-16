@@ -18,6 +18,7 @@ from pathlib import Path
 import sys
 
 from replay_collector.usernames import filter_valid
+from utils.docstring import doc_summary
 
 
 def load_users_from_json(path: Path) -> list[str]:
@@ -26,7 +27,7 @@ def load_users_from_json(path: Path) -> list[str]:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser = argparse.ArgumentParser(description=doc_summary(__doc__))
     parser.add_argument("inputs", nargs="+", type=Path, help="leaderboard JSON file(s)")
     parser.add_argument("--top", type=int, required=True, help="top-N per file")
     parser.add_argument("--output", type=Path, help="output path (default: stdout)")
