@@ -49,7 +49,7 @@ def fill(
     with make_client() as http:
         client = TrackedClient(http, limiter, max_failures=max_failures)
         try:
-            for i, (replay_id, owner_name, _started) in enumerate(work_rows, 1):
+            for i, (replay_id, _owner_name, _started) in enumerate(work_rows, 1):
                 try:
                     raw, decoded = generals_api.fetch_replay(client, replay_id)
                 except TooManyFailures as e:

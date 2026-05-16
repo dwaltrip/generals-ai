@@ -198,7 +198,6 @@ def _ts_city_battling(state, replay, own_stack) -> set[int]:
     cities = state.cities
     if not cities:
         return set()
-    T = own_stack.shape[0]
     cities_arr = np.array(cities, dtype=np.int64)
     transitions_per_tile = (own_stack[1:] != own_stack[:-1]).sum(axis=0)
     city_trans = transitions_per_tile[cities_arr]

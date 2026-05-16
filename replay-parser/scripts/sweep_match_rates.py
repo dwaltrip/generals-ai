@@ -204,6 +204,12 @@ def main():
     buckets: dict[str, Bucket] = defaultdict(Bucket)
     parse_error_samples: list[tuple[str, str, str]] = []  # (id, type, msg)
 
+    def _handle_parse_error(rid, bucket, label, e):
+        bucket.parse_err += 1
+        if len(parse_error_samples) < MAX_ERROR_SAMPLES:
+            parse_error_samples.append((replay_id, type(e).__name__, str(e)))
+        log(f"  {label} {rid}: {type(e).__name__}: {e}")
+
     nonvanilla = 0
     processed = 0
 
@@ -212,11 +218,6 @@ def main():
         if processed % PROGRESS_EVERY == 0:
             log(f"  ... {processed:,}/{total:,}")
 
-        def handle_parse_error(bucket, label, e):
-            bucket.parse_err += 1
-            if len(parse_error_samples) < MAX_ERROR_SAMPLES:
-                parse_error_samples.append((replay_id, type(e).__name__, str(e)))
-            log(f"  {label} {replay_id}: {type(e).__name__}: {e}")
 
         b = buckets[week_start(started)]
         b.total += 1
@@ -226,7 +227,7 @@ def main():
         try:
             wire = decode_blob(blob)
         except Exception as e:
-            handle_parse_error(b, 'decode error', e)
+            _handle_parse_error(replay_id, b, 'decode error', e)
             continue
 
         if not is_vanilla_ffa(wire):
@@ -240,7 +241,7 @@ def main():
             b.overflow += 1
             continue
         except Exception as e:
-            handle_parse_error(b, 'parse error', e)
+            _handle_parse_error(replay_id, b, 'parse error', e)
             continue
 
         listings_names = data.listings_by_id.get(replay_id, [])

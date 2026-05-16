@@ -40,7 +40,7 @@ def deduce_ranking_for_replay(
     )
 
 
-def apply_surrender_bonus(state: State) -> list[bool]:
+def apply_surrender_bonus(state: sim_core.State) -> list[bool]:
     """Return effective has_kill after applying the server's surrender-bonus
     rule: each surrender awards +1 has_kill to the top offense-only damager
     who is still alive when the surrenderer's tiles fully revert to neutral.
