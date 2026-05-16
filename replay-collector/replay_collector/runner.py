@@ -1,5 +1,5 @@
-import logging
 from dataclasses import dataclass, field
+import logging
 
 import httpx
 
@@ -12,6 +12,7 @@ from replay_collector.client import (
     make_client,
 )
 from replay_collector.logging_setup import BucketProgress
+
 
 log = logging.getLogger(__name__)
 log_saved = logging.getLogger("replay_collector.saved")

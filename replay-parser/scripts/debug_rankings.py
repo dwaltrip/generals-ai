@@ -4,8 +4,8 @@ Usage (from replay-parser/):
     uv run python scripts/show_ranking.py YC-ZjiMiY KVt1xVdFd
 """
 import argparse
-import sqlite3
 from datetime import datetime, timezone
+import sqlite3
 
 from tabulate import tabulate
 

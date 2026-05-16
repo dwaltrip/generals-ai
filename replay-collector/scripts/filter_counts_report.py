@@ -21,15 +21,15 @@ Usage (from replay-collector/):
     uv run python scripts/filter_counts_report.py
 """
 
+from collections import Counter, defaultdict
 import csv
 import datetime as dt
 import json
 import logging
+from pathlib import Path
+import statistics
 import sys
 import time
-import statistics
-from collections import Counter, defaultdict
-from pathlib import Path
 
 from replay_collector import wire
 from replay_collector.cli._shared import TMP_DIR, load_players

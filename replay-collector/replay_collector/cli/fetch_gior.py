@@ -1,5 +1,5 @@
-import sys
 from pathlib import Path
+import sys
 
 from replay_collector import db, fill
 from replay_collector.cli._shared import TMP_DIR, fmt_duration, load_players
@@ -7,6 +7,7 @@ from replay_collector.client import DEFAULT_RATES, host_of
 from replay_collector.config import S3_BASE
 from replay_collector.logging_setup import setup_simple_logging
 from replay_collector.runner import DEFAULT_MAX_FAILURES
+
 
 DEFAULT_FETCH_LIMIT = 1000
 

@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 
+
 type PlayerIndex = int
 type TileIndex = int
 type Timestep = int

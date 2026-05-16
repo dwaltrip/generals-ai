@@ -14,8 +14,8 @@ Usage:
 
 import argparse
 import json
-import sys
 from pathlib import Path
+import sys
 
 from replay_collector.usernames import filter_valid
 

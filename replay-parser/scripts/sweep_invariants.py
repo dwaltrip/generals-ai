@@ -12,16 +12,16 @@ from collections import Counter
 import sqlite3
 import sys
 
-import sim_core
-
 from replay_parser._collector.config import DB_PATH
 from replay_parser._collector.wire import decode as decode_blob
 from replay_parser._shared import is_vanilla_ffa
 from replay_parser.decode import decode_wire_array
 from replay_parser.errors import ArmyOverflowError
 from replay_parser.invariants import check_invariants
+import sim_core
 
 from _sweep_common import bucket_and_sample, fetch_candidates, log
+
 
 PROGRESS_EVERY = 500
 RANDOM_SEED = 42

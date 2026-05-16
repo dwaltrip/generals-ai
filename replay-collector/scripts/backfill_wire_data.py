@@ -30,6 +30,7 @@ from replay_collector.db import create_conn
 from replay_collector.db_utils import columns
 from replay_collector.generals_api import decompress_gior
 
+
 DEFAULT_WORKERS = 8
 BATCH_SIZE = 500
 SPOT_CHECK_N = 20

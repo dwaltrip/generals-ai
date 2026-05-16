@@ -5,13 +5,14 @@ Run with: `uv run tools/docs_info.py [root] [options]`
 """
 
 import argparse
-import subprocess
-import sys
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
+import subprocess
+import sys
 
 from tabulate import tabulate
+
 
 COMMIT_MARK = "===COMMIT==="
 

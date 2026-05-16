@@ -14,6 +14,7 @@ import sys
 
 from replay_collector.db import create_conn
 
+
 PERCENTILES = [1, 5, 10, 25, 50, 75, 90, 95, 99]
 
 

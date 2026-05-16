@@ -13,8 +13,8 @@ Usage (from replay-collector/):
 
 import argparse
 import csv
-import sys
 from pathlib import Path
+import sys
 
 from replay_collector.db import create_conn
 from replay_collector.sql_helpers import ffa_match_filter, from_player_games, wire_data_filter

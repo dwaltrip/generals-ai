@@ -9,12 +9,10 @@ Usage (from replay-parser/):
 """
 import sqlite3
 import sys
-from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent))
+from replay_parser._collector.config import DB_PATH
 
 from _fixture_lib import FIXTURES, FIXTURES_DIR
-from replay_parser._collector.config import DB_PATH
 
 
 def main() -> int:

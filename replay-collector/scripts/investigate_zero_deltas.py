@@ -11,9 +11,10 @@ a 1v1-related special entry and is skipped.
 """
 from __future__ import annotations
 
-import json
 from collections import Counter, defaultdict
+import json
 from pathlib import Path
+
 
 DATA = Path(__file__).resolve().parents[1] / "data" / "leaderboards" / "season-42.json"
 EPS = 1e-9

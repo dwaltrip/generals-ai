@@ -1,7 +1,7 @@
 import numpy as np
-import sim_core
 
 from replay_parser.types import PlayerIndex
+import sim_core
 
 
 # Empirical bounds on the v30.9.2 deploy time, derived by bisecting our replay

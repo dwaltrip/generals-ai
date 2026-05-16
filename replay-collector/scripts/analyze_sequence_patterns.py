@@ -22,10 +22,10 @@ Usage:
 """
 
 import argparse
-import json
-import sys
 from collections import Counter, defaultdict
+import json
 from pathlib import Path
+import sys
 
 
 METRIC = "ffa"

@@ -22,12 +22,12 @@ Usage (from replay-collector/):
 """
 
 import argparse
+from collections import Counter, defaultdict
 import datetime as dt
 import logging
+from pathlib import Path
 import sys
 import time
-from collections import Counter, defaultdict
-from pathlib import Path
 
 from replay_collector import wire
 from replay_collector.cli._shared import TMP_DIR

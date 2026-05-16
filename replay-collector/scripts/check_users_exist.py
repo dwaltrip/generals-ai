@@ -18,8 +18,8 @@ Usage:
 
 import argparse
 import csv
-import sys
 from pathlib import Path
+import sys
 
 from replay_collector import generals_api
 from replay_collector.cli._shared import load_players_raw

@@ -18,11 +18,12 @@ transition hour minute-by-minute.
 Usage (from replay-parser/):
     uv run python scripts/find_lbsort_deploy_time.py
 """
-import sqlite3
-import sys
 from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
+import sqlite3
+import sys
+
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT / "replay-parser"))
@@ -32,6 +33,7 @@ from replay_parser._collector.wire import decode as decode_blob
 from replay_parser._shared import is_vanilla_ffa
 from replay_parser.parser import parse_replay
 from replay_parser.validator import deduce_ranking
+
 
 # Window: 2 days centered on the changelog date.
 WINDOW_START_MS = 1764288000000  # 2025-11-28 00:00 UTC

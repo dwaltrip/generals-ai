@@ -4,7 +4,9 @@ line-length = 100
 select = ["F", "E", "W", "I", "B", "UP", "TID"]
 
 [lint.isort]
+force-sort-within-sections = true
 known-first-party = ["replay_collector", "replay_parser", "sim_core"]
+known-local-folder = ["_sweep_common", "_fixture_lib"]
 lines-after-imports = 2
 
 [lint.flake8-tidy-imports.banned-api]

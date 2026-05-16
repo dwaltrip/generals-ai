@@ -21,10 +21,11 @@ from __future__ import annotations
 
 import csv
 import json
-import statistics
 from pathlib import Path
+import statistics
 
 from replay_collector.usernames import display_name
+
 
 EPS = 1e-9
 HALF_EPS = 1e-6

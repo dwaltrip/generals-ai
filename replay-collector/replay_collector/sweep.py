@@ -1,5 +1,5 @@
-import logging
 from dataclasses import dataclass, field
+import logging
 
 import httpx
 
@@ -11,6 +11,7 @@ from replay_collector.client import (
     TrackedClient,
     make_client,
 )
+
 
 log = logging.getLogger(__name__)
 

@@ -6,10 +6,10 @@ Snapshot/event timing convention: see
 from dataclasses import dataclass
 
 import numpy as np
-import sim_core
 
 from replay_parser.decode import ReplayData
 from replay_parser.types import PlayerIndex, Timestep
+import sim_core
 
 
 @dataclass(frozen=True)

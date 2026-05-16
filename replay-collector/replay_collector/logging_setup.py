@@ -35,9 +35,10 @@ __main__ prints before logging is wired up).
 import atexit
 import datetime as dt
 import logging
+from pathlib import Path
 import shlex
 import sys
-from pathlib import Path
+
 
 DOTS_PER_FETCHES = 20
 

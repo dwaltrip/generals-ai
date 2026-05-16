@@ -1,7 +1,7 @@
 import logging
 import math
-import sys
 from pathlib import Path
+import sys
 
 from replay_collector.cli._shared import TMP_DIR, fmt_duration, load_players
 from replay_collector.generals_api import PAGE_SIZE
@@ -11,6 +11,7 @@ from replay_collector.runner import (
     DEFAULT_MAX_LISTINGS_PER_USER,
     collect_many,
 )
+
 
 # Dry-run uses these to bracket the estimate. Real-world FFA share among top
 # players' recent games tends to land somewhere in this band.

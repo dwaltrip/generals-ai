@@ -21,12 +21,12 @@ import sqlite3
 import sys
 
 import numpy as np
-import sim_core
 
 from replay_parser._collector.config import DB_PATH
 from replay_parser._collector.wire import decode as decode_blob
 from replay_parser._shared import is_vanilla_ffa
 from replay_parser.decode import decode_wire_array
+import sim_core
 
 from _sweep_common import bucket_and_sample, fetch_candidates, log
 

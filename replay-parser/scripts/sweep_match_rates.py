@@ -25,8 +25,8 @@ from replay_parser._shared import is_vanilla_ffa
 from replay_parser.errors import ArmyOverflowError
 from replay_parser.parser import parse_replay
 from replay_parser.validator import (
-    PRE_V30_9_2_CUTOFF_MS,
     POST_V30_9_2_CUTOFF_MS,
+    PRE_V30_9_2_CUTOFF_MS,
     deduce_ranking_for_replay,
 )
 
@@ -39,6 +39,7 @@ from _sweep_common import (
     log,
     week_start,
 )
+
 
 OUT_DIR = Path(__file__).resolve().parent.parent / "tmp"
 PROGRESS_EVERY = 500

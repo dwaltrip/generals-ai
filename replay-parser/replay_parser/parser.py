@@ -1,6 +1,5 @@
-import sim_core
-
 from replay_parser.decode import ReplayData, decode_wire
+import sim_core
 
 
 def parse_replay(raw: bytes) -> tuple[sim_core.State, ReplayData]:

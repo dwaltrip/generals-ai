@@ -6,6 +6,7 @@ from sim_core._native import (
     simulate,
 )
 
+
 __all__ = [
     "State",
     "DeathEvent",

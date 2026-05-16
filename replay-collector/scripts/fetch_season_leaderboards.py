@@ -14,9 +14,9 @@ Usage:
 
 import argparse
 import json
+from pathlib import Path
 import sys
 import time
-from pathlib import Path
 
 from replay_collector.leaderboard import fetch_season_state
 

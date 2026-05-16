@@ -6,6 +6,7 @@ import httpx
 
 from replay_collector.config import API_BASE, S3_BASE, config
 
+
 DEFAULT_TIMEOUT = 30.0
 USER_AGENT_BASE = "generals-ai-replay-collector/0.1"
 # Add contact email so generals.io operators can reach us if we're causing issues.

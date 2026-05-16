@@ -8,16 +8,13 @@ Regenerate fixtures with `tests/regen_fixtures.py` — but only after
 investigating the failure. The fixtures exist to catch unintended
 behavior changes; regenerating without diagnosis defeats that.
 """
-import sys
-from pathlib import Path
 
 import numpy as np
 import pytest
 
-sys.path.insert(0, str(Path(__file__).parent))
+from replay_parser.parser import parse_replay
 
 from _fixture_lib import FIXTURES, FIXTURES_DIR, pack_sim_output
-from replay_parser.parser import parse_replay
 
 
 @pytest.mark.parametrize(

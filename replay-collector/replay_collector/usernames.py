@@ -34,9 +34,10 @@ See docs/2026-05/5.08-1-username-handling-design.md for the full policy
 and the empirical findings that motivated it.
 """
 
+from collections.abc import Iterable
 import logging
 import unicodedata
-from collections.abc import Iterable
+
 
 log = logging.getLogger(__name__)
 

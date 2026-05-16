@@ -13,14 +13,12 @@ between fresh sim output and the recorded `expected.npz` before running
 this script.
 """
 import sys
-from pathlib import Path
 
 import numpy as np
 
-sys.path.insert(0, str(Path(__file__).parent))
+from replay_parser.parser import parse_replay
 
 from _fixture_lib import FIXTURES, FIXTURES_DIR, fixture_snap_indices, pack_sim_output
-from replay_parser.parser import parse_replay
 
 
 def regen_one(spec) -> bool:

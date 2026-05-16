@@ -2,6 +2,7 @@ from pathlib import Path
 
 from replay_collector.usernames import filter_valid
 
+
 # tmp/ at the subproject root, where log files land.
 TMP_DIR = Path(__file__).resolve().parent.parent.parent / "tmp"
 

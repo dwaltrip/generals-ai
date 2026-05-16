@@ -27,10 +27,9 @@ from __future__ import annotations
 from base64 import b64encode
 import sqlite3
 
-import sim_core
-
 from replay_parser._collector.config import DB_PATH
 from replay_parser.parser import parse_replay
+import sim_core
 
 
 def extract(replay_id: str, conn: sqlite3.Connection | None = None) -> dict:
