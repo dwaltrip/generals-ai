@@ -119,6 +119,11 @@ wheels = [
 name = "generals-ai-workspace"
 version = "0.0.0"
 source = { virtual = "." }
+dependencies = [
+    { name = "replay-collector" },
+    { name = "replay-parser" },
+    { name = "sim-core" },
+]
 
 [package.dev-dependencies]
 dev = [
@@ -128,6 +133,11 @@ dev = [
 ]
 
 [package.metadata]
+requires-dist = [
+    { name = "replay-collector", editable = "replay-collector" },
+    { name = "replay-parser", editable = "replay-parser" },
+    { name = "sim-core", editable = "sim-core" },
+]
 
 [package.metadata.requires-dev]
 dev = [
