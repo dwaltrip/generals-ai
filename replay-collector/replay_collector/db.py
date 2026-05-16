@@ -287,6 +287,7 @@ def _player_id(conn: sqlite3.Connection, name: str) -> int:
     if row is not None:
         return row[0]
     cur = conn.execute("INSERT INTO players (name) VALUES (?)", (name,))
+    assert cur.lastrowid is not None
     return cur.lastrowid
 
 

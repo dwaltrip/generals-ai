@@ -50,7 +50,6 @@ _VERBOSE_ONLY_LOGGERS = (
 
 _LOG_FORMAT = "%(asctime)s %(levelname)s %(message)s"
 
-_configured: bool = False
 _cached_result: tuple[Path, Path, BucketProgress] | None = None
 
 
@@ -213,7 +212,6 @@ class BucketProgress:
         )
 
 
-_simple_configured: bool = False
 _simple_log_path: Path | None = None
 
 
@@ -224,8 +222,8 @@ def setup_simple_logging(tmp_dir: Path, name: str) -> Path:
 
     `name` is embedded in the log filename (e.g. "sweep_metadata",
     "fetch_gior")."""
-    global _simple_configured, _simple_log_path
-    if _simple_configured:
+    global _simple_log_path
+    if _simple_log_path is not None:
         logging.getLogger(__name__).warning(
             "setup_simple_logging() called more than once; returning existing path."
         )
@@ -253,7 +251,6 @@ def setup_simple_logging(tmp_dir: Path, name: str) -> Path:
 
     logging.getLogger("httpx").setLevel(logging.WARNING)
 
-    _simple_configured = True
     _simple_log_path = log_path
     return log_path
 
@@ -261,8 +258,8 @@ def setup_simple_logging(tmp_dir: Path, name: str) -> Path:
 def setup_logging(tmp_dir: Path) -> tuple[Path, Path, BucketProgress]:
     """Wire root logger to write a condensed + verbose log under tmp_dir.
     Returns the two paths and the BucketProgress runner.py uses."""
-    global _configured, _cached_result
-    if _configured:
+    global _cached_result
+    if _cached_result is not None:
         logging.getLogger(__name__).warning(
             "setup_logging() called more than once; returning existing handlers."
         )
@@ -299,6 +296,5 @@ def setup_logging(tmp_dir: Path) -> tuple[Path, Path, BucketProgress]:
     root.addHandler(condensed_handler)
 
     progress = BucketProgress(writer)
-    _configured = True
     _cached_result = (condensed_path, verbose_path, progress)
     return _cached_result
