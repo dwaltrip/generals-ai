@@ -82,11 +82,6 @@ def get_sweep_data() -> SweepData:
     conn = sqlite3.connect(DB_PATH)
     try:
         log("Fetching candidate metadata...")
-        # ---------------------------------------------------------------------
-        # TODO: Look into restricting to player_count range: [4, 8]
-        # Could this explain some of the non-matches we see?
-        # I think the sweep is currently not handling `player_count`...
-        # ---------------------------------------------------------------------
         candidates = fetch_candidates(conn, min_version=15)
         total_candidates = len(candidates)
         log(f"  {total_candidates:,} candidate replays")
