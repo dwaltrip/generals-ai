@@ -244,8 +244,9 @@ def load_curated_union() -> tuple[list[str], dict]:
             per_file[str(path.relative_to(REPO_ROOT))] = {"raw": 0, "valid": 0}
             continue
         valid = load_players(path)  # drops invalid + warns
+        content = path.read_text(encoding="utf-8")
         # Re-count raw lines for the diag (load_players already dropped invalid).
-        raw_lines = [l for l in path.read_text(encoding="utf-8").splitlines() if l.strip()]
+        raw_lines = [line for line in content.splitlines() if line.strip()]
         per_file[str(path.relative_to(REPO_ROOT))] = {
             "raw": len(raw_lines),
             "valid": len(valid),

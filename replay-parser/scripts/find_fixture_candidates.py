@@ -112,7 +112,7 @@ def feat_capture_during_surrender(state, replay) -> tuple[int, str]:
     if len(afks.timestep) == 0:
         return 0, ""
     first_afk: dict[int, int] = {}
-    for idx, t in zip(afks.index.tolist(), afks.timestep.tolist()):
+    for idx, t in zip(afks.index.tolist(), afks.timestep.tolist(), strict=True):
         first_afk.setdefault(int(idx), int(t))
     count = 0
     first_detail = ""

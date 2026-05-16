@@ -182,7 +182,7 @@ def _ts_capture_during_surrender(state, replay, own_stack) -> set[int]:
     if len(afks.timestep) == 0:
         return set()
     first_afk: dict[int, int] = {}
-    for idx, t in zip(afks.index.tolist(), afks.timestep.tolist()):
+    for idx, t in zip(afks.index.tolist(), afks.timestep.tolist(), strict=True):
         first_afk.setdefault(int(idx), int(t))
     for ce in state.capture_events:
         afk_t = first_afk.get(ce.captured)
@@ -294,7 +294,7 @@ def _ts_multi_surrender(state, replay, own_stack) -> set[int]:
     if len(afks.timestep) == 0:
         return set()
     by_player: dict[int, list[int]] = {}
-    for idx, t in zip(afks.index.tolist(), afks.timestep.tolist()):
+    for idx, t in zip(afks.index.tolist(), afks.timestep.tolist(), strict=True):
         by_player.setdefault(int(idx), []).append(int(t))
     # Top by event count, then by earliest surrender for stability.
     top2 = sorted(by_player.items(), key=lambda kv: (-len(kv[1]), kv[1][0]))[:2]

@@ -20,13 +20,7 @@ Usage (from replay-parser/):
 """
 from collections import defaultdict
 from datetime import UTC, datetime
-from pathlib import Path
 import sqlite3
-import sys
-
-
-REPO_ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(REPO_ROOT / "replay-parser"))
 
 from replay_parser._collector.config import DB_PATH
 from replay_parser._collector.wire import decode as decode_blob

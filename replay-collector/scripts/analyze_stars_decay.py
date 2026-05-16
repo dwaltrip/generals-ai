@@ -15,6 +15,7 @@ scripts/out/stars_decay_season-{N}.png.
 
 import argparse
 from collections import defaultdict
+from itertools import pairwise
 import json
 from pathlib import Path
 import sys
@@ -58,7 +59,7 @@ def consecutive_deltas(
     pairs: list[tuple[float, float]] = []
     for weeks in traj.values():
         sorted_weeks = sorted(weeks.keys())
-        for w1, w2 in zip(sorted_weeks, sorted_weeks[1:]):
+        for w1, w2 in pairwise(sorted_weeks):
             if w2 == w1 + 1:
                 s1 = weeks[w1]
                 s2 = weeks[w2]
@@ -81,7 +82,7 @@ def consecutive_triplets(
     out: list[tuple[float, float]] = []
     for weeks in traj.values():
         sw = sorted(weeks.keys())
-        for w_a, w_b, w_c in zip(sw, sw[1:], sw[2:]):
+        for w_a, w_b, w_c in zip(sw, sw[1:], sw[2:], strict=False):
             if w_b == w_a + 1 and w_c == w_b + 1:
                 d1 = weeks[w_b] - weeks[w_a]
                 d2 = weeks[w_c] - weeks[w_b]
