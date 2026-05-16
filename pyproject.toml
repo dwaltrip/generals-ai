@@ -7,18 +7,20 @@ dependencies = [
     "replay-collector",
     "replay-parser",
     "sim-core",
+    "utils",
 ]
 
 [tool.uv]
 package = false
 
 [tool.uv.workspace]
-members = ["replay-collector", "replay-parser", "sim-core"]
+members = ["replay-collector", "replay-parser", "sim-core", "utils"]
 
 [tool.uv.sources]
 replay-collector = { workspace = true }
 replay-parser = { workspace = true }
 sim-core = { workspace = true }
+utils = { workspace = true }
 
 [dependency-groups]
 dev = [

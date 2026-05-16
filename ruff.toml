@@ -5,7 +5,7 @@ select = ["F", "E", "W", "I", "B", "UP", "TID"]
 
 [lint.isort]
 force-sort-within-sections = true
-known-first-party = ["replay_collector", "replay_parser", "sim_core"]
+known-first-party = ["replay_collector", "replay_parser", "sim_core", "utils"]
 known-local-folder = ["_sweep_common", "_fixture_lib"]
 lines-after-imports = 2
 
