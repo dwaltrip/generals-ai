@@ -1,7 +1,7 @@
 # Generals.io Mechanics — Appendix: Resolved Ambiguities
 
 **Date:** 2026.05.11
-**Status:** Historical reference. Records five mechanics details that were once flagged as unconfirmed in `generals-io-game-mechanics.md` and have since been resolved against the live JS bundle (`research/gior-format/generals-main-prod-v31.4.1-d51b92c0.js`, v31.4.1, replay format v18) and empirical replay data. The resolved rules are folded into the main mechanics doc; this file preserves the trace and provides bundle line refs for developers implementing a replay parser or simulator.
+**Status:** Historical reference. Records mechanics details pinned to specific bundle line refs in the live JS bundle (`research/gior-format/generals-main-prod-v31.4.1-d51b92c0.js`, v31.4.1, replay format v18) and empirical replay data. Most entries below resolve a question once flagged as unconfirmed in `generals-io-game-mechanics.md`; the last is an implementation edge case the main doc doesn't elaborate on but that simulator and parser implementors will hit. The resolved rules are folded into the main mechanics doc; this file preserves the trace and provides bundle line refs for developers implementing a replay parser or simulator.
 
 A caveat that motivated keeping this appendix: the JS bundle is the replay-viewer's reconstruction of game logic, not the server's authoritative source. Historical bugs exist. Treat the bundle as the best implementation reference we have, but verify against empirical replay data where it matters.
 
@@ -67,3 +67,20 @@ A caveat that motivated keeping this appendix: the JS bundle is the replay-viewe
 In the replay's `afks` array, a disconnect would in principle appear as a paired event with gap=1 (vs. gap=50 for a surrender). **Empirically, zero gap=1 events appear in a 5000-game sample** — disconnects either don't happen in ladder FFA, or the 1-step countdown is always pre-empted by capture or game-end. The disconnect-via-gap-size signal is therefore not observable in practice; treat both paths identically when parsing.
 
 **Folded into the main doc:** §9 "Surrender / disconnect" (covers disconnect path briefly without belaboring the unobservable gap-size distinction).
+
+---
+
+## 6. Chained captures in a single timestep
+
+**Edge case:** when player A captures player B's general *and* player B captures player C's general in the same timestep, what happens?
+
+**Resolution:** the two captures resolve sequentially in the move-priority order described in §6 of the main doc. Both moves are general-attacks, so they share the lowest priority tier and tiebreak on source army size (larger first). The outcome depends on which order they land in.
+
+- **B's source army is larger:** B's move runs first. B captures C and `replaceAll` flips all of C's tiles to B with armies halved. A's move runs next, captures B, and `replaceAll` flips every tile B currently owns — including the tiles B just inherited from C — to A with armies halved again. C's former territory is effectively halved twice (rounded up at each step).
+- **A's source army is larger:** A's move runs first. A captures B; `killPlayer(B)` flips all of B's tiles to A. When the loop reaches B's pre-selected move, the per-iteration source-ownership check (`m === this.map.tileAt(f.start)`) fails — B's source tile is now owned by A — and the move is silently skipped. C survives the timestep.
+
+The decisive mechanism is that the move list for the timestep is a snapshot taken once at the top of `update()` via `getNextValidSetOfMovesPrioritized()`, and each move is re-validated against current board state when its turn in the loop comes. `killPlayer` clears the captured player's input buffer for *future* timesteps but does not pull their already-selected move out of the current iteration.
+
+**Bundle reference:** v31.4.1 — `update()` move-list snapshot at line 72060 and per-move ownership check at line 72099; `handleAttack` capture trigger at line 72999–73003; `executePlayerCapture` (`map.replaceAll(e, t, 0.5)`) at line 73194–73195; `killPlayer` (calls `clearMoves`) at line 71955–71966.
+
+**Folded into the main doc:** §9 "Elimination, surrender, and game end" gains a short "Chained captures in one timestep" paragraph linking back here.

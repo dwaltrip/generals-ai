@@ -168,6 +168,8 @@ The scoreboard is symmetric — opponents can make the same inferences about you
 - **The captured general becomes a city.** It functions identically to any other owned city: produces +1 army per turn, can be contested and captured by other players, etc. The army count on this tile is whatever was left after the capturing combat — the halving rule below does not apply to it (it has already absorbed the combat damage).
 - **Inherited armies are halved (rounded upward).** Army counts on the defeated player's other tiles are halved when ownership transfers to the capturing player. A tile with 10 armies becomes 5 under the new owner; a tile with 11 becomes 6.
 
+**Chained captures in one timestep.** When two general-captures involve overlapping players in the same timestep — A captures B, B captures C — the resolution depends on which move sorts first under §6's priority order (both are general-attacks, so the tiebreak is source army size). If B's capture-of-C lands first, A's subsequent capture cascades: A inherits everything B owns at that moment, including C's former tiles, which are halved a second time. If A's capture-of-B lands first, B's source tile flips to A before B's move runs; B's already-selected move is then dropped when the per-move source-ownership check fails, and C survives the timestep. See [appendix §6](./game-mechanics-appendix-resolved-ambiguities.md#6-chained-captures-in-a-single-timestep) for the bundle reference.
+
 **Notification:** Player captures are announced globally as a system-message in the game chat.
 
 * The message identifies both the eliminated player and the capturing player by username and color.
