@@ -1,0 +1,15 @@
+line-length = 100
+
+[lint]
+select = ["F", "E", "W", "I", "B", "UP", "TID"]
+
+[lint.isort]
+known-first-party = ["replay_collector", "replay_parser", "sim_core"]
+lines-after-imports = 2
+
+[lint.flake8-tidy-imports.banned-api]
+"replay_collector".msg = "Import via replay_parser._collector.* instead of replay_collector directly"
+
+[lint.per-file-ignores]
+"replay-parser/replay_parser/_collector/**/*.py" = ["TID251"]
+"replay-collector/**/*.py" = ["TID251"]

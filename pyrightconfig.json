@@ -1,0 +1,11 @@
+{
+  "include": ["replay-collector", "replay-parser", "sim-core", "tools"],
+  "exclude": ["**/tmp/**", "**/__pycache__/**"],
+  "typeCheckingMode": "basic",
+  "pythonVersion": "3.14",
+  "executionEnvironments": [
+    { "root": "replay-parser/scripts", "extraPaths": ["replay-parser/scripts"] },
+    { "root": "replay-parser/tests",   "extraPaths": ["replay-parser/tests"] },
+    { "root": "replay-parser/tools/timestep_viewer", "extraPaths": ["replay-parser/tools/timestep_viewer"] }
+  ]
+}

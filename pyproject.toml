@@ -22,6 +22,7 @@ sim-core = { workspace = true }
 
 [dependency-groups]
 dev = [
+    "pyright>=1.1.409",
     "pytest>=9.0.3",
     "ruff>=0.14.0",
     "tabulate>=0.10.0",
@@ -30,12 +31,5 @@ dev = [
 [tool.pytest.ini_options]
 addopts = "--import-mode=importlib"
 
-[tool.ruff.lint]
-select = ["TID"]
-
-[tool.ruff.lint.flake8-tidy-imports.banned-api]
-"replay_collector".msg = "Import via replay_parser._collector.* instead of replay_collector directly"
-
-[tool.ruff.lint.per-file-ignores]
-"replay-parser/replay_parser/_collector/**/*.py" = ["TID251"]
-"replay-collector/**/*.py" = ["TID251"]
+# Ruff config lives in `ruff.toml`.
+# Pyright config lives in `pyrightconfig.json`.
