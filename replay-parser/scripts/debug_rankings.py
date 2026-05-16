@@ -15,13 +15,13 @@ from replay_parser.parser import parse_replay
 from replay_parser.validator import apply_surrender_bonus, deduce_ranking_for_replay
 
 
-def fetch(conn, replay_id):
+def fetch(conn, replay_id) -> tuple[int, str, bytes, list[str]] | None:
     row = conn.execute(
         "SELECT started, version, wire_data FROM replays WHERE id = ?",
         (replay_id,),
     ).fetchone()
     if row is None:
-        return None, None, None, None
+        return None
     started, version, blob = row
     listings_names = [
         name for (name,) in conn.execute(
@@ -116,10 +116,11 @@ def main():
     conn = sqlite3.connect(DB_PATH)
     try:
         for replay_id in args.replay_ids:
-            started, version, blob, listings_names = fetch(conn, replay_id)
-            if blob is None:
+            result = fetch(conn, replay_id)
+            if result is None:
                 print(f"=== {replay_id} ===\n  NOT FOUND in DB\n")
                 continue
+            started, version, blob, listings_names = result
             try:
                 state, replay = parse_replay(blob)
             except ArmyOverflowError as e:

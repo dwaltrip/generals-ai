@@ -20,6 +20,7 @@ treated as one-username-per-line (blank lines and `#` comments skipped).
 """
 
 import argparse
+from collections.abc import Sequence
 import csv
 from pathlib import Path
 import sys
@@ -66,7 +67,7 @@ def fetch_recent_games(conn, name: str) -> list[tuple[int, int | None]]:
     ).fetchall()
 
 
-def percentile(values: list[float], q: float) -> float:
+def percentile(values: Sequence[float], q: float) -> float:
     """Linear interpolation between adjacent ranks (NumPy-style). q in [0, 100]."""
     s = sorted(values)
     n = len(s)

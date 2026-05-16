@@ -22,6 +22,7 @@ Usage (from replay-collector/):
 """
 
 from collections import Counter, defaultdict
+from collections.abc import Sequence
 import csv
 import datetime as dt
 import json
@@ -286,7 +287,7 @@ def corpus_at_a_glance(conn) -> dict:
 # --- Section 2: standalone counts on survivors -------------------------------
 
 
-def _quartiles(values: list[int]) -> tuple[float, float, float]:
+def _quartiles(values: Sequence[float]) -> tuple[float, float, float]:
     """(p25, p50, p75) via stdlib linear interpolation."""
     if len(values) < 2:
         v = values[0] if values else 0
@@ -485,9 +486,7 @@ def _fetch_rolling_perspectives(conn, curated: list[str]) -> list[tuple]:
     return conn.execute(sql, list(curated)).fetchall()
 
 
-def _bucket_rate(rate: float | None) -> str | None:
-    if rate is None:
-        return None
+def _bucket_rate(rate: float) -> str:
     if rate >= 1.0:
         return "1.00"
     edge = int(rate * 20) * 0.05

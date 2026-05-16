@@ -33,7 +33,9 @@ def regen_one(spec) -> bool:
     out = pack_sim_output(state, replay, snap_indices)
 
     npz_path = fixture_dir / "expected.npz"
-    np.savez_compressed(npz_path, **out)
+    # pyright: ignore — pyright treats `**out` as if a key could be `allow_pickle`
+    # (bool), conflicting with ndarray values. False positive given our static keys.
+    np.savez_compressed(npz_path, **out)  # pyright: ignore[reportArgumentType]
     size_kb = npz_path.stat().st_size / 1024
     print(
         f"  OK   {spec.name:<30} T={state.timestep:<5} "

@@ -19,8 +19,9 @@ import json
 from pathlib import Path
 import sys
 
-import matplotlib.pyplot as plt
+import matplotlib.pyplot as plt  # pyright: ignore[reportMissingImports, reportMissingModuleSource]
 
+# Provided via `uv run --with matplotlib` per the module docstring.
 from utils.docstring import doc_summary
 
 

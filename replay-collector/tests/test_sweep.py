@@ -1,4 +1,7 @@
+from typing import cast
+
 from replay_collector import db, generals_api, sweep
+from replay_collector.client import TrackedClient
 
 
 def _listing(rid: str, started: int) -> dict:
@@ -33,7 +36,7 @@ def test_sweep_one_stops_on_recency_cutoff(monkeypatch):
     monkeypatch.setattr(db, "has_full_data", lambda rid: False)
 
     stats = sweep.sweep_one(
-        client=None, username="alice", max_listings=1000,
+        client=cast(TrackedClient, None), username="alice", max_listings=1000,
         recency_cutoff_ms=600_000_000_000,
     )
 
@@ -53,7 +56,7 @@ def test_sweep_one_no_cutoff_walks_all(monkeypatch):
     monkeypatch.setattr(db, "try_insert_listing", lambda entry: True)
     monkeypatch.setattr(db, "has_full_data", lambda rid: False)
 
-    stats = sweep.sweep_one(client=None, username="alice", max_listings=1000)
+    stats = sweep.sweep_one(client=cast(TrackedClient, None), username="alice", max_listings=1000)
 
     assert stats.stop_reason == "exhausted"
     assert stats.listings_walked == 2

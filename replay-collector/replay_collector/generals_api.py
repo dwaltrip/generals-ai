@@ -24,7 +24,10 @@ def decompress_gior(raw: bytes) -> list:
     # big-endian bytes. Pair them back up and feed the resulting string to
     # plain decompress().
     s = "".join(chr((raw[i * 2] << 8) | raw[i * 2 + 1]) for i in range(len(raw) // 2))
-    return json.loads(_lzs.decompress(s))
+    decompressed = _lzs.decompress(s)
+    if decompressed is None:
+        raise ReplayDecodeError("LZString decompression failed")
+    return json.loads(decompressed)
 
 
 def user_exists(client: TrackedClient, username: str) -> bool:
