@@ -2,15 +2,15 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>{{ REPLAY_ID }} — timestep viewer</title>
+<title>$REPLAY_ID — timestep viewer</title>
 <style>
   :root {
-    --neutral-bg: {{ NEUTRAL_BG }};
-    --mountain-bg: {{ MOUNTAIN_BG }};
-    --neutral-city-bg: {{ NEUTRAL_CITY_BG }};
-    --tile-border: {{ TILE_BORDER }};
-    --dead-bg: {{ DEAD_PLAYER_BG }};
-    --event-log-bg: {{ EVENT_LOG_BG }};
+    --neutral-bg: $NEUTRAL_BG;
+    --mountain-bg: $MOUNTAIN_BG;
+    --neutral-city-bg: $NEUTRAL_CITY_BG;
+    --tile-border: $TILE_BORDER;
+    --dead-bg: $DEAD_PLAYER_BG;
+    --event-log-bg: $EVENT_LOG_BG;
   }
   body {
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
@@ -26,8 +26,17 @@
   header h1 { margin: 0; font-size: 1.15em; }
   header a { text-decoration: none; color: #06c; }
 
-  .layout { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 16px; align-items: start; }
-  .right-col { display: flex; flex-direction: column; gap: 12px; } 
+  .layout {
+    display: flex;
+    flex-direction: row;
+    align-items: start;
+  }
+  .right-col {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    margin-left: 10px;
+  }
   #step-readout {
     font-variant-numeric: tabular-nums; font-size: 14px;
     padding: 6px 10px; background: white; color: #222;
@@ -42,17 +51,22 @@
   }
   .tile {
     position: relative;
-    width: 24px; height: 24px;
+    width: var(--tile-size);
+    height: var(--tile-size);
     background: var(--neutral-bg);
-    color: #333;
-    display: flex; align-items: center; justify-content: center;
-    font-size: 9px; font-weight: 600;
-    line-height: 1; font-variant-numeric: tabular-nums;
+    color: white;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 9px;
+    line-height: 1;
+    font-variant-numeric: tabular-nums;
+  }
+  .tile.with-army {
+    background: var(--neutral-city-bg);
   }
   .tile.mountain { background: var(--mountain-bg); }
-  .tile.neutral-city { background: var(--neutral-city-bg); color: white; }
-  .tile.owned { color: white; }
-{{ SLOT_COLOR_RULES }}
+  .tile.neutral-city { background: var(--neutral-city-bg); }
   .tile .icon {
     position: absolute; inset: 2px;
     pointer-events: none;
@@ -71,7 +85,7 @@
   }
   .controls button:hover { background: #f0f0f0; }
   .controls input {
-    width: 70px; padding: 5px; border: 1px solid #ccc; background: white; color: #222;
+    width: 50px; padding: 5px; border: 1px solid #ccc; background: white; color: #222;
     border-radius: 4px;
   }
   .controls .spacer { width: 12px; }
@@ -85,7 +99,13 @@
     text-align: left;
   }
   .leaderboard td { padding: 6px 8px; border: 1px solid black; }
-  .leaderboard td.player { color: white; font-weight: 600; min-width: 110px; }
+  .leaderboard td.player {
+    color: white;
+    font-weight: 600;
+    min-width: 80px;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
   .leaderboard td.stat { background: white; font-variant-numeric: tabular-nums; }
   .leaderboard tr.dead td.player { opacity: 0.55; filter: grayscale(35%); }
   .leaderboard tr.dead td.stat { background: var(--dead-bg); color: #ccc; }
@@ -120,16 +140,16 @@
 <body>
 
 <header>
-  <h1>timestep viewer — <code>{{ REPLAY_ID }}</code></h1>
-  <a href="https://generals.io/replays/{{ REPLAY_ID }}" target="_blank" rel="noopener">↗ open live viewer</a>
+  <h1>timestep viewer — <code>$REPLAY_ID</code></h1>
+  <a href="https://generals.io/replays/$REPLAY_ID" target="_blank" rel="noopener">↗ open live viewer</a>
 </header>
 
 <!-- Hidden SVG defs — icons referenced via <use> from each tile -->
 <svg width="0" height="0" style="position:absolute" aria-hidden="true">
   <defs>
-    <symbol id="i-mountain" viewBox="0 0 100 100">{{ SVG_MOUNTAIN_INNER }}</symbol>
-    <symbol id="i-crown" viewBox="0 0 100 100">{{ SVG_CROWN_INNER }}</symbol>
-    <symbol id="i-city" viewBox="0 0 100 100">{{ SVG_CITY_INNER }}</symbol>
+    <symbol id="i-mountain" viewBox="0 0 100 100">$SVG_MOUNTAIN_INNER</symbol>
+    <symbol id="i-crown" viewBox="0 0 100 100">$SVG_CROWN_INNER</symbol>
+    <symbol id="i-city" viewBox="0 0 100 100">$SVG_CITY_INNER</symbol>
   </defs>
 </svg>
 
@@ -163,8 +183,15 @@
 </div>
 
 <script type="text/javascript">
-const DATA = {{ DATA_JSON }};
-const COLORS = {{ SLOT_COLORS_JSON }};
+const DATA = $DATA_JSON;
+const COLORS = $SLOT_COLORS_JSON;
+const TILE_SIZE = '20px';
+
+window.document.documentElement.style.setProperty('--tile-size', TILE_SIZE);
+
+const styleForColors = document.createElement('style');
+styleForColors.textContent = `$SLOT_COLOR_RULES`;
+document.head.appendChild(styleForColors);
 
 // ============================================================================
 // Setup
@@ -275,7 +302,7 @@ function hasKillBy(p, stepT) {
 
 function buildBoard() {
   const board = document.getElementById('board');
-  board.style.gridTemplateColumns = `repeat(${W}, 24px)`;
+  board.style.gridTemplateColumns = `repeat(${W}, ${TILE_SIZE})`;
   const cells = [];
   for (let i = 0; i < N; i++) {
     const tile = document.createElement('div');
@@ -362,6 +389,12 @@ function renderBoard(stepT) {
     } else {
       setTileIcon(tile, null);
       setTileArmy(tile, armies[i]);
+      if (armies[i] > 0) {
+        tile.classList.add('with-army')
+      }
+      else {
+        tile.classList.remove('with-army')
+      }
     }
   }
 }
@@ -375,37 +408,55 @@ function renderLeaderboard(stepT) {
     row.querySelector('.land').textContent = tiles[p];
     row.querySelector('.skull').textContent = hasKillBy(p, stepT) ? '☠️' : '';
   }
+
+  // Sort: alive first by (army desc, land desc, player-index asc); dead at
+  // the bottom in death order, with the first-to-die at the very bottom.
+  const deaths = DATA.static.general_death_t;
+  const initGens = DATA.static.initial_generals;
+  const deathRank = p => (initGens[p] < 0 ? -1 : (deaths[p] ?? -1));
+
+  const order = [...Array(NUM_PLAYERS).keys()].sort((a, b) => {
+    const aliveA = isPlayerAlive(a, stepT);
+    const aliveB = isPlayerAlive(b, stepT);
+    const hasKillA = hasKillBy(a, stepT);
+    const hasKillB = hasKillBy(b, stepT);
+    if (hasKillA !== hasKillB) return hasKillA ? -1 : 1;
+    if (aliveA !== aliveB) return aliveA ? -1 : 1;
+    if (aliveA) {
+      if (army[b]  !== army[a])  return army[b]  - army[a];
+      if (tiles[b] !== tiles[a]) return tiles[b] - tiles[a];
+      return a - b;
+    }
+    return deathRank(b) - deathRank(a);
+  });
+  document.getElementById('lb-body').append(...order.map(p => LB_ROWS[p]));
 }
 
 function renderEvents(stepT) {
   const root = document.getElementById('events');
-  const evs = DATA.ui_events.filter(e => e.t <= stepT).reverse();
+  const evs = DATA.ui_events.filter(e => e.t <= stepT);
   root.innerHTML = evs.map(eventHTML).join('');
 }
 
+function eventLog(e, content, className) {
+  className = className || '';
+  return `<div class="event ${className}">${content} <span class="t">${e.t}</span></div>`;
+}
+function nameWithSwatch(playerIndex) {
+  const name = DATA.static.usernames[playerIndex];
+  const color = COLORS[playerIndex];
+  return `<span class="swatch" style="background: ${color}"></span>` + escapeHtml(name);
+}
+
 function eventHTML(e) {
-  const u = DATA.static.usernames;
-  const swatch = p => `<span class="swatch" style="background:${COLORS[p]}"></span>`;
   if (e.kind === 'capture') {
-    return [
-      '<div class="event">',
-      `${swatch(e.captor)}${escapeHtml(u[e.captor])} captured ${swatch(e.captured)}${escapeHtml(u[e.captured])}. `
-      `<span class="t">${e.t}</span></div>`,
-      ].join('')
+    return eventLog(e, `${nameWithSwatch(e.captor)} captured ${nameWithSwatch(e.captured)}`);
   }
   if (e.kind === 'surrender') {
-    return [
-      '<div class="event">',
-      `${swatch(e.player)}${escapeHtml(u[e.player])} surrendered. `,
-      `<span class="t">${e.t}</span></div>`,
-    ].join('')
+    return eventLog(e, `${nameWithSwatch(e.player)} surrendered.`);
   }
   if (e.kind === 'win') {
-    return [
-      '<div class="event win">',
-      `${swatch(e.player)}${escapeHtml(u[e.player])} wins! `,
-      `<span class="t">${e.t}</span></div>`,
-    ].join('')
+    return eventLog(e, `${nameWithSwatch(e.player)} wins! `, 'win');
   }
   return '';
 }
@@ -417,8 +468,9 @@ function escapeHtml(s) {
 }
 
 function renderHeader(stepT) {
-  document.getElementById('step-readout').textContent =
-    `t = ${stepT}  (turn ${Math.floor(stepT / 2)})   /   t_max = ${T_MAX}`;
+  const turn = Math.floor(stepT / 2);
+  const dot = stepT % 2 === 1 ? '.' : '';
+  document.getElementById('step-readout').textContent = `Turn ${turn}${dot}`;
 }
 
 function render(stepT) {

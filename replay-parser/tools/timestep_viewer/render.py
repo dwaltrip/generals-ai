@@ -54,19 +54,19 @@ def build_html(replay_id: str) -> str:
     payload = extract(replay_id)
     template = TEMPLATE_PATH.read_text()
     substitutions = {
-        "{{ REPLAY_ID }}": replay_id,
-        "{{ NEUTRAL_BG }}": constants.NEUTRAL_TILE_BG,
-        "{{ MOUNTAIN_BG }}": constants.MOUNTAIN_TILE_BG,
-        "{{ NEUTRAL_CITY_BG }}": constants.NEUTRAL_CITY_BG,
-        "{{ TILE_BORDER }}": constants.TILE_BORDER,
-        "{{ DEAD_PLAYER_BG }}": constants.DEAD_PLAYER_BG,
-        "{{ EVENT_LOG_BG }}": constants.EVENT_LOG_BG,
-        "{{ SLOT_COLOR_RULES }}": slot_color_rules(constants.SLOT_COLORS),
-        "{{ SLOT_COLORS_JSON }}": json.dumps(constants.SLOT_COLORS),
-        "{{ SVG_MOUNTAIN_INNER }}": svg_inner((ASSETS_DIR / "mountain.svg").read_text()),
-        "{{ SVG_CROWN_INNER }}": svg_inner((ASSETS_DIR / "crown.svg").read_text()),
-        "{{ SVG_CITY_INNER }}": svg_inner((ASSETS_DIR / "city.svg").read_text()),
-        "{{ DATA_JSON }}": safe_json(payload),
+        "$REPLAY_ID": replay_id,
+        "$NEUTRAL_BG": constants.NEUTRAL_TILE_BG,
+        "$MOUNTAIN_BG": constants.MOUNTAIN_TILE_BG,
+        "$NEUTRAL_CITY_BG": constants.NEUTRAL_CITY_BG,
+        "$TILE_BORDER": constants.TILE_BORDER,
+        "$DEAD_PLAYER_BG": constants.DEAD_PLAYER_BG,
+        "$EVENT_LOG_BG": constants.EVENT_LOG_BG,
+        "$SLOT_COLOR_RULES": slot_color_rules(constants.SLOT_COLORS),
+        "$SLOT_COLORS_JSON": json.dumps(constants.SLOT_COLORS),
+        "$SVG_MOUNTAIN_INNER": svg_inner((ASSETS_DIR / "mountain.svg").read_text()),
+        "$SVG_CROWN_INNER": svg_inner((ASSETS_DIR / "crown.svg").read_text()),
+        "$SVG_CITY_INNER": svg_inner((ASSETS_DIR / "city.svg").read_text()),
+        "$DATA_JSON": safe_json(payload),
     }
     for placeholder, value in substitutions.items():
         template = template.replace(placeholder, value)

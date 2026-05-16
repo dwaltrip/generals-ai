@@ -34,7 +34,7 @@ SLOT_COLORS: list[str] = [
 # tune against the live viewer during Step 4 iteration.
 NEUTRAL_TILE_BG = "rgb(255, 255, 255)"      # empty owned-by-nobody land
 MOUNTAIN_TILE_BG = "rgb(200, 200, 200)"     # tile background under the mountain SVG
-NEUTRAL_CITY_BG = "rgb(160, 160, 160)"      # tile background for an uncaptured neutral city
+NEUTRAL_CITY_BG = "rgb(130, 130, 130)"      # tile background for an uncaptured neutral city
 TILE_BORDER = "rgb(0, 0, 0)"                # 1px gridline between tiles (rendered via .board gap)
 
 # Leaderboard / event-log treatment, approximated from the screenshots.
