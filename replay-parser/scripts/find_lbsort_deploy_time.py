@@ -110,8 +110,8 @@ def main():
     print(f"  {'hour':22} {'OLD':>5} {'NEW':>5} {'BOTH':>5} {'NEITHER':>7} {'SKIP':>5}")
     # First NEW-dominant hour = where new strictly beats old AND there's a real signal.
     transition_hour = None
-    for hour_ms in sorted(hour_bucket):
-        c = hour_bucket[hour_ms]
+    for h_ms in sorted(hour_bucket):
+        c = hour_bucket[h_ms]
         old = c.get("OLD", 0)
         new = c.get("NEW", 0)
         both = c.get("BOTH", 0)
@@ -119,9 +119,9 @@ def main():
         skip = c.get("SKIP", 0)
         marker = ""
         if transition_hour is None and new > old and new >= 3:
-            transition_hour = hour_ms
+            transition_hour = h_ms
             marker = "  <-- first NEW-dominant hour"
-        print(f"  {fmt_hour(hour_ms):22} {old:>5} {new:>5} {both:>5} {neither:>7} {skip:>5}{marker}")
+        print(f"  {fmt_hour(h_ms):22} {old:>5} {new:>5} {both:>5} {neither:>7} {skip:>5}{marker}")
 
     if transition_hour is None:
         print("\nNo NEW-dominant hour found in window.")

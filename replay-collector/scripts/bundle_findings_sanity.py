@@ -43,7 +43,8 @@ SLOT_SETTINGS = 20
 SLOT_MODIFIERS = 21
 SLOT_CHESS_CLOCK = 30
 
-MODIFIER_TILE_SLOTS = [16, 22, 23, 24, 28, 34]  # swamps, observatories, lookouts, deserts, tunnels, strongholds
+# swamps, observatories, lookouts, deserts, tunnels, strongholds
+MODIFIER_TILE_SLOTS = [16, 22, 23, 24, 28, 34]
 
 DEFAULT_SAMPLE = 5000
 
@@ -198,8 +199,16 @@ def render_report(agg: dict, sample_size: int, elapsed_s: float) -> str:
     p("# Bundle-Findings Sanity Report")
     p("")
     p(f"**Generated:** {dt.datetime.now().isoformat(timespec='seconds')}")
-    p(f"**Sample requested:** {sample_size:,}  |  **analyzed:** {agg['n_analyzed']:,}  |  **runtime:** {elapsed_s:.1f}s")
-    p(f"**Considered:** {agg['n_considered']:,}  |  **decode failures:** {agg['n_decode_fail']:,}  |  **non-vanilla drops:** {agg['n_filter_drop']:,}")
+    p("  |  ".join([
+        f"**Sample requested:** {sample_size:,}",
+        f"**analyzed:** {agg['n_analyzed']:,}",
+        f"**runtime:** {elapsed_s:.1f}s",
+    ]))
+    p("  |  ".join([
+        f"**Considered:** {agg['n_considered']:,}",
+        f"**decode failures:** {agg['n_decode_fail']:,}",
+        f"**non-vanilla drops:** {agg['n_filter_drop']:,}",
+    ]))
     p("")
     p("Validates the claims in `docs/2026-05/5.11-2-bundle-reading.md` against actual replay data.")
     p("")
@@ -221,14 +230,17 @@ def render_report(agg: dict, sample_size: int, elapsed_s: float) -> str:
     p("")
 
     # --- C: Null generals ----------------------------------------------------
+    total_null_gen = agg['total_null_general_slots']
+    total_gen = agg['total_general_slots']
+
     p("## C. Null-general occurrence")
     p("")
     p("**Claim:** rare; players occasionally have null general slots (never connected).")
     p("")
     p(f"- Games with ≥1 null general: **{agg['null_general_games']:,}** / {agg['n_analyzed']:,}  "
       f"({100.0 * agg['null_general_games'] / max(agg['n_analyzed'], 1):.3f}%)")
-    p(f"- Total null general slots: **{agg['total_null_general_slots']:,}** / {agg['total_general_slots']:,}  "
-      f"({100.0 * agg['total_null_general_slots'] / max(agg['total_general_slots'], 1):.3f}%)")
+    p(f"- Total null general slots: **{total_null_gen:,}** / {total_gen:,}  "
+      f"({100.0 * total_null_gen / max(total_gen, 1):.3f}%)")
     p("")
 
     # --- A: AFK pairing ------------------------------------------------------
@@ -345,7 +357,7 @@ def main():
     agg = aggregate(cur, max_rows=args.sample)
     elapsed = time.time() - t0
 
-    log.info("Analyzed %d / considered %d (%.1fs).", agg["n_analyzed"], agg["n_considered"], elapsed)
+    log.info("Analyzed %d / considered %d (%.1fs).", agg["n_analyzed"], agg["n_considered"], elapsed) # noqa: E501
 
     report = render_report(agg, args.sample, elapsed)
     ts = dt.datetime.now().strftime("%Y%m%d-%H%M%S")

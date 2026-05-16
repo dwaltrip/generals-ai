@@ -5,7 +5,14 @@ import pytest
 
 from replay_parser._collector.config import DB_PATH
 from replay_parser._collector.wire import decode as decompress
-from replay_parser.decode import Afks, GameStatic, Moves, ReplayData, decode_wire, decode_wire_array
+from replay_parser.decode import (
+    Afks,
+    GameStatic,
+    Moves,
+    ReplayData,
+    decode_wire,
+    decode_wire_array,
+)
 
 
 @pytest.fixture(scope="module")
@@ -71,7 +78,9 @@ def test_columnar_lengths_match_wire(sample_wire):
 
 
 def test_moves_field_values_match_wire(sample_wire):
-    """First row of each columnar field matches wire[10][0]'s positional fields (rename: start→source, end→dest, turn→timestep)."""
+    """ First row of each columnar field matches wire[10][0]'s positional fields.
+        Rename: start→source, end→dest, turn→timestep).
+    """
     wire = decompress(sample_wire)
     rd = decode_wire_array(wire)
     if len(wire[10]) == 0:
@@ -85,14 +94,18 @@ def test_moves_field_values_match_wire(sample_wire):
 
 
 def test_moves_timestep_monotonic(sample_wire):
-    """Wire moves are emitted in non-decreasing timestep order (assumed by the cursor-based step loop)."""
+    """ Wire moves are emitted in non-decreasing timestep order
+        Assumed by the cursor-based step loop).
+    """
     rd = decode_wire(sample_wire)
     ts = rd.moves.timestep
-    assert np.all(np.diff(ts) >= 0), "moves timestep array is not monotonically non-decreasing"
+    assert np.all(np.diff(ts) >= 0), "moves ts array is not monotonically non-decreasing"
 
 
 def test_empty_moves_and_afks():
-    """An otherwise-valid wire with empty moves/afks decodes to empty arrays of the right dtypes."""
+    """ An otherwise-valid wire with empty moves/afks decodes to empty arrays
+        of the right dtypes.
+    """
     fake_wire = [
         18, "fake_id", 10, 10,           # version, id, map dims
         ["a", "b"], [0.0, 0.0],          # usernames, stars

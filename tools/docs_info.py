@@ -153,7 +153,10 @@ def main() -> int:
         infos = infos[: args.limit]
 
     if truncated:
-        print(f"showing {len(infos)} of {total} docs (most recently modified); pass --all to show all")
+        print(
+            f"showing {len(infos)} of {total} docs (most recently modified);",
+            "pass --all to show all",
+        )
         print()
 
     headers = ["Doc", "mtime", "Commit", "Date", "+add", "-del", "Subject"]

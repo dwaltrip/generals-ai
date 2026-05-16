@@ -113,11 +113,11 @@ def _format_summary_lines(
     ]
     for name, listings, ffa_total, metadata_only in rows:
         lines.append(
-            f"  {display_name(name):<{name_w}}  {listings:>10,}  {ffa_total:>10,}  {metadata_only:>14,}"
+            f"  {display_name(name):<{name_w}}  {listings:>10,}  {ffa_total:>10,}  {metadata_only:>14,}" # noqa: E501
         )
     lines.append(sep)
     lines.append(
-        f"  {'TOTAL':<{name_w}}  {total_listings:>10,}  {total_ffa:>10,}  {total_metadata_only:>14,}"
+        f"  {'TOTAL':<{name_w}}  {total_listings:>10,}  {total_ffa:>10,}  {total_metadata_only:>14,}" # noqa: E501
         f"   ({fmt_duration(est_seconds)} at 1/sec)"
     )
     if absent:

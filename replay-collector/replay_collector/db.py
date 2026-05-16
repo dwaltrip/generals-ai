@@ -49,7 +49,9 @@ CREATE TABLE IF NOT EXISTS replays (
     map_width     INTEGER,
     map_height    INTEGER,
     fetched_at    INTEGER,
-    wire_data     BLOB,        -- canonical fetched-replay payload: gzip(json(wire-shape array)). See replay_collector/wire.py.
+    -- `wire_data`: canonical fetched-replay payload: gzip(json(wire-shape array)).
+    -- See replay_collector/wire.py.
+    wire_data     BLOB,
     -- timestamps
     created_at    INTEGER NOT NULL DEFAULT {_NOW_MS},
     updated_at    INTEGER NOT NULL DEFAULT {_NOW_MS}
@@ -91,7 +93,9 @@ CREATE INDEX IF NOT EXISTS idx_replays_ladder_id           ON replays(ladder_id)
 -- partial predicate against a query's WHERE clause; an indexed
 -- `wire_data IS NOT NULL` expression-column did not match and still
 -- triggered per-row heap fetches.
-CREATE INDEX IF NOT EXISTS idx_replays_stats               ON replays(ladder_id, version, started, player_count) WHERE wire_data IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_replays_stats
+    ON replays(ladder_id, version, started, player_count)
+    WHERE wire_data IS NOT NULL;
 
 -- If the Pass-2 work-set query slows as the pending backlog grows, add:
 --   CREATE INDEX IF NOT EXISTS idx_replays_pending_ffa
@@ -201,9 +205,11 @@ def replay_counts_by_player(
     return get_conn().execute(
         f"""
         SELECT p.name,
-               COUNT(*) AS total_listings,
-               SUM(CASE WHEN r.ladder_id = 'ffa' THEN 1 ELSE 0 END) AS total_ffa,
-               SUM(CASE WHEN r.ladder_id = 'ffa' AND r.wire_data IS NULL THEN 1 ELSE 0 END) AS metadata_only
+            COUNT(*) AS total_listings,
+            SUM(CASE WHEN r.ladder_id = 'ffa' THEN 1 ELSE 0 END) AS total_ffa,
+            SUM(
+                CASE WHEN r.ladder_id = 'ffa' AND r.wire_data IS NULL THEN 1 ELSE 0 END
+            ) AS metadata_only
         {from_player_games()}
         WHERE p.name IN ({placeholders})
         GROUP BY p.name

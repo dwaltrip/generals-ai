@@ -37,7 +37,8 @@ class GameStatic:
     stars: list[float]
     initial_cities: list[TileIndex]
     initial_city_armies: list[int]
-    initial_generals: list[TileIndex]       # -1 sentinel for any null slot (empirically never in filtered FFA)
+    # initial_generals -1 sentinel for any null slot (empirically never in filtered FFA)
+    initial_generals: list[TileIndex]
     mountains: list[TileIndex]
     initial_neutrals: list[TileIndex]
     initial_neutral_armies: list[int]

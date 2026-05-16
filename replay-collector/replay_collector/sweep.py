@@ -28,7 +28,8 @@ class SweepStats:
     ffa_has_full: int = 0          # already have wire_data
     ffa_metadata_only: int = 0     # wire_data IS NULL — Pass 2 budget contribution
     pages_fetched: int = 0
-    stop_reason: str = ""          # exhausted | max_listings | recency_cutoff | user_not_found | error
+    # exhausted | max_listings | recency_cutoff | user_not_found | error
+    stop_reason: str = ""
 
 
 @dataclass

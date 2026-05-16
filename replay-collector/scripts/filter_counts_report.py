@@ -1,3 +1,4 @@
+# ruff: noqa: E501
 """Filter-counts report for the replay-parser corpus.
 
 Walks the cached `.gior` corpus and produces a report covering:

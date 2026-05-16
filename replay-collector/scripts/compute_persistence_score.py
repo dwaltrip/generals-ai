@@ -143,8 +143,10 @@ def build_rows(stars, ranks, activity, n_weeks):
 
     # Sort: ascending by ffa_top_100_avg_rank; players with no active top-100
     # ffa weeks (avg=None) sort to the bottom.
-    rows.sort(key=lambda r: (r["ffa_top_100_avg_rank"] is None,
-                              r["ffa_top_100_avg_rank"] if r["ffa_top_100_avg_rank"] is not None else 0))
+    rows.sort(key=lambda r: (
+        r["ffa_top_100_avg_rank"] is None,
+        r["ffa_top_100_avg_rank"] if r["ffa_top_100_avg_rank"] is not None else 0,
+    ))
     return rows
 
 

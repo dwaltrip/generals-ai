@@ -23,8 +23,16 @@ def main() -> None:
     parser.add_argument("primary", type=Path, help="primary player-list file")
     parser.add_argument("others", nargs="+", type=Path, help="one or more other player-list files")
     mode = parser.add_mutually_exclusive_group()
-    mode.add_argument("--overlap", action="store_true", help="primary players that appear in any other")
-    mode.add_argument("--unique", action="store_true", help="primary players that appear in no other")
+    mode.add_argument(
+        "--overlap",
+        action="store_true",
+        help="primary players that appear in any other",
+    )
+    mode.add_argument(
+        "--unique",
+        action="store_true",
+        help="primary players that appear in no other",
+    )
     mode.add_argument("--both", action="store_true", help="print both sections (default)")
     args = parser.parse_args()
 
