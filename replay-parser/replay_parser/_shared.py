@@ -20,23 +20,34 @@ def is_vanilla_ffa(wire: list) -> bool:
     Wire indices reflect the v15+ replay format (docs/replay-format.md).
     """
     # wire[12] = teams. Non-null = team mode (2v2, bigteam, etc).
-    if wire[12] is not None: return False
+    if wire[12] is not None:
+        return False
     # wire[13] = customMap. Non-null = lobby played on a custom (uploaded) map.
-    if wire[13] is not None: return False
+    if wire[13] is not None:
+        return False
     # wire[16] = swamps. Non-empty = swamp tiles on the map.
-    if wire[16]: return False
+    if wire[16]:
+        return False
     # wire[21] = modifiers. Non-empty = any modifier enabled (defection, silent
     # war, leapfrog, etc).
-    if wire[21]: return False
+    if wire[21]:
+        return False
     # wire[22..] are version-gated tile-type fields. Each is a list of tile
     # indices for that special tile type; non-empty = present on the map.
-    if len(wire) > 22 and wire[22]: return False  # observatories
-    if len(wire) > 23 and wire[23]: return False  # lookouts
-    if len(wire) > 24 and wire[24]: return False  # deserts
-    if len(wire) > 27 and wire[27]: return False  # generalTrades
-    if len(wire) > 28 and wire[28]: return False  # tunnels
+    if len(wire) > 22 and wire[22]: # observatories
+        return False
+    if len(wire) > 23 and wire[23]: # lookouts
+        return False
+    if len(wire) > 24 and wire[24]: # deserts
+        return False
+    if len(wire) > 27 and wire[27]: # generalTrades
+        return False
+    if len(wire) > 28 and wire[28]: # tunnels
+        return False
     # wire[30] = chessClock. Non-null = chess-clock timing rules.
-    if len(wire) > 30 and wire[30] is not None: return False
+    if len(wire) > 30 and wire[30] is not None:
+        return False
     # wire[34] = strongholds. Non-empty = stronghold tiles on the map.
-    if len(wire) > 34 and wire[34]: return False
+    if len(wire) > 34 and wire[34]:
+        return False
     return True
