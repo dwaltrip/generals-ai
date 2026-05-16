@@ -1,3 +1,12 @@
+//! Simulator state + step body.
+//!
+//! Timestep ↔ snapshot semantics: `snapshot[t]` is the state after the
+//! step that incremented to `t`. AFKs/captures fire **before** the
+//! increment (so `event.timestep = e` means effect appears in
+//! `snapshot[e+1]`); production fires **after** the increment (so a
+//! land tick at K is visible in `snapshot[K]`). Full table in
+//! `sim-core/README.md`.
+
 use std::collections::VecDeque;
 
 use numpy::{IntoPyArray, PyArray1, PyArray2};
