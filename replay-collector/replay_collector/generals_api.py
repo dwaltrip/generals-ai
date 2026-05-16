@@ -1,6 +1,6 @@
+from collections.abc import Iterator
 import itertools
 import json
-from typing import Iterator
 
 import lzstring
 

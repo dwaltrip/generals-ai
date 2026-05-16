@@ -13,7 +13,7 @@ Usage (from replay-parser/):
 """
 from collections import defaultdict
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 import sqlite3
 
@@ -166,7 +166,7 @@ def write_report(
         tablefmt="github",
     )
 
-    now = datetime.now(tz=timezone.utc)
+    now = datetime.now(tz=UTC)
     lines = [
         "# Sweep: listings vs deduced ranking match rates",
         "",

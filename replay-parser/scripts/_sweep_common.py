@@ -7,7 +7,7 @@ module provides the common bones: candidate fetch, week bucketing,
 random sampling, and chunked blob/listings pre-fetch.
 """
 from collections import defaultdict
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 import random
 import sqlite3
 import sys
@@ -25,7 +25,7 @@ def log(msg: str) -> None:
 
 def week_start(started_ms: int) -> str:
     """ISO Monday key (UTC) for a started-epoch-ms timestamp."""
-    dt = datetime.fromtimestamp(started_ms / 1000, tz=timezone.utc)
+    dt = datetime.fromtimestamp(started_ms / 1000, tz=UTC)
     monday = dt - timedelta(days=dt.weekday())
     return monday.strftime("%Y-%m-%d")
 

@@ -2,7 +2,7 @@ from typing import Any
 
 import numpy as np
 
-def simulate(replay: Any) -> "State": ...
+def simulate(replay: Any) -> State: ...
 
 class DeathEvent:
     timestep: int

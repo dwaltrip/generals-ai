@@ -14,14 +14,14 @@ def test_iso_to_epoch_ms_naive_uses_local_tz():
 
 def test_iso_to_epoch_ms_with_offset():
     expected = int(
-        dt.datetime(2025, 1, 15, 21, 30, 0, tzinfo=dt.timezone.utc).timestamp() * 1000
+        dt.datetime(2025, 1, 15, 21, 30, 0, tzinfo=dt.UTC).timestamp() * 1000
     )
     assert _iso_to_epoch_ms("2025-01-15T14:30:00-07:00") == expected
 
 
 def test_iso_to_epoch_ms_z_suffix():
     expected = int(
-        dt.datetime(2025, 1, 15, 21, 30, 0, tzinfo=dt.timezone.utc).timestamp() * 1000
+        dt.datetime(2025, 1, 15, 21, 30, 0, tzinfo=dt.UTC).timestamp() * 1000
     )
     assert _iso_to_epoch_ms("2025-01-15T21:30:00Z") == expected
 

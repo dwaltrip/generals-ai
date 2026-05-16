@@ -683,7 +683,7 @@ def render_markdown(data: dict) -> str:
     a("# Replay corpus filter-counts report")
     a("")
     a(f"_Generated: {data['generated_at']}_")
-    a(f"_DB: `replay-collector/data/generals.sqlite`_")
+    a("_DB: `replay-collector/data/generals.sqlite`_")
     a("")
 
     cl = data["curated_list"]
@@ -830,7 +830,7 @@ def render_markdown(data: dict) -> str:
     rp = s3["rolling_perspectives"]
     th = rp["thresholds"]
     total_p = rp["total_perspectives"]
-    a(f"### Rolling 100-prior-FFA-game rates (window=100, strict `<`, per perspective)")
+    a("### Rolling 100-prior-FFA-game rates (window=100, strict `<`, per perspective)")
     a("")
     a(f"Total curated perspectives in survivor games: **{total_p:,}**")
     if rp["null_window_perspectives"]:

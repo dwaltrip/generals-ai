@@ -19,7 +19,7 @@ Usage (from replay-parser/):
     uv run python scripts/find_lbsort_deploy_time.py
 """
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 import sqlite3
 import sys
@@ -60,11 +60,11 @@ def classify(state, replay, listings) -> str:
 
 
 def fmt_hour(ms: int) -> str:
-    return datetime.fromtimestamp(ms / 1000, tz=timezone.utc).strftime("%Y-%m-%d %H:00 UTC")
+    return datetime.fromtimestamp(ms / 1000, tz=UTC).strftime("%Y-%m-%d %H:00 UTC")
 
 
 def fmt_ts(ms: int) -> str:
-    return datetime.fromtimestamp(ms / 1000, tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    return datetime.fromtimestamp(ms / 1000, tz=UTC).strftime("%Y-%m-%d %H:%M:%S")
 
 
 def main():
@@ -128,7 +128,7 @@ def main():
         return
 
     print()
-    print(f"Drill into transition window (the hour before + the transition hour):")
+    print("Drill into transition window (the hour before + the transition hour):")
     drill_start = transition_hour - 3_600_000
     drill_end = transition_hour + 3_600_000
     for started, rid, label in results:

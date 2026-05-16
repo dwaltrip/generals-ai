@@ -4,13 +4,12 @@ Usage (from replay-parser/):
     uv run python scripts/show_ranking.py YC-ZjiMiY KVt1xVdFd
 """
 import argparse
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 import sqlite3
 
 from tabulate import tabulate
 
 from replay_parser._collector.config import DB_PATH
-from replay_parser._collector.wire import decode as decode_blob
 from replay_parser.errors import ArmyOverflowError
 from replay_parser.parser import parse_replay
 from replay_parser.validator import apply_surrender_bonus, deduce_ranking_for_replay
@@ -91,7 +90,7 @@ def render_damage(state, usernames):
 
 
 def render(replay_id, started, version, listings_names, deduced_names, deduced_has_kill):
-    when = datetime.fromtimestamp(started / 1000, tz=timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    when = datetime.fromtimestamp(started / 1000, tz=UTC).strftime("%Y-%m-%d %H:%M UTC")
     n = max(len(listings_names), len(deduced_names))
     rows = []
     for i in range(n):

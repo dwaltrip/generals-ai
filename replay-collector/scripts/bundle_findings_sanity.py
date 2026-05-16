@@ -25,8 +25,6 @@ import argparse
 from collections import Counter, defaultdict
 import datetime as dt
 import logging
-from pathlib import Path
-import sys
 import time
 
 from replay_collector import wire
@@ -129,7 +127,7 @@ def aggregate(rows_iter, max_rows: int):
 
         try:
             w = wire.decode(wire_blob)
-        except Exception as e:
+        except Exception:
             n_decode_fail += 1
             continue
 
@@ -197,7 +195,7 @@ def render_report(agg: dict, sample_size: int, elapsed_s: float) -> str:
     out: list = []
     p = out.append
 
-    p(f"# Bundle-Findings Sanity Report")
+    p("# Bundle-Findings Sanity Report")
     p("")
     p(f"**Generated:** {dt.datetime.now().isoformat(timespec='seconds')}")
     p(f"**Sample requested:** {sample_size:,}  |  **analyzed:** {agg['n_analyzed']:,}  |  **runtime:** {elapsed_s:.1f}s")
@@ -250,7 +248,7 @@ def render_report(agg: dict, sample_size: int, elapsed_s: float) -> str:
     p("")
 
     if agg["unpaired_examples"]:
-        p(f"**Unpaired (1-event) examples** (up to 25 shown):")
+        p("**Unpaired (1-event) examples** (up to 25 shown):")
         p("")
         p("| replay_id | player_idx | turn |")
         p("|---|---|---|")
@@ -259,7 +257,7 @@ def render_report(agg: dict, sample_size: int, elapsed_s: float) -> str:
         p("")
 
     if agg["triple_plus_examples"]:
-        p(f"**3+ event examples** (up to 25 shown — would be surprising):")
+        p("**3+ event examples** (up to 25 shown — would be surprising):")
         p("")
         p("| replay_id | player_idx | turns |")
         p("|---|---|---|")

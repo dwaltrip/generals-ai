@@ -51,7 +51,7 @@ _VERBOSE_ONLY_LOGGERS = (
 _LOG_FORMAT = "%(asctime)s %(levelname)s %(message)s"
 
 _configured: bool = False
-_cached_result: "tuple[Path, Path, BucketProgress] | None" = None
+_cached_result: tuple[Path, Path, BucketProgress] | None = None
 
 
 def _filename_timestamp(now: dt.datetime) -> str:
