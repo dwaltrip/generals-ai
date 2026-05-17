@@ -91,6 +91,7 @@ pub struct State {
     pub cities_mask: Vec<u8>,
 
     pub cities: Vec<i32>,
+    pub cities_present_at: Vec<i32>,
     pub generals: Vec<i32>,
 
     pub alive: Vec<bool>,
@@ -113,6 +114,13 @@ pub struct State {
     pub snapshots_ownership: Vec<Vec<i8>>,
     pub snapshots_armies: Vec<Vec<i16>>,
     pub snapshots_cities_mask: Vec<Vec<u8>>,
+
+    // Per-player action arrays, grown one entry per advancing step().
+    // Sentinel -1 means "pass" (no move popped this step); overwritten in
+    // select_candidates() when a buffered move survives is_valid.
+    pub actions_source: Vec<Vec<i16>>,
+    pub actions_dest: Vec<Vec<i16>>,
+    pub actions_is50: Vec<Vec<i8>>,
 
     pub map_size: usize,
 }
@@ -151,6 +159,10 @@ impl State {
     #[getter]
     fn cities(&self) -> Vec<i32> {
         self.cities.clone()
+    }
+    #[getter]
+    fn cities_present_at<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<i32>> {
+        self.cities_present_at.clone().into_pyarray(py)
     }
     #[getter]
     fn death_events(&self) -> Vec<DeathEvent> {
@@ -208,6 +220,19 @@ impl State {
     fn snapshots_len(&self) -> usize {
         self.snapshots_ownership.len()
     }
+
+    #[getter]
+    fn actions_source<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray2<i16>>> {
+        stack_per_player_i16(py, &self.actions_source, self.num_players)
+    }
+    #[getter]
+    fn actions_dest<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray2<i16>>> {
+        stack_per_player_i16(py, &self.actions_dest, self.num_players)
+    }
+    #[getter]
+    fn actions_is50<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray2<i8>>> {
+        stack_per_player_i8(py, &self.actions_is50, self.num_players)
+    }
 }
 
 // ============================================================================
@@ -252,6 +277,7 @@ impl State {
         m_index: &[i8],
         m_source: &[i16],
         m_dest: &[i16],
+        m_is50: &[u8],
     ) -> Vec<usize> {
         let mut candidates: Vec<usize> = Vec::new();
         for p in 0..self.num_players {
@@ -259,6 +285,10 @@ impl State {
                 self.input_buffer[p].pop_front();
                 if self.is_valid(i, m_index, m_source, m_dest) {
                     candidates.push(i);
+                    let last = self.actions_source[p].len() - 1;
+                    self.actions_source[p][last] = m_source[i];
+                    self.actions_dest[p][last] = m_dest[i];
+                    self.actions_is50[p][last] = m_is50[i] as i8;
                     break;
                 }
             }
@@ -366,6 +396,7 @@ impl State {
         }
 
         self.cities.push(general_tile as i32);
+        self.cities_present_at.push(self.timestep + 1);
         self.cities_mask[general_tile] = 1;
         self.generals[captured] = -1;
 
@@ -389,6 +420,7 @@ impl State {
         }
 
         self.cities.push(general_tile as i32);
+        self.cities_present_at.push(self.timestep + 1);
         self.cities_mask[general_tile] = 1;
         self.generals[p] = -1;
         self.neutralize_events.push(NeutralizeEvent {
@@ -540,9 +572,17 @@ impl State {
             return Ok(false);
         }
 
+        // Pre-grow one entry per player with the pass sentinel; select_candidates
+        // overwrites for any player whose buffered move survives is_valid.
+        for p in 0..self.num_players {
+            self.actions_source[p].push(-1);
+            self.actions_dest[p].push(-1);
+            self.actions_is50[p].push(-1);
+        }
+
         self.process_pending_afks(a_timestep, a_index);
         self.buffer_pending_moves(m_timestep, m_index);
-        let candidates = self.select_candidates(m_index, m_source, m_dest);
+        let candidates = self.select_candidates(m_index, m_source, m_dest, m_is50);
 
         let any_ran = {
             let sorted = self.priority_sort(&candidates, m_index, m_source, m_dest);
@@ -591,8 +631,10 @@ impl State {
         }
 
         let mut cities: Vec<i32> = Vec::with_capacity(initial_cities.len());
+        let mut cities_present_at: Vec<i32> = Vec::with_capacity(initial_cities.len());
         for (&idx, &army) in initial_cities.iter().zip(initial_city_armies.iter()) {
             cities.push(idx);
+            cities_present_at.push(0);
             cities_mask[idx as usize] = 1;
             armies[idx as usize] = army;
         }
@@ -621,6 +663,7 @@ impl State {
             armies,
             cities_mask,
             cities,
+            cities_present_at,
             generals,
             alive,
             has_kill: vec![false; num_players],
@@ -638,6 +681,9 @@ impl State {
             snapshots_ownership: Vec::new(),
             snapshots_armies: Vec::new(),
             snapshots_cities_mask: Vec::new(),
+            actions_source: (0..num_players).map(|_| Vec::new()).collect(),
+            actions_dest: (0..num_players).map(|_| Vec::new()).collect(),
+            actions_is50: (0..num_players).map(|_| Vec::new()).collect(),
             map_size,
         }
     }
@@ -655,6 +701,52 @@ fn damage_to_pyarray2<'py>(
     use numpy::ndarray::Array2;
     let arr = Array2::from_shape_vec((p, p), flat.to_vec())
         .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("damage reshape: {e}")))?;
+    Ok(numpy::PyArray2::from_owned_array(py, arr))
+}
+
+fn stack_per_player_i16<'py>(
+    py: Python<'py>,
+    per_player: &[Vec<i16>],
+    num_players: usize,
+) -> PyResult<Bound<'py, PyArray2<i16>>> {
+    use numpy::ndarray::Array2;
+    let cols = per_player.first().map_or(0, |v| v.len());
+    let mut flat: Vec<i16> = Vec::with_capacity(num_players * cols);
+    for v in per_player {
+        if v.len() != cols {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "per-player action vec length mismatch: {} vs {}",
+                v.len(),
+                cols
+            )));
+        }
+        flat.extend_from_slice(v);
+    }
+    let arr = Array2::from_shape_vec((num_players, cols), flat)
+        .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("actions reshape: {e}")))?;
+    Ok(numpy::PyArray2::from_owned_array(py, arr))
+}
+
+fn stack_per_player_i8<'py>(
+    py: Python<'py>,
+    per_player: &[Vec<i8>],
+    num_players: usize,
+) -> PyResult<Bound<'py, PyArray2<i8>>> {
+    use numpy::ndarray::Array2;
+    let cols = per_player.first().map_or(0, |v| v.len());
+    let mut flat: Vec<i8> = Vec::with_capacity(num_players * cols);
+    for v in per_player {
+        if v.len() != cols {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "per-player action vec length mismatch: {} vs {}",
+                v.len(),
+                cols
+            )));
+        }
+        flat.extend_from_slice(v);
+    }
+    let arr = Array2::from_shape_vec((num_players, cols), flat)
+        .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("actions reshape: {e}")))?;
     Ok(numpy::PyArray2::from_owned_array(py, arr))
 }
 
