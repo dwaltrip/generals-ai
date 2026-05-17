@@ -66,7 +66,10 @@ def test_writer_smoke(name: str, tmp_path: Path):
     P = state.num_players
     perspective_ids = list(range(P))
     placement = list(range(1, P + 1))  # placeholder; the real builder reads DB
-    meta = build_metadata(state, replay, perspective_ids, placement)
+    meta = build_metadata(
+        state, replay, perspective_ids, placement,
+        sim_core_version="smoke-test",
+    )
     write_metadata(meta, meta_path)
 
     sim = dict(np.load(sim_path))

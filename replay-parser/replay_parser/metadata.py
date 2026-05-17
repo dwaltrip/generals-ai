@@ -3,9 +3,12 @@
 Schema: see `docs/2026-05/5.16-3-parser-output-design.md` §4.1.
 
 Most fields come from the wire static block, DB, or sim event lists. The
-rolling-rate / prior-games fields require a chronological per-player walk
-of the corpus DB and are stubbed in this session; pass `None` and the
-build leaves the documented sentinels (`-1.0` / `-1`).
+rolling-rate / prior-games fields take optional lists; passing `None`
+leaves the documented sentinels (`-1.0` / `-1`) in place.
+
+`sim_core_version` is supplied by the caller (the corpus driver captures
+it at run-time via `git rev-parse` + dirty-flag, so each meta sidecar is
+stamped with the exact build that produced its sibling sim file).
 """
 
 import numpy as np
@@ -14,17 +17,12 @@ from replay_parser.decode import ReplayData
 import sim_core
 
 
-# TODO(meta-versioning): replace this stub with a real sim_core_version
-# source — cargo pkg version or build-time git SHA, exposed from the Rust
-# crate. See 5.16-3 design doc §4.1.
-_SIM_CORE_VERSION_STUB = "unknown"
-
-
 def build_metadata(
     state: sim_core.State,
     replay: ReplayData,
     perspective_player_ids: list[int],
     placement: list[int],
+    sim_core_version: str,
     rolling_1st_rate: list[float] | None = None,
     rolling_top3_rate: list[float] | None = None,
     prior_games_count: list[int] | None = None,
@@ -45,7 +43,7 @@ def build_metadata(
 
     return {
         "replay_id": np.asarray(replay.static.id, dtype="<U16"),
-        "sim_core_version": np.asarray(_SIM_CORE_VERSION_STUB, dtype="<U16"),
+        "sim_core_version": np.asarray(sim_core_version, dtype="<U24"),
         "perspective_player_ids": np.asarray(perspective_player_ids, dtype=np.int8),
         "perspective_usernames": np.asarray(perspective_usernames, dtype="<U32"),
         "placement": np.asarray(placement, dtype=np.int8),

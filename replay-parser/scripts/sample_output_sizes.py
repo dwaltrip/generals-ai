@@ -78,6 +78,7 @@ def main() -> int:
                 state, replay,
                 perspective_player_ids=list(range(P)),
                 placement=list(range(1, P + 1)),
+                sim_core_version="size-sample",
             )
             write_metadata(meta, meta_path)
 

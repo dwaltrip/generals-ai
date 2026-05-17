@@ -36,6 +36,7 @@ from replay_parser._collector.wire import decode as decompress
 from replay_parser._shared import is_vanilla_ffa
 from replay_parser.decode import decode_wire_array
 from replay_parser.errors import ArmyOverflowError
+from replay_parser.git_state import capture_git_version
 from replay_parser.metadata import build_metadata
 from replay_parser.output import write_metadata, write_sim_output
 from replay_parser.rolling_stats import (
@@ -63,7 +64,9 @@ class DriverConfig:
     db_path: Path
     intermediate_dir: Path
     curated_names: tuple[str, ...]
+    repo_root: Path
     noise_floor: NoiseFloor = field(default_factory=NoiseFloor)
+    allow_dirty: bool = False
     log_every: int = 100
 
 
@@ -81,6 +84,7 @@ _conn: Optional[sqlite3.Connection] = None
 _rolling: Optional[RollingStatsResult] = None
 _curated: Optional[frozenset[str]] = None
 _config: Optional[DriverConfig] = None
+_sim_core_version: Optional[str] = None
 
 
 def _worker_init(
@@ -88,16 +92,21 @@ def _worker_init(
     rolling: RollingStatsResult,
     curated: frozenset[str],
     config: DriverConfig,
+    sim_core_version: str,
 ) -> None:
-    global _conn, _rolling, _curated, _config
+    global _conn, _rolling, _curated, _config, _sim_core_version
     _conn = sqlite3.connect(db_path)
     _rolling = rolling
     _curated = curated
     _config = config
+    _sim_core_version = sim_core_version
 
 
 def _process_replay(replay_id: str) -> GameResult:
-    assert _conn is not None and _rolling is not None and _curated is not None and _config is not None
+    assert (
+        _conn is not None and _rolling is not None and _curated is not None
+        and _config is not None and _sim_core_version is not None
+    )
 
     shard_dir = _config.intermediate_dir / replay_id[:2]
     sim_path = shard_dir / f"{replay_id}.npz"
@@ -126,7 +135,10 @@ def _process_replay_inner(
     sim_path: Path,
     meta_path: Path,
 ) -> GameResult:
-    assert _conn is not None and _rolling is not None and _curated is not None and _config is not None
+    assert (
+        _conn is not None and _rolling is not None and _curated is not None
+        and _config is not None and _sim_core_version is not None
+    )
 
     row = _conn.execute(
         "SELECT wire_data FROM replays WHERE id = ?", (replay_id,)
@@ -190,6 +202,7 @@ def _process_replay_inner(
         state, replay,
         perspective_player_ids=perspective_player_ids,
         placement=placement,
+        sim_core_version=_sim_core_version,
         rolling_1st_rate=rolling_1st,
         rolling_top3_rate=rolling_top3,
         prior_games_count=prior_counts,
@@ -238,9 +251,15 @@ def run_corpus_driver(
     """Top-level orchestrator. Returns the path to the skip-log CSV."""
     config.intermediate_dir.mkdir(parents=True, exist_ok=True)
 
+    # Capture git state up front — aborts if dirty (unless allow_dirty).
+    sim_core_version = capture_git_version(
+        config.repo_root, allow_dirty=config.allow_dirty,
+    )
+
     print(f"Curated players: {len(config.curated_names)}")
     print(f"DB: {config.db_path}")
     print(f"Output: {config.intermediate_dir}")
+    print(f"sim_core_version: {sim_core_version}")
     print(f"Workers: {workers}  Noise floor: {config.noise_floor}\n")
 
     conn = sqlite3.connect(config.db_path)
@@ -271,7 +290,7 @@ def run_corpus_driver(
         with mp.Pool(
             processes=workers,
             initializer=_worker_init,
-            initargs=(str(config.db_path), rolling, curated, config),
+            initargs=(str(config.db_path), rolling, curated, config, sim_core_version),
         ) as pool:
             for i, result in enumerate(
                 pool.imap_unordered(_process_replay, candidates, chunksize=8),

@@ -21,6 +21,7 @@ from replay_parser.driver import (
     NoiseFloor,
     run_corpus_driver,
 )
+from replay_parser.git_state import DirtyWorkingTreeError
 
 
 # Project-root-relative path to the curated-list manifest.
@@ -60,6 +61,11 @@ def main() -> int:
     ap.add_argument("--rolling-1st-floor", type=float, default=DEFAULT_ROLLING_1ST_FLOOR)
     ap.add_argument("--rolling-top3-floor", type=float, default=DEFAULT_ROLLING_TOP3_FLOOR)
     ap.add_argument("--min-prior-games", type=int, default=DEFAULT_MIN_PRIOR_GAMES)
+    ap.add_argument(
+        "--allow-dirty", action="store_true",
+        help="Proceed even if the working tree has uncommitted changes "
+             "(output stamped <sha>-dirty).",
+    )
     args = ap.parse_args()
 
     if not args.manifest.exists():
@@ -80,13 +86,19 @@ def main() -> int:
         db_path=DB_PATH,
         intermediate_dir=args.output_dir,
         curated_names=tuple(curated),
+        repo_root=PROJECT_ROOT,
         noise_floor=NoiseFloor(
             rolling_1st=args.rolling_1st_floor,
             rolling_top3=args.rolling_top3_floor,
             min_prior_games=args.min_prior_games,
         ),
+        allow_dirty=args.allow_dirty,
     )
-    run_corpus_driver(config, workers=args.workers, limit=args.limit)
+    try:
+        run_corpus_driver(config, workers=args.workers, limit=args.limit)
+    except DirtyWorkingTreeError as e:
+        print(str(e), file=sys.stderr)
+        return 2
     return 0
 
 
