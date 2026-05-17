@@ -8,8 +8,8 @@ Usage (from replay-parser/):
     uv run python scripts/run_corpus_driver.py [--limit N] [--workers W] [--output-dir DIR]
 """
 import argparse
-import sys
 from pathlib import Path
+import sys
 
 from replay_collector.cli._shared import load_players
 from replay_parser._collector.config import DB_PATH

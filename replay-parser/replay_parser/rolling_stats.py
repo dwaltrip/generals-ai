@@ -14,9 +14,10 @@ Consumer: `replay_parser.metadata.build_metadata`. The corpus driver
 loads once at startup, looks up per-replay during the per-game write
 loop.
 """
-import sqlite3
 from collections import deque
 from dataclasses import dataclass
+import sqlite3
+
 
 # Top-3 uses raw `position < 3` regardless of player_count. The random
 # baseline rate differs by P (75% for 4p, 37.5% for 8p); downstream

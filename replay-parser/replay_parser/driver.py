@@ -21,16 +21,14 @@ Per-game flow inside a worker (see `_process_replay`):
      out and writes a `_skipped_*.csv` log.
 """
 import csv
+from dataclasses import dataclass, field
 import datetime as dt
 import multiprocessing as mp
+from pathlib import Path
 import sqlite3
 import time
 import traceback
-from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Any, Optional, TextIO
-
-import sim_core
+from typing import Any, TextIO
 
 from replay_parser._collector.wire import decode as decompress
 from replay_parser._shared import is_vanilla_ffa
@@ -44,6 +42,7 @@ from replay_parser.rolling_stats import (
     RollingStatsResult,
     compute_rolling_stats,
 )
+import sim_core
 
 
 # Per design §5.3 / §A.4.
@@ -80,11 +79,11 @@ class GameResult:
 # --------------------------------------------------------------------------
 # Worker globals (process-local; set up by `_worker_init`).
 # --------------------------------------------------------------------------
-_conn: Optional[sqlite3.Connection] = None
-_rolling: Optional[RollingStatsResult] = None
-_curated: Optional[frozenset[str]] = None
-_config: Optional[DriverConfig] = None
-_sim_core_version: Optional[str] = None
+_conn: sqlite3.Connection | None = None
+_rolling: RollingStatsResult | None = None
+_curated: frozenset[str] | None = None
+_config: DriverConfig | None = None
+_sim_core_version: str | None = None
 
 
 def _worker_init(
@@ -165,7 +164,8 @@ def _process_replay_inner(
         "WHERE rp.replay_id = ?",
         (replay_id,),
     ).fetchall()
-    placement_by_name = {name: pos + 1 for pos, name in placement_rows}  # listing position is 0-indexed; placement is 1-indexed
+    # listing position is 0-indexed; placement is 1-indexed
+    placement_by_name = {name: pos + 1 for pos, name in placement_rows}
 
     rolling_for_replay = _rolling.by_replay.get(replay_id, {})
 
@@ -223,7 +223,7 @@ def _process_replay_inner(
 def select_candidate_replay_ids(
     conn: sqlite3.Connection,
     curated_names: list[str],
-    limit: Optional[int] = None,
+    limit: int | None = None,
 ) -> list[str]:
     """Candidate set: passes SQL-level filter AND has at least one curated
     player. Ordered by `started ASC` for deterministic re-runs."""
@@ -248,7 +248,7 @@ def select_candidate_replay_ids(
 def run_corpus_driver(
     config: DriverConfig,
     workers: int,
-    limit: Optional[int] = None,
+    limit: int | None = None,
 ) -> Path:
     """Top-level orchestrator. Returns the path to the skip-log CSV."""
     config.intermediate_dir.mkdir(parents=True, exist_ok=True)
@@ -352,7 +352,7 @@ def run_corpus_driver(
 
 def _open_skip_log(intermediate_dir: Path) -> tuple[Path, TextIO, Any]:
     intermediate_dir.mkdir(parents=True, exist_ok=True)
-    stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    stamp = dt.datetime.now(dt.UTC).strftime("%Y%m%dT%H%M%SZ")
     path = intermediate_dir / f"_skipped_{stamp}.csv"
     fh = open(path, "w", encoding="utf-8", newline="")
     writer = csv.writer(fh)

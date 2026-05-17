@@ -15,8 +15,8 @@ Returns one of:
 "Dirty" is restricted to tracked-file changes — untracked files like
 scratch outputs in `tmp/` or `data/` don't trigger the gate.
 """
-import subprocess
 from pathlib import Path
+import subprocess
 
 
 class DirtyWorkingTreeError(RuntimeError):
