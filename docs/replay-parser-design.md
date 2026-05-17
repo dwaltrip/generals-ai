@@ -88,7 +88,7 @@ For each curated-player perspective in each game's ranking:
 - `prior_games_count_at_game_time` — count of the player's prior FFA games at this game's start. Drives the noise-floor minimum in §5.3 and is useful at training time for weighting by sample reliability.
 - `stars_at_start` — slot 5; captured for training-time use (season-volatile due to 10-week stars resets, so absolute thresholding is unreliable — rolling win-rate and top-3 are the seasonally-immune alternatives).
 - `placement` — final placement from `replay_players`.
-- `elim_turn` — turn the player was eliminated; `null` if they survived to game-end.
+- `elim_timestep` — timestep the player was eliminated; `null` if they survived to game-end.
 
 Rolling rates are computed via a per-player chronological walk (`ORDER BY started ASC` per player) so "most recent N games" means "the N games immediately preceding this one in time" — same convention as the filter-counts report.
 
