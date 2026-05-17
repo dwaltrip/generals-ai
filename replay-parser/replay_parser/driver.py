@@ -67,7 +67,7 @@ class DriverConfig:
     repo_root: Path
     noise_floor: NoiseFloor = field(default_factory=NoiseFloor)
     allow_dirty: bool = False
-    log_every: int = 100
+    log_every: int = 500
 
 
 @dataclass(frozen=True, slots=True)
@@ -111,6 +111,8 @@ def _process_replay(replay_id: str) -> GameResult:
     shard_dir = _config.intermediate_dir / replay_id[:2]
     sim_path = shard_dir / f"{replay_id}.npz"
     meta_path = shard_dir / f"{replay_id}.meta.npz"
+    # Pre-filter in the orchestrator already excludes already-written candidates,
+    # but keep this guard as a belt-and-suspenders against races / partial writes.
     if sim_path.exists() and meta_path.exists():
         return GameResult(replay_id, "skip:already-written")
 
@@ -282,6 +284,32 @@ def run_corpus_driver(
         log_fh.close()
         print("No candidates — nothing to do.")
         return log_path
+
+    # Pre-filter already-written candidates so they don't enter the pool and
+    # don't muddy the progress counters. The full skip list still lands in the
+    # CSV; the per-worker existence check stays as a race-condition guard.
+    print("Pre-filtering already-written candidates…")
+    t0 = time.perf_counter()
+    fresh: list[str] = []
+    pre_filtered = 0
+    for rid in candidates:
+        shard = config.intermediate_dir / rid[:2]
+        if (shard / f"{rid}.npz").exists() and (shard / f"{rid}.meta.npz").exists():
+            writer.writerow([rid, "skip:already-written", ""])
+            pre_filtered += 1
+        else:
+            fresh.append(rid)
+    log_fh.flush()
+    print(
+        f"  {pre_filtered:,} already written (logged), "
+        f"{len(fresh):,} new candidates to process — {time.perf_counter() - t0:.1f}s.\n"
+    )
+
+    if not fresh:
+        log_fh.close()
+        print("Nothing new to process.")
+        return log_path
+
     curated = frozenset(config.curated_names)
 
     counts: dict[str, int] = {}
@@ -293,17 +321,17 @@ def run_corpus_driver(
             initargs=(str(config.db_path), rolling, curated, config, sim_core_version),
         ) as pool:
             for i, result in enumerate(
-                pool.imap_unordered(_process_replay, candidates, chunksize=8),
+                pool.imap_unordered(_process_replay, fresh, chunksize=8),
                 start=1,
             ):
                 counts[result.status] = counts.get(result.status, 0) + 1
                 if result.status != "written":
                     writer.writerow([result.replay_id, result.status, result.detail])
                     log_fh.flush()
-                if i % config.log_every == 0 or i == len(candidates):
+                if i % config.log_every == 0 or i == len(fresh):
                     rate = i / max(time.perf_counter() - t0, 1e-6)
                     print(
-                        f"  [{i:>6}/{len(candidates)}] {rate:.1f} games/s  "
+                        f"  [{i:>6}/{len(fresh)}] {rate:.1f} games/s  "
                         + " ".join(f"{k}={v}" for k, v in sorted(counts.items())),
                         flush=True,
                     )
@@ -312,10 +340,12 @@ def run_corpus_driver(
 
     elapsed = time.perf_counter() - t0
     print(f"\nDone in {elapsed:.1f}s "
-          f"({len(candidates)/max(elapsed,1e-6):.1f} games/s, {workers} workers).")
-    print("Final tally:")
+          f"({len(fresh)/max(elapsed,1e-6):.1f} games/s, {workers} workers).")
+    print("Final tally (new work only — pre-filtered already-written excluded):")
     for k, v in sorted(counts.items()):
         print(f"  {k:<35} {v}")
+    if pre_filtered:
+        print(f"  (plus {pre_filtered:,} skip:already-written logged at pre-filter)")
     print(f"\nSkip log: {log_path}")
     return log_path
 
