@@ -41,7 +41,8 @@ SIM_KEYS = {
 
 META_KEYS = {
     "replay_id", "sim_core_version",
-    "perspective_player_ids", "placement", "stars_at_start",
+    "perspective_player_ids", "perspective_usernames",
+    "placement", "stars_at_start",
     "elim_timestep",
     "rolling_1st_rate", "rolling_top3_rate", "prior_games_count",
 }
@@ -177,6 +178,11 @@ def _check_meta(meta: dict, replay, P: int) -> None:
 
     K = P  # smoke uses all players as perspectives
     assert meta["perspective_player_ids"].shape == (K,)
+    assert meta["perspective_usernames"].shape == (K,)
+    assert meta["perspective_usernames"].dtype.kind == "U"
+    # Usernames round-trip from wire.static.usernames via perspective_player_ids.
+    expected_names = [replay.static.usernames[p] for p in meta["perspective_player_ids"].tolist()]
+    assert meta["perspective_usernames"].tolist() == expected_names
     assert meta["placement"].shape == (K,)
     assert meta["stars_at_start"].shape == (K,)
     assert meta["elim_timestep"].shape == (K,)

@@ -1,0 +1,4 @@
+replay-collector/data/top-players/_archive/2026-04-30-leaderboard-ffa-top-100-combined.txt
+replay-collector/data/leaderboards/leadeboard-s42-ffawin-elite-gsheets.txt
+replay-collector/data/leaderboards/leadeboard-s42-ffa-elite-gsheets.txt
+replay-collector/data/top-players/2026-05-10-new-top-players-from-wr-start-bucket-analysis.txt

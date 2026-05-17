@@ -34,6 +34,7 @@ def build_metadata(
         raise ValueError(f"placement length {len(placement)} != K={K}")
 
     stars_at_start = [replay.static.stars[p] for p in perspective_player_ids]
+    perspective_usernames = [replay.static.usernames[p] for p in perspective_player_ids]
 
     death_by_player: dict[int, int] = {e.player: e.timestep for e in state.death_events}
     elim_timestep = [death_by_player.get(p, -1) for p in perspective_player_ids]
@@ -46,6 +47,7 @@ def build_metadata(
         "replay_id": np.asarray(replay.static.id, dtype="<U16"),
         "sim_core_version": np.asarray(_SIM_CORE_VERSION_STUB, dtype="<U16"),
         "perspective_player_ids": np.asarray(perspective_player_ids, dtype=np.int8),
+        "perspective_usernames": np.asarray(perspective_usernames, dtype="<U32"),
         "placement": np.asarray(placement, dtype=np.int8),
         "stars_at_start": np.asarray(stars_at_start, dtype=np.float32),
         "elim_timestep": np.asarray(elim_timestep, dtype=np.int32),
