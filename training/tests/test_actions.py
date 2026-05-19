@@ -1,8 +1,8 @@
-"""Round-trip + invalid-input tests for `training.actions.encode/decode`."""
+"""Round-trip + invalid-input tests for `bc.actions.encode/decode`."""
 
 import pytest
 
-from training.actions import decode, encode
+from bc.actions import decode, encode
 
 
 # Round-trip cases. Format: (source, dest, is50, W_unpadded, W_padded).
