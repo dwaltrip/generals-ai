@@ -6,7 +6,7 @@ select = ["F", "E", "W", "I", "B", "UP", "TID"]
 [lint.isort]
 force-sort-within-sections = true
 known-first-party = ["replay_collector", "replay_parser", "sim_core", "training", "utils"]
-known-local-folder = ["_sweep_common", "_fixture_lib"]
+known-local-folder = ["_sweep_common", "_fixture_lib", "_helpers"]
 lines-after-imports = 2
 
 [lint.flake8-tidy-imports.banned-api]
