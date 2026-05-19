@@ -25,7 +25,7 @@ def intermediate_root() -> Path:
 
 def test_yields_frames_with_expected_keys(intermediate_root: Path) -> None:
     ds = IterableDataset(intermediate_root, seed=0)
-    frames = list(islice(iter(ds), 50))
+    frames = list(islice(ds.iter_frames(), 50))
     assert len(frames) > 0
 
     f = frames[0]
@@ -39,7 +39,7 @@ def test_yields_frames_with_expected_keys(intermediate_root: Path) -> None:
 def test_walk_order_is_k_outer_t_inner(intermediate_root: Path) -> None:
     """Within one game, k is non-decreasing; for each k, t goes 0, 1, 2, ..."""
     ds = IterableDataset(intermediate_root, seed=0)
-    frames = list(islice(iter(ds), 500))
+    frames = list(islice(ds.iter_frames(), 500))
 
     by_game: dict[int, list[Frame]] = {}
     for f in frames:
@@ -67,7 +67,7 @@ def test_walk_order_is_k_outer_t_inner(intermediate_root: Path) -> None:
 def test_same_game_frames_share_sim_meta_refs(intermediate_root: Path) -> None:
     """Per-game eager load — every frame from one game points at the same dicts."""
     ds = IterableDataset(intermediate_root, seed=0)
-    frames = list(islice(iter(ds), 200))
+    frames = list(islice(ds.iter_frames(), 200))
 
     by_game: dict[int, list[Frame]] = {}
     for f in frames:
