@@ -1,8 +1,9 @@
 """
-Targeted test for `bc.dataset.build_mask` legality logic.
+Targeted test for `bc.mask.build_mask` legality logic.
 
 One synthetic 4×4 board exercises all four legality conditions plus the
-split-independence invariant. Real-corpus coverage lives in `test_smoke.py`.
+split-independence invariant. Real-corpus coverage lives in
+`test_dataloader_smoke.py`.
 """
 
 from __future__ import annotations
@@ -10,7 +11,7 @@ from __future__ import annotations
 import numpy as np
 
 from bc import actions
-from bc.dataset import build_mask
+from bc.mask import build_mask
 
 
 def test_build_mask_legality_conditions():
