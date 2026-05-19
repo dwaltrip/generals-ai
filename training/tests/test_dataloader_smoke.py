@@ -12,16 +12,12 @@ from __future__ import annotations
 from itertools import islice
 from pathlib import Path
 
-import pytest
 import torch
 from torch.utils.data import DataLoader
 
 from bc.constants import H_PADDED, W_PADDED
 from bc.dataset import IterableDataset
 
-
-_REPO_ROOT = Path(__file__).resolve().parent.parent.parent
-INTERMEDIATE_DIR = _REPO_ROOT / "replay-parser" / "data" / "intermediate"
 
 BATCH_SIZE = 64
 NUM_BATCHES = 100
@@ -30,15 +26,8 @@ NUM_BATCHES = 100
 FLAT_ACTION_COUNT = H_PADDED * W_PADDED * 8
 
 
-@pytest.fixture(scope="module")
-def intermediate_root() -> Path:
-    if not INTERMEDIATE_DIR.exists():
-        pytest.skip(f"intermediate corpus not found at {INTERMEDIATE_DIR}")
-    return INTERMEDIATE_DIR
-
-
-def test_dataloader_pipeline_smoke(intermediate_root: Path) -> None:
-    ds = IterableDataset(intermediate_root, seed=0)
+def test_dataloader_pipeline_smoke(intermediate_root: Path, sim_paths: list[Path]) -> None:
+    ds = IterableDataset(intermediate_root, seed=0, sim_paths=sim_paths)
     loader = DataLoader(ds, batch_size=BATCH_SIZE)
 
     for batch in islice(loader, NUM_BATCHES):

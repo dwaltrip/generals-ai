@@ -6,25 +6,13 @@ from itertools import islice
 from pathlib import Path
 
 import numpy as np
-import pytest
 
 from bc.constants import ELIGIBLE_PLAYER_COUNT, MAX_BOARD_SIDE
 from bc.dataset import Frame, IterableDataset, is_eligible
 
 
-_REPO_ROOT = Path(__file__).resolve().parent.parent.parent
-INTERMEDIATE_DIR = _REPO_ROOT / "replay-parser" / "data" / "intermediate"
-
-
-@pytest.fixture(scope="module")
-def intermediate_root() -> Path:
-    if not INTERMEDIATE_DIR.exists():
-        pytest.skip(f"intermediate corpus not found at {INTERMEDIATE_DIR}")
-    return INTERMEDIATE_DIR
-
-
-def test_yields_frames_with_expected_keys(intermediate_root: Path) -> None:
-    ds = IterableDataset(intermediate_root, seed=0)
+def test_yields_frames_with_expected_keys(intermediate_root: Path, sim_paths: list[Path]) -> None:
+    ds = IterableDataset(intermediate_root, seed=0, sim_paths=sim_paths)
     frames = list(islice(ds.iter_frames(), 50))
     assert len(frames) > 0
 
@@ -36,9 +24,9 @@ def test_yields_frames_with_expected_keys(intermediate_root: Path) -> None:
         assert key in f.meta
 
 
-def test_walk_order_is_k_outer_t_inner(intermediate_root: Path) -> None:
+def test_walk_order_is_k_outer_t_inner(intermediate_root: Path, sim_paths: list[Path]) -> None:
     """Within one game, k is non-decreasing; for each k, t goes 0, 1, 2, ..."""
-    ds = IterableDataset(intermediate_root, seed=0)
+    ds = IterableDataset(intermediate_root, seed=0, sim_paths=sim_paths)
     frames = list(islice(ds.iter_frames(), 500))
 
     by_game: dict[int, list[Frame]] = {}
@@ -64,9 +52,9 @@ def test_walk_order_is_k_outer_t_inner(intermediate_root: Path) -> None:
             prev_k, prev_t = f.k, f.t
 
 
-def test_same_game_frames_share_sim_meta_refs(intermediate_root: Path) -> None:
+def test_same_game_frames_share_sim_meta_refs(intermediate_root: Path, sim_paths: list[Path]) -> None:
     """Per-game eager load — every frame from one game points at the same dicts."""
-    ds = IterableDataset(intermediate_root, seed=0)
+    ds = IterableDataset(intermediate_root, seed=0, sim_paths=sim_paths)
     frames = list(islice(ds.iter_frames(), 200))
 
     by_game: dict[int, list[Frame]] = {}

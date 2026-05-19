@@ -124,9 +124,21 @@ class IterableDataset(TorchIterableDataset):
     training loop starts using DataLoader workers.
     """
 
-    def __init__(self, intermediate_root: Path, seed: int) -> None:
+    def __init__(
+        self,
+        intermediate_root: Path,
+        seed: int,
+        sim_paths: list[Path] | None = None,
+    ) -> None:
+        """
+        `sim_paths`, if provided, skips the per-iteration `list_sim_paths` glob
+        and uses the supplied list instead. Hooks the same seam that a
+        pre-filtered training manifest will use (and that tests use to share
+        a session-scoped cached list across the suite).
+        """
         self._intermediate_root = intermediate_root
         self._seed = seed
+        self._sim_paths = sim_paths
         self._epoch_counter = 0
 
     def iter_frames(self) -> Iterator[Frame]:
@@ -143,7 +155,12 @@ class IterableDataset(TorchIterableDataset):
         """
         rng = random.Random(self._seed + self._epoch_counter)
         self._epoch_counter += 1
-        paths = list_sim_paths(self._intermediate_root)
+        # Defensive copy: rng.shuffle mutates in place; never mutate the caller's list.
+        paths = (
+            list(self._sim_paths)
+            if self._sim_paths is not None
+            else list_sim_paths(self._intermediate_root)
+        )
         rng.shuffle(paths)
 
         for sim_path in paths:
