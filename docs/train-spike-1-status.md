@@ -13,7 +13,7 @@ Chunk D sub-step spec: [`2026-05/5.18-3-phase-1d-spec-and-pass-head-audit.md`](.
 - [x] **C** — MPS benchmark on a placeholder U-Net
 - [ ] **D** — dataloader skeleton + smoke test
   - [x] **D1** — action encode/decode + round-trip tests (`bc/actions.py`, `bc/constants.py`, `tests/test_actions.py`; 18/18 green)
-  - [ ] **D2** — per-game iteration scaffold
+  - [x] **D2** — per-game iteration scaffold (`bc/dataset.py`, `tests/test_dataset.py`; 22/22 green incl. D1)
   - [ ] **D3** — 12-channel placeholder + 32×32 padding + drop filter
   - [ ] **D4** — action target + per-cell legality mask + value target
   - [ ] **D5** — smoke test (100 batches, plan §3 step 7 assertions)
