@@ -26,6 +26,7 @@ import numpy as np
 from torch.utils.data import IterableDataset as TorchIterableDataset
 
 from bc.constants import ELIGIBLE_PLAYER_COUNT, MAX_BOARD_SIDE
+from bc.utils import meta_path_for, list_sim_paths
 
 
 # Per-frame payload yielded by the IterableDataset. The dataset emits these
@@ -42,10 +43,6 @@ class Frame:
     k: int
     # Timestep in `[0, T-1)`.
     t: int
-
-
-def _meta_path_for(sim_path: Path) -> Path:
-    return sim_path.with_name(sim_path.stem + ".meta.npz")
 
 
 def is_eligible(sim_path: Path) -> bool:
@@ -67,19 +64,6 @@ def is_eligible(sim_path: Path) -> bool:
     return p == ELIGIBLE_PLAYER_COUNT
 
 
-def _list_sim_paths(intermediate_root: Path) -> list[Path]:
-    """Sorted list of sim file paths under the intermediate root."""
-    out: list[Path] = []
-    for prefix_dir in sorted(intermediate_root.iterdir()):
-        if not prefix_dir.is_dir():
-            continue
-        for path in sorted(prefix_dir.iterdir()):
-            name = path.name
-            if name.endswith(".npz") and not name.endswith(".meta.npz"):
-                out.append(path)
-    return out
-
-
 class IterableDataset(TorchIterableDataset):
     """
     Single-worker iterable over the per-game parsed corpus.
@@ -98,13 +82,13 @@ class IterableDataset(TorchIterableDataset):
     def __iter__(self) -> Iterator[Frame]:
         rng = random.Random(self._seed + self._epoch_counter)
         self._epoch_counter += 1
-        paths = _list_sim_paths(self._intermediate_root)
+        paths = list_sim_paths(self._intermediate_root)
         rng.shuffle(paths)
 
         for sim_path in paths:
             if not is_eligible(sim_path):
                 continue
-            meta_path = _meta_path_for(sim_path)
+            meta_path = meta_path_for(sim_path)
 
             # Load every named array from both npz files eagerly. The iterator itself
             # only reads shapes (T from sim["ownership"], K from meta["perspective_player_ids"]);
