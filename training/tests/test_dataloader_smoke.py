@@ -15,7 +15,7 @@ from pathlib import Path
 import torch
 from torch.utils.data import DataLoader
 
-from bc.constants import H_PADDED, W_PADDED
+from bc.constants import H_PADDED, OBS_CHANNELS, W_PADDED
 from bc.dataset import IterableDataset
 
 
@@ -38,7 +38,7 @@ def test_dataloader_pipeline_smoke(intermediate_root: Path, sim_paths: list[Path
         value_target = batch["value_target"]
 
         # --- Shapes ---
-        assert obs.shape == (BATCH_SIZE, 12, H_PADDED, W_PADDED)
+        assert obs.shape == (BATCH_SIZE, OBS_CHANNELS, H_PADDED, W_PADDED)
         assert mask.shape == (BATCH_SIZE, H_PADDED, W_PADDED, 8)
         assert action_target.shape == (BATCH_SIZE,)
         assert is_pass.shape == (BATCH_SIZE,)

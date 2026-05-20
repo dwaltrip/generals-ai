@@ -7,9 +7,10 @@ behavioral-cloning policy/value network.
 
 Two iteration entry points:
   - `iter_frames()` yields raw `Frame(sim, meta, k, t)` — public seam for
-    tests and ad-hoc inspection.
+    tests and ad-hoc inspection. No fog/memory state attached.
   - `__iter__` yields encoded `dict[str, Tensor]` — what `DataLoader` collates.
-    Internally calls `iter_frames` then `encode_frame`.
+    Manages per-(game, k) `MemoryState` + `BFSCache` internally, calls
+    `step_memory` + `encode_frame` each tick.
 
 Sampling: random shuffle over the eligible-file list per iteration,
 seeded by the constructor's `seed` plus an internal epoch counter so
@@ -30,30 +31,36 @@ import numpy as np
 import torch
 from torch.utils.data import IterableDataset as TorchIterableDataset
 
-from bc import actions
+from bc import actions, bfs
 from bc.constants import (
     ELIGIBLE_PLAYER_COUNT,
     MAX_BOARD_SIDE,
     W_PADDED,
 )
 from bc.mask import build_mask
-from bc.obs import build_obs
+from bc.obs import (
+    MemoryState,
+    build_obs,
+    canonical_slot_order,
+    init_memory,
+    step_memory,
+)
 from bc.utils import list_sim_paths, meta_path_for
+from bc.visibility import compute_visibility
 
 
-# Per-frame payload yielded by `iter_frames`. Downstream callers read `sim` +
-# `meta` to build training tensors; `encode_frame` does this on the production
-# `__iter__` path. `Frame` is intentionally a generic name — rename if a more
-# specific name emerges (e.g., `RawFrame` paired with an encoded `TrainingExample`).
 @dataclass
 class Frame:
-    # All named arrays from the per-game sim npz, eagerly loaded.
+    """
+    Per-frame raw payload yielded by `iter_frames` (the test/inspection seam).
+
+    The production `__iter__` path builds encoded tensor dicts directly and
+    does not pass through `Frame` — it would need fog/memory state alongside
+    the raw arrays, and that's a tighter coupling than the raw seam should own.
+    """
     sim: dict[str, np.ndarray]
-    # All named arrays from the per-game meta sidecar npz, eagerly loaded.
     meta: dict[str, np.ndarray]
-    # Perspective index into `meta["perspective_player_ids"]`.
     k: int
-    # Timestep in `[0, T-1)`.
     t: int
 
 
@@ -81,19 +88,26 @@ def encode_frame(
     meta: dict[str, np.ndarray],
     k: int,
     t: int,
+    perspective_slot: int,
+    opp_slots: list[int],
+    vis: np.ndarray,
+    state: MemoryState,
+    bfs_cache: bfs.BFSCache,
+    H: int,
+    W: int,
 ) -> dict[str, torch.Tensor]:
     """
     One (game, perspective, timestep) → one training sample dict.
 
-    Orchestrates `build_obs`, `build_mask`, `actions.encode` (for the action
-    target), and the value-target extraction. DataLoader's default collate
-    stacks the result keywise into batched tensors.
-    """
-    H = int(sim["map_height"])
-    W = int(sim["map_width"])
-    perspective_slot = int(meta["perspective_player_ids"][k])
+    Orchestrates `build_obs` (89 channels, requires state + vis + bfs cache),
+    `build_mask` (legality, stateless), `actions.encode` (action target), and
+    the value-target extraction. DataLoader's default collate stacks the
+    result keywise into batched tensors.
 
-    obs_np = build_obs(sim, t, perspective_slot, H, W)
+    Pure-read of `state` + `bfs_cache`. `step_memory` must already have been
+    called for this `(t, vis)` — `__iter__` enforces this ordering.
+    """
+    obs_np = build_obs(sim, t, perspective_slot, opp_slots, vis, state, bfs_cache, H, W)
     mask_np = build_mask(sim, t, perspective_slot, H, W)
 
     src = int(sim["actions_source"][perspective_slot, t])
@@ -141,18 +155,8 @@ class IterableDataset(TorchIterableDataset):
         self._sim_paths = sim_paths
         self._epoch_counter = 0
 
-    def iter_frames(self) -> Iterator[Frame]:
-        """
-        Walk the corpus and yield raw `Frame` objects, one per (perspective, timestep).
-
-        Public seam for tests and ad-hoc inspection. Production iteration goes
-        through `__iter__` which calls this and then encodes.
-
-        Per-perspective frame range stops at `elim_timestep[k]` for eliminated
-        perspectives — once a player is out, their subsequent "actions" are
-        all-pass and carry no training signal (would just teach the model to
-        pass when dead).
-        """
+    def _shuffled_paths(self) -> list[Path]:
+        """Shared shuffle + epoch-counter increment. Used by iter_frames + __iter__."""
         rng = random.Random(self._seed + self._epoch_counter)
         self._epoch_counter += 1
         # Defensive copy: rng.shuffle mutates in place; never mutate the caller's list.
@@ -162,17 +166,25 @@ class IterableDataset(TorchIterableDataset):
             else list_sim_paths(self._intermediate_root)
         )
         rng.shuffle(paths)
+        return paths
 
-        for sim_path in paths:
+    def iter_frames(self) -> Iterator[Frame]:
+        """
+        Walk the corpus and yield raw `Frame` objects, one per (perspective, timestep).
+
+        Public seam for tests and ad-hoc inspection. Production iteration goes
+        through `__iter__` which does its own state-managed walk.
+
+        Per-perspective frame range stops at `elim_timestep[k]` for eliminated
+        perspectives — once a player is out, their subsequent "actions" are
+        all-pass and carry no training signal (would just teach the model to
+        pass when dead).
+        """
+        for sim_path in self._shuffled_paths():
             if not is_eligible(sim_path):
                 continue
             meta_path = meta_path_for(sim_path)
 
-            # Load every named array from both npz files eagerly. The iterator itself
-            # only reads shapes (T from sim["ownership"], K from meta["perspective_player_ids"]);
-            # downstream channel-assembly + target-encoding code consumes the rest. Zip-open
-            # + DEFLATE setup dominates per-game I/O cost, so loading all entries is ~free
-            # vs. a selective subset. Revisit if profiling shows per-game load cost matters.
             with np.load(sim_path) as sim_npz:
                 sim = {key: sim_npz[key] for key in sim_npz.files}
             with np.load(meta_path) as meta_npz:
@@ -187,5 +199,45 @@ class IterableDataset(TorchIterableDataset):
                     yield Frame(sim=sim, meta=meta, k=k, t=t)
 
     def __iter__(self) -> Iterator[dict[str, torch.Tensor]]:
-        for f in self.iter_frames():
-            yield encode_frame(f.sim, f.meta, f.k, f.t)
+        """
+        Production walk: manages per-(game, k) MemoryState + BFSCache, calls
+        step_memory each tick, yields encoded sample dicts ready for DataLoader.
+        """
+        for sim_path in self._shuffled_paths():
+            if not is_eligible(sim_path):
+                continue
+            meta_path = meta_path_for(sim_path)
+
+            with np.load(sim_path) as sim_npz:
+                sim = {key: sim_npz[key] for key in sim_npz.files}
+            with np.load(meta_path) as meta_npz:
+                meta = {key: meta_npz[key] for key in meta_npz.files}
+
+            T = sim["ownership"].shape[0]
+            K = meta["perspective_player_ids"].shape[0]
+            H = int(sim["map_height"])
+            W = int(sim["map_width"])
+
+            for k in range(K):
+                perspective_slot = int(meta["perspective_player_ids"][k])
+                opp_slots = canonical_slot_order(perspective_slot)[1:]
+
+                state = init_memory(sim, perspective_slot, H, W)
+                bfs_cache = bfs.init_bfs_cache()
+
+                elim_t = int(meta["elim_timestep"][k])
+                end_t = T - 1 if elim_t == -1 else min(T - 1, elim_t)
+
+                for t in range(end_t):
+                    vis = compute_visibility(sim["ownership"][t], perspective_slot, H, W)
+                    graph_grew = step_memory(
+                        state, sim, t, vis, perspective_slot, H, W
+                    )
+                    if graph_grew:
+                        bfs_cache.invalidate_graph()
+
+                    yield encode_frame(
+                        sim, meta, k, t,
+                        perspective_slot, opp_slots, vis,
+                        state, bfs_cache, H, W,
+                    )
