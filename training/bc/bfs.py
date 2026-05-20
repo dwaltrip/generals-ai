@@ -28,15 +28,19 @@ sighted; the channel is filled with the -1 sentinel during that window.
 --- Knobs (set in caller, e.g. obs.py) ---
 
 Several BFS-policy decisions are *not* baked into this module — they're
-encoded in the `known_passable` mask the caller hands in:
+encoded in the `known_passable` mask the caller hands in. Current v1
+spike policy (see `obs.py` cat 5):
 
-  - Are enemy generals walkable-through? (currently: yes, uniform cost)
-  - Are cities cost-1 or cost-N? (currently: cost-1)
-  - Are `structures_in_fog` (assumed-mountain) impassable? (currently: yes)
+  - Enemy generals: impassable. Own general passable.
+  - Cities: own always passable. Non-own (neutral / enemy) passable iff
+    `total_army > city_army * CITY_TRAVERSABILITY_FACTOR` — crude
+    "do I have enough army to take it" heuristic, scales with both
+    perspective strength and defender strength.
+  - `structures_in_fog`: impassable (agent plans on what it knows).
 
-These knobs change the model's "mental map" of the board. They're worth
-revisiting once the model trains — the BFS module stays the same code,
-just receives a different input mask.
+Post-spike upgrade is weighted-edge BFS (Dijkstra) with per-cell costs
+reflecting actual capture cost. Until then, the per-frame passability
+mask is the only lever.
 """
 
 from __future__ import annotations

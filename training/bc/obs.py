@@ -29,10 +29,9 @@ perspective player.
 A few obs-construction choices are knobs the model can't tell us about
 until it trains. Worth coming back to:
 
-  - Treatment of opp generals in BFS (currently: passable like any cell;
-    might want to treat them as impassable so the policy doesn't plan
-    routes "through" an opponent it doesn't want to attack).
-  - Cost of city traversal in BFS (currently: uniform cost 1).
+  - BFS-policy knobs (cat 5): see the cat-5 comment for the spike's
+    enemy-general / city-passability decisions, and `bfs.py`'s knob
+    header for the weighted-edge upgrade path.
   - Broadcast-scalar normalization divisors (currently: hand-picked typical
     late-game values; could be game-normalized or rolling-window scaled).
   - Production-subtracted vs. raw army_delta in dense history (currently raw).
@@ -50,6 +49,7 @@ import numpy as np
 from bc import bfs
 from bc.constants import (
     CHANNEL_ORDER,
+    CITY_TRAVERSABILITY_FACTOR,
     DENSE_HISTORY_N,
     H_PADDED,
     OBS_CHANNELS,
@@ -290,9 +290,13 @@ def step_memory(
     # `known_general=True` before; once they appear in cities-at-t, they
     # should flip to `known_city`. Handled implicitly by `new_city` above
     # if the perspective has vision; if not visible at the time of capture,
-    # we leave the stale `known_general=True` until next sighting — minor
-    # cosmetic issue, the BFS graph doesn't care (both are passable).
-    # TODO: clean up when the general→city transition happens regardless of vision.
+    # we leave the stale `known_general=True` until next sighting.
+    # TODO: clean up when the general→city transition happens regardless of
+    # vision. Under the v1 BFS policy (compute_known_passable) an enemy
+    # general is impassable while an enemy city might be passable via the
+    # army-ratio formula, so a stale known_general flag for a cell that's
+    # actually a captured-general → city slightly over-restricts the BFS
+    # graph until the perspective re-sights it.
 
     # Memory snapshot updates — write last-seen values only for visible cells.
     state.last_seen_owner[vis] = own_t[vis]
@@ -329,6 +333,62 @@ def step_memory(
     state.armies_buf.append(armies_t.copy())
 
     return graph_grew
+
+
+# ---------------------------------------------------------------------------
+# BFS passability policy — cat 5 helper
+# ---------------------------------------------------------------------------
+
+
+def compute_known_passable(
+    state: MemoryState,
+    t: int,
+    perspective_slot: int,
+    vis: np.ndarray,
+    own: np.ndarray,
+    armies: np.ndarray,
+    structures_in_fog_mask: np.ndarray,
+    H: int,
+    W: int,
+) -> np.ndarray:
+    """
+    BFS-passability mask for the perspective player at tick `t`.
+
+    v1 spike policy (5.20-1 §3 decisions):
+      - Mountains + structures_in_fog: impassable.
+      - Enemy generals: impassable. Own general: passable.
+      - Own cities: always passable.
+      - Non-own cities (neutral / enemy): passable iff
+          `total_army > city_army * CITY_TRAVERSABILITY_FACTOR`.
+        `city_army` uses `armies[t]` when visible, else `last_seen_armies`
+        (always >= 0 for `known_city` cells, since the mask is set only on
+        direct vision).
+
+    Returns a flat bool `[H*W]` array — True means passable.
+    """
+    total_army = int(state.army_count_history[t, perspective_slot])
+
+    own_loc = int(state.general_locations[perspective_slot])
+    own_general_mask = np.zeros((H, W), dtype=bool)
+    own_r, own_c = divmod(own_loc, W)
+    own_general_mask[own_r, own_c] = True
+    enemy_general_mask = state.known_general & ~own_general_mask
+
+    effective_owner = np.where(vis, own, state.last_seen_owner)
+    effective_army = np.where(vis, armies, state.last_seen_armies).astype(np.int32)
+    passable_city_mask = state.known_city & (
+        (effective_owner == perspective_slot)
+        | (total_army > effective_army * CITY_TRAVERSABILITY_FACTOR)
+    )
+    impassable_city_mask = state.known_city & ~passable_city_mask
+
+    assumed_impassable = (
+        state.known_mountain
+        | structures_in_fog_mask
+        | enemy_general_mask
+        | impassable_city_mask
+    )
+    return (~assumed_impassable).flatten()
 
 
 # ---------------------------------------------------------------------------
@@ -428,11 +488,15 @@ def build_obs(
 
     # ========================================================================
     # Category 5: BFS distance-from-known-generals (8 channels)
-    # The known-passable graph: all cells EXCEPT known mountains and
-    # structures_in_fog (assumed-mountain by default).
+    # Passability is computed by `compute_known_passable` — see its docstring
+    # for the v1 spike policy. Per-frame recompute: city passability depends
+    # on tick-level values, so cross-frame BFS caching is invalidated every
+    # frame in `dataset.py::__iter__`.
     # ========================================================================
-    assumed_impassable = state.known_mountain | structures_in_fog_mask
-    known_passable_flat = (~assumed_impassable).flatten()
+    known_passable_flat = compute_known_passable(
+        state, t, perspective_slot, vis, own, armies,
+        structures_in_fog_mask, H, W,
+    )
 
     bfs_self = bfs.compute_or_get(
         bfs_cache, 0, int(state.general_locations[perspective_slot]),

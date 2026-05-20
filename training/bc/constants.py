@@ -29,6 +29,14 @@ MAX_BOARD_SIDE = 32  # inclusive; drop games where max(w, h) > MAX_BOARD_SIDE
 # post-spike if the model is starved for tactical-history signal.
 DENSE_HISTORY_N = 5
 
+# BFS city-passability knob (obs.py cat 5). A non-own city is treated as passable
+# iff `perspective_total_army > city_army * CITY_TRAVERSABILITY_FACTOR`. Crude
+# v1 model of "do I have enough army that capturing this city is feasible" —
+# scales naturally with both my strength and the defender's. Replace with
+# weighted-edge BFS (Dijkstra) post-spike if the per-cell cost actually matters
+# to model quality.
+CITY_TRAVERSABILITY_FACTOR = 4
+
 # Per-opp channel ordering contract:
 #   For channel index `i ∈ 1..7` in any per-opp group, the opponent referenced is
 #   the raw slot at `opp_slots[i-1]`, where `opp_slots = canonical_slot_order(perspective)[1:]`.
