@@ -392,8 +392,18 @@ def compute_known_passable(
 
 
 # ---------------------------------------------------------------------------
-# Channel assembly — build_obs
+# Channel category helpers
 # ---------------------------------------------------------------------------
+#
+# Each `_cat_*` builds one category of the obs tensor and returns a list of
+# `[H, W] float32` channels in CHANNEL_ORDER position. `build_obs` is the
+# orchestrator that calls them and stacks the result. Comments retain the
+# numeric category labels (Cat 1, Cat 2, ...) for cross-reference with the
+# design docs (5.05-1 §F/§G, etc.) and CHANNEL_ORDER groupings.
+#
+# `structures_in_fog_mask` is the one cross-cat helper — it's the bool form
+# of cat 3's `structures_in_fog` channel and also feeds the BFS passability
+# policy in cat 5. Computed once in `build_obs` and threaded into both.
 
 
 # Hand-picked broadcast-scalar normalization divisors. These are rough
@@ -405,70 +415,51 @@ _LAND_DELTA_DIVISOR = 50.0
 _LAND_DELTA_WINDOW = 10  # ticks over which opp_N_land_delta is measured
 
 
-def build_obs(
-    sim: dict[str, np.ndarray],
-    t: int,
+def _cat_visibility(vis: np.ndarray) -> list[np.ndarray]:
+    # Cat 1: Visibility (1 channel)
+    return [vis.astype(np.float32)]
+
+
+def _cat_visible_state(
+    vis: np.ndarray,
+    own: np.ndarray,
+    armies: np.ndarray,
     perspective_slot: int,
     opp_slots: list[int],
-    vis: np.ndarray,
-    state: MemoryState,
-    bfs_cache: bfs.BFSCache,
-    H: int,
-    W: int,
-) -> np.ndarray:
-    """
-    Build the 89-channel obs tensor for one (game, perspective, tick).
-
-    Channel layout: see `bc.constants.CHANNEL_ORDER`. The named vars below
-    are stacked in that order at the bottom of this function.
-
-    `step_memory` must have already been called for this `(state, t, vis)` —
-    `build_obs` is pure-read w.r.t. `state` (the only side effect is lazy
-    cache fills inside `bfs.compute_or_get`, which are idempotent).
-    """
-    own = sim["ownership"][t].reshape(H, W)
-    armies = sim["armies"][t].reshape(H, W)
-    max_turns = sim["ownership"].shape[0]
-
-    # ========================================================================
-    # Category 1: Visibility (1 channel)
-    # ========================================================================
-    fog_cells = vis.astype(np.float32)
-
-    # ========================================================================
-    # Category 2: Visible state (9 channels)
-    # Ownership masks (self + 7 canonical opponents), plus log-armies.
-    # Per the contract, channel for opp i ∈ 1..7 is `opp_slots[i-1]`.
-    # ========================================================================
+) -> list[np.ndarray]:
+    # Cat 2: Visible state (9 channels). Ownership masks (self + 7 canonical
+    # opponents), plus log-armies. Per the contract, channel for opp i ∈ 1..7
+    # is `opp_slots[i-1]`.
     self_owned = (vis & (own == perspective_slot)).astype(np.float32)
     opp_owned = [(vis & (own == opp)).astype(np.float32) for opp in opp_slots]
     army_magnitude = np.where(
         vis, np.log1p(armies.astype(np.float32)), 0.0
     ).astype(np.float32)
+    return [self_owned, *opp_owned, army_magnitude]
 
-    # ========================================================================
-    # Category 3: Persistent map knowledge (4 channels)
-    # Once-known-stays-known. `structures_in_fog` = "I know this is a structure
-    # but I don't know its type yet" — assumed-impassable for BFS purposes.
-    # ========================================================================
-    mountains = state.known_mountain.astype(np.float32)
-    cities = state.known_city.astype(np.float32)
-    generals_ch = state.known_general.astype(np.float32)
-    structures_in_fog_mask = (
-        state.is_structure
-        & ~state.known_mountain
-        & ~state.known_city
-        & ~state.known_general
-    )
-    structures_in_fog = structures_in_fog_mask.astype(np.float32)
 
-    # ========================================================================
-    # Category 4: Memory of formerly-visible cells (12 channels)
-    # 9-way one-hot last_seen_owner (self + 7 opp + neutral), plus log-scaled
+def _cat_persistent_map(
+    state: MemoryState, structures_in_fog_mask: np.ndarray,
+) -> list[np.ndarray]:
+    # Cat 3: Persistent map knowledge (4 channels). Once-known-stays-known.
+    # `structures_in_fog` = "I know this is a structure but I don't know its
+    # type yet" — assumed-impassable for BFS purposes (cat 5).
+    return [
+        state.known_mountain.astype(np.float32),
+        state.known_city.astype(np.float32),
+        state.known_general.astype(np.float32),
+        structures_in_fog_mask.astype(np.float32),
+    ]
+
+
+def _cat_memory(
+    state: MemoryState, perspective_slot: int, opp_slots: list[int],
+) -> list[np.ndarray]:
+    # Cat 4: Memory of formerly-visible cells (12 channels). 9-way one-hot
+    # last_seen_owner (self + 7 opp + neutral), plus log-scaled
     # last_seen_armies, turns_since_seen, and a historically_seen mask.
-    # `-1.0` post-log sentinel for never-seen cells; consistent pattern across
-    # all log-scaled memory channels.
-    # ========================================================================
+    # `-1.0` post-log sentinel for never-seen cells; consistent pattern
+    # across all log-scaled memory channels.
     last_seen_owner_self = (state.last_seen_owner == perspective_slot).astype(np.float32)
     last_seen_owner_opp = [
         (state.last_seen_owner == opp).astype(np.float32) for opp in opp_slots
@@ -485,19 +476,34 @@ def build_obs(
         state.turns_since_seen >= 0, np.log1p(turns_since_seen_safe), -1.0
     ).astype(np.float32)
     historically_seen_ch = state.historically_seen.astype(np.float32)
+    return [
+        last_seen_owner_self, *last_seen_owner_opp, last_seen_owner_neutral,
+        last_seen_armies_ch, turns_since_seen_ch, historically_seen_ch,
+    ]
 
-    # ========================================================================
-    # Category 5: BFS distance-from-known-generals (8 channels)
-    # Passability is computed by `compute_known_passable` — see its docstring
-    # for the v1 spike policy. Per-frame recompute: city passability depends
-    # on tick-level values, so cross-frame BFS caching is invalidated every
+
+def _cat_bfs(
+    state: MemoryState,
+    t: int,
+    perspective_slot: int,
+    opp_slots: list[int],
+    vis: np.ndarray,
+    own: np.ndarray,
+    armies: np.ndarray,
+    structures_in_fog_mask: np.ndarray,
+    bfs_cache: bfs.BFSCache,
+    H: int,
+    W: int,
+) -> list[np.ndarray]:
+    # Cat 5: BFS distance-from-known-generals (8 channels). Passability is
+    # computed by `compute_known_passable` — see its docstring for the v1
+    # spike policy. Per-frame recompute: city passability depends on
+    # tick-level values, so cross-frame BFS caching is invalidated every
     # frame in `dataset.py::__iter__`.
-    # ========================================================================
     known_passable_flat = compute_known_passable(
         state, t, perspective_slot, vis, own, armies,
         structures_in_fog_mask, H, W,
     )
-
     bfs_self = bfs.compute_or_get(
         bfs_cache, 0, int(state.general_locations[perspective_slot]),
         known_passable_flat, H, W,
@@ -509,11 +515,19 @@ def build_obs(
         )
         for i, opp in enumerate(opp_slots)
     ]
+    return [bfs_self, *bfs_opp]
 
-    # ========================================================================
-    # Category 6: Self broadcast scalars (3 channels)
-    # Same value at every cell of the unpadded board; padding stays zero.
-    # ========================================================================
+
+def _cat_self_broadcast(
+    state: MemoryState,
+    t: int,
+    perspective_slot: int,
+    max_turns: int,
+    H: int,
+    W: int,
+) -> list[np.ndarray]:
+    # Cat 6: Self broadcast scalars (3 channels). Same value at every cell
+    # of the unpadded board; padding stays zero.
     self_army_count = np.full(
         (H, W),
         state.army_count_history[t, perspective_slot] / _ARMY_DIVISOR,
@@ -525,10 +539,13 @@ def build_obs(
         dtype=np.float32,
     )
     game_progress = np.full((H, W), t / max(1, max_turns), dtype=np.float32)
+    return [self_army_count, self_land_count, game_progress]
 
-    # ========================================================================
-    # Category 7: Per-opponent broadcast scalars (14 channels)
-    # ========================================================================
+
+def _cat_opp_broadcast(
+    state: MemoryState, t: int, opp_slots: list[int], H: int, W: int,
+) -> list[np.ndarray]:
+    # Cat 7: Per-opponent broadcast scalars (14 channels).
     opp_army_count = [
         np.full((H, W), state.army_count_history[t, opp] / _ARMY_DIVISOR, dtype=np.float32)
         for opp in opp_slots
@@ -537,13 +554,16 @@ def build_obs(
         np.full((H, W), state.land_count_history[t, opp] / _LAND_DIVISOR, dtype=np.float32)
         for opp in opp_slots
     ]
+    return [*opp_army_count, *opp_land_count]
 
-    # ========================================================================
-    # Category 8: Scoreboard-derived broadcasts (14 channels)
+
+def _cat_scoreboard(
+    state: MemoryState, t: int, opp_slots: list[int], H: int, W: int,
+) -> list[np.ndarray]:
+    # Cat 8: Scoreboard-derived broadcasts (14 channels).
     # opp_N_city_inference is the "infer cities from peacetime growth"
     # heuristic — TODO, currently emits zero. opp_N_land_delta is a simple
     # K-tick land-count delta.
-    # ========================================================================
     opp_city_inference = [np.zeros((H, W), dtype=np.float32) for _ in opp_slots]  # TODO: 5.05-1 §F encoding
     t_prev = max(0, t - _LAND_DELTA_WINDOW)
     opp_land_delta = [
@@ -555,16 +575,18 @@ def build_obs(
         )
         for opp in opp_slots
     ]
+    return [*opp_city_inference, *opp_land_delta]
 
-    # ========================================================================
-    # Category 9: Contact & capture (14 channels)
-    # opp_N_captured_by: integer-encoded, with values remapped from raw slot
-    # to canonical channel index (so the model sees consistent identities
-    # under canonicalization).
-    #   0  = alive
-    #  -1  = captured by self
-    #  1..7 = captured by canonical opponent at that channel
-    # ========================================================================
+
+def _cat_contact_capture(
+    state: MemoryState, perspective_slot: int, opp_slots: list[int], H: int, W: int,
+) -> list[np.ndarray]:
+    # Cat 9: Contact & capture (14 channels). opp_N_captured_by is integer-
+    # encoded, with values remapped from raw slot to canonical channel index
+    # (so the model sees consistent identities under canonicalization):
+    #   0    = alive
+    #  -1    = captured by self
+    #  1..7  = captured by canonical opponent at that channel
     opp_contacted = [
         np.full((H, W), float(state.opp_contacted[opp]), dtype=np.float32)
         for opp in opp_slots
@@ -585,15 +607,16 @@ def build_obs(
                 # Captor not in opp_slots — shouldn't happen unless P!=8.
                 val = 0.0
         opp_captured_by.append(np.full((H, W), val, dtype=np.float32))
+    return [*opp_contacted, *opp_captured_by]
 
-    # ========================================================================
-    # Category 10: Dense recent spatial history (2N channels, N=DENSE_HISTORY_N)
+
+def _cat_dense_history(state: MemoryState, H: int, W: int) -> list[np.ndarray]:
+    # Cat 10: Dense recent spatial history (2N channels, N=DENSE_HISTORY_N).
     # ownership_transition[t-k] for k=1..N: "what changed at tick t-k+1
     # (relative to t-k) that I could see." Encoded simply for v1 spike — a
     # cell-changed mask. The full design encoding (sign + magnitude per
     # change type) is a refinement.
     # army_delta[t-k]: log-scaled signed army change at tick t-k+1.
-    # ========================================================================
     own_transitions = []
     army_deltas = []
     buf_len = len(state.own_buf)  # how many snapshots we have so far
@@ -619,46 +642,68 @@ def build_obs(
         # Signed log: sign * log1p(|delta|). Preserves direction at low cost.
         delta = (armies_newer.astype(np.float32) - armies_older.astype(np.float32))
         army_deltas.append(np.sign(delta) * np.log1p(np.abs(delta)).astype(np.float32))
+    return [*own_transitions, *army_deltas]
 
-    # ========================================================================
-    # Stack — order must match CHANNEL_ORDER in bc/constants.py
-    # ========================================================================
+
+# ---------------------------------------------------------------------------
+# build_obs orchestrator
+# ---------------------------------------------------------------------------
+
+
+def build_obs(
+    sim: dict[str, np.ndarray],
+    t: int,
+    perspective_slot: int,
+    opp_slots: list[int],
+    vis: np.ndarray,
+    state: MemoryState,
+    bfs_cache: bfs.BFSCache,
+    H: int,
+    W: int,
+) -> np.ndarray:
+    """
+    Build the 89-channel obs tensor for one (game, perspective, tick).
+
+    Channel layout: see `bc.constants.CHANNEL_ORDER`. Each `_cat_*` helper
+    returns its slice in CHANNEL_ORDER position; this function stacks them.
+
+    `step_memory` must have already been called for this `(state, t, vis)` —
+    `build_obs` is pure-read w.r.t. `state` (the only side effect is lazy
+    cache fills inside `bfs.compute_or_get`, which are idempotent).
+    """
+    own = sim["ownership"][t].reshape(H, W)
+    armies = sim["armies"][t].reshape(H, W)
+    max_turns = sim["ownership"].shape[0]
+
+    # Cross-cat helper — bool form feeds both cat 3 (as a channel) and cat 5
+    # (the BFS passability policy treats fog-structures as impassable).
+    structures_in_fog_mask = (
+        state.is_structure
+        & ~state.known_mountain
+        & ~state.known_city
+        & ~state.known_general
+    )
+
     channels = [
-        # Visibility (1)
-        fog_cells,
-        # Visible state (9)
-        self_owned, *opp_owned, army_magnitude,
-        # Persistent map knowledge (4)
-        mountains, cities, generals_ch, structures_in_fog,
-        # Memory: last_seen_owner one-hot (9)
-        last_seen_owner_self, *last_seen_owner_opp, last_seen_owner_neutral,
-        # Memory: scalars (3)
-        last_seen_armies_ch, turns_since_seen_ch, historically_seen_ch,
-        # BFS (8)
-        bfs_self, *bfs_opp,
-        # Self broadcast (3)
-        self_army_count, self_land_count, game_progress,
-        # Per-opp broadcast (14)
-        *opp_army_count, *opp_land_count,
-        # Scoreboard-derived (14)
-        *opp_city_inference, *opp_land_delta,
-        # Contact & capture (14)
-        *opp_contacted, *opp_captured_by,
-        # Dense history (2N)
-        *own_transitions, *army_deltas,
+        *_cat_visibility(vis),
+        *_cat_visible_state(vis, own, armies, perspective_slot, opp_slots),
+        *_cat_persistent_map(state, structures_in_fog_mask),
+        *_cat_memory(state, perspective_slot, opp_slots),
+        *_cat_bfs(state, t, perspective_slot, opp_slots, vis, own, armies,
+                  structures_in_fog_mask, bfs_cache, H, W),
+        *_cat_self_broadcast(state, t, perspective_slot, max_turns, H, W),
+        *_cat_opp_broadcast(state, t, opp_slots, H, W),
+        *_cat_scoreboard(state, t, opp_slots, H, W),
+        *_cat_contact_capture(state, perspective_slot, opp_slots, H, W),
+        *_cat_dense_history(state, H, W),
     ]
 
     assert len(channels) == OBS_CHANNELS, (
         f"channel count mismatch: built {len(channels)}, "
         f"CHANNEL_ORDER has {OBS_CHANNELS}"
     )
-    # Cheap sanity check that named-var order matches the constants index.
-    # If it ever fails, this assertion catches reorderings without needing
-    # a separate test.
-    assert len(channels) == len(CHANNEL_ORDER)
 
     obs_unpadded = np.stack(channels, axis=0).astype(np.float32)
-
     obs = np.zeros((OBS_CHANNELS, H_PADDED, W_PADDED), dtype=np.float32)
     obs[:, :H, :W] = obs_unpadded
     return obs
