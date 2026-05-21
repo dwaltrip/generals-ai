@@ -831,3 +831,9 @@ wheels = [
 name = "utils"
 version = "0.0.0"
 source = { editable = "utils" }
+dependencies = [
+    { name = "replay-collector" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "replay-collector", editable = "replay-collector" }]

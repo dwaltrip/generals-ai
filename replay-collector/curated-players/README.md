@@ -18,13 +18,10 @@ new candidate names not yet promoted.
 
 ## Loading
 
-Each file is read via `replay_collector.cli._shared.load_players`: one
+Each file is read via `utils.player_name_lists.load_players`: one
 username per line, edge-whitespace stripped, blank lines skipped, then
 filtered through `replay_collector.usernames.filter_valid` (drops
 invalid names with a warning).
-
-> **TODO:** `load_players` should move to the shared `utils` workspace
-> package — used by both the collector and the parser.
 
 ## Deduping
 
@@ -35,4 +32,4 @@ for any name that appears in multiple lists.
 
 Current union size: **205 names** (per-file: 132 / 50 / 45 / 107).
 
-The dedupe lives in `replay-parser/scripts/run_corpus_driver.py::_load_union`.
+The dedupe lives in `utils.player_name_lists.load_union`.

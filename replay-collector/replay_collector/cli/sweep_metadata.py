@@ -3,10 +3,11 @@ from pathlib import Path
 import sys
 
 from replay_collector import db, sweep
-from replay_collector.cli._shared import TMP_DIR, fmt_duration, load_players
+from replay_collector.cli._shared import TMP_DIR, fmt_duration
 from replay_collector.logging_setup import setup_simple_logging
 from replay_collector.runner import DEFAULT_MAX_FAILURES
 from replay_collector.usernames import display_name
+from utils.player_name_lists import load_players
 
 
 DEFAULT_MAX_LISTINGS_PER_USER = 100_000  # safety rail, not a target

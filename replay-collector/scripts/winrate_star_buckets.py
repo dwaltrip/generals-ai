@@ -25,11 +25,11 @@ import csv
 from pathlib import Path
 import sys
 
-from replay_collector.cli._shared import load_players_raw
 from replay_collector.db import create_conn
 from replay_collector.sql_helpers import ffa_match_filter, from_player_games
 from replay_collector.usernames import display_name, filter_valid
 from utils.docstring import doc_summary
+from utils.player_name_lists import load_players_raw
 
 
 BUCKET_SIZE = 50
@@ -39,8 +39,9 @@ WINDOW = BUCKET_SIZE * NUM_BUCKETS
 
 def read_player_list(path: Path) -> list[str]:
     """Parse `path` and drop invalid names (warned to stderr). Matches the
-    `filter_valid`-at-load-boundary convention used by `_shared.load_players`
-    and `build_player_list.load_users_from_json`."""
+    `filter_valid`-at-load-boundary convention used by
+    `utils.player_name_lists.load_players` and
+    `build_player_list.load_users_from_json`."""
     if path.suffix.lower() == ".csv":
         with path.open(newline="", encoding="utf-8") as f:
             reader = csv.DictReader(f)

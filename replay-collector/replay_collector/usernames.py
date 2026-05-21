@@ -6,7 +6,8 @@ are stored faithfully in the DB; we refuse to act on them as primary
 targets. The gate is wired at:
 
   - txt-load and JSON-load boundaries — `filter_valid` drops with a warning
-    (see _shared.load_players, build_player_list.load_users_from_json).
+    (see `utils.player_name_lists.load_players`,
+    `build_player_list.load_users_from_json`).
   - tabular display sites — `display_name` re-renders via repr() so embedded
     control chars don't corrupt alignment.
 

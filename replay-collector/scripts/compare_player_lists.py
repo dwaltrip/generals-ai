@@ -14,8 +14,8 @@ import argparse
 from pathlib import Path
 import sys
 
-from replay_collector.cli._shared import load_players_raw
 from utils.docstring import doc_summary
+from utils.player_name_lists import load_players_raw
 
 
 def main() -> None:

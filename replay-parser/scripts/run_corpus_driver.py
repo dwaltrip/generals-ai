@@ -11,7 +11,6 @@ import argparse
 from pathlib import Path
 import sys
 
-from replay_collector.cli._shared import load_players
 from replay_parser._collector.config import DB_PATH
 from replay_parser.driver import (
     DEFAULT_MIN_PRIOR_GAMES,
@@ -22,34 +21,13 @@ from replay_parser.driver import (
     run_corpus_driver,
 )
 from replay_parser.git_state import DirtyWorkingTreeError
+from utils.player_name_lists import load_union
 
 
 # Project-root-relative path to the curated-list manifest.
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 CURATED_LISTS_MANIFEST = PROJECT_ROOT / "curated-player-lists.txt"
 DEFAULT_OUTPUT_DIR = Path(__file__).resolve().parent.parent / "data" / "intermediate"
-
-
-def _load_union(manifest_path: Path) -> list[str]:
-    """Read one filepath per line from the manifest; union their names."""
-    files = [
-        line.strip()
-        for line in manifest_path.read_text(encoding="utf-8").splitlines()
-        if line.strip()
-    ]
-    seen: set[str] = set()
-    union: list[str] = []
-    for rel in files:
-        path = PROJECT_ROOT / rel
-        if not path.exists():
-            print(f"  WARN missing curated file: {path}", file=sys.stderr)
-            continue
-        for name in load_players(path):
-            if name not in seen:
-                seen.add(name)
-                union.append(name)
-        print(f"  loaded {rel}  → cumulative union size = {len(union)}")
-    return union
 
 
 def main() -> int:
@@ -76,7 +54,7 @@ def main() -> int:
         return 1
 
     print(f"Loading curated lists from {args.manifest}")
-    curated = _load_union(args.manifest)
+    curated = load_union(args.manifest, PROJECT_ROOT)
     if not curated:
         print("No curated names loaded.", file=sys.stderr)
         return 1
