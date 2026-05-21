@@ -39,6 +39,7 @@ from bc.loss import LossAccumulator, bc_loss
 from bc.model import BCModel
 from bc.splits import load_manifest, samples_for_split
 from shared.device import disable_mps_fallback, move_batch, pick_device
+from shared.log import tee_stdio
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -224,10 +225,10 @@ def train_one_epoch(
 def run(args: argparse.Namespace) -> None:
     """Drive a BC training run end-to-end from parsed args.
 
-    Sets up the run dir + JSONL handles, loads the manifest and builds the
-    dataset/model/optimizer, then drives the epoch loop (per-epoch train,
-    ckpt, log). Callable from a notebook or test with a hand-built
-    Namespace; the CLI shell is `main()`.
+    Sets up the run dir + provenance, loads the manifest and builds the
+    train dataset, then hands off to `run_loop` for model build + training.
+    Callable from a notebook or test with a hand-built Namespace; the CLI
+    shell is `main()`.
     """
     disable_mps_fallback()
 
@@ -247,26 +248,56 @@ def run(args: argparse.Namespace) -> None:
     with (run_dir / "args.json").open("w") as fp:
         json.dump(vars(args), fp, default=_serialize_arg, indent=2)
 
-    # --- Manifest + dataset ---
-    print(f"loading manifest: {args.manifest}")
-    manifest = load_manifest(args.manifest)
-    train_samples = samples_for_split(manifest, "train", args.intermediate)
-    val_samples = samples_for_split(manifest, "val", args.intermediate)
-    print(
-        f"  filter_version={manifest['filter_version']}  "
-        f"git_sha={manifest['git_sha']}  "
-        f"kept_pairs={manifest['kept_pairs']:,}  "
-        f"train_pairs={len(train_samples):,}  "
-        f"val_pairs={len(val_samples):,}"
-    )
+    # Tee from here so everything past the run-dir announce — manifest
+    # load, dataset summary, model build, training — lands in console.log.
+    # The "run dir:" line above stays terminal-only; self-reference inside
+    # the log would just be noise.
+    with tee_stdio(run_dir / "console.log"):
+        # --- Manifest + dataset ---
+        print(f"loading manifest: {args.manifest}")
+        manifest = load_manifest(args.manifest)
+        train_samples = samples_for_split(manifest, "train", args.intermediate)
+        val_samples = samples_for_split(manifest, "val", args.intermediate)
+        print(
+            f"  filter_version={manifest['filter_version']}  "
+            f"git_sha={manifest['git_sha']}  "
+            f"kept_pairs={manifest['kept_pairs']:,}  "
+            f"train_pairs={len(train_samples):,}  "
+            f"val_pairs={len(val_samples):,}"
+        )
 
-    ds = IterableDataset(
-        samples=train_samples,
-        seed=args.seed,
-        shuffle_buffer_size=args.shuffle_buffer_size,
-    )
-    loader = DataLoader(ds, batch_size=args.batch_size)
+        ds = IterableDataset(
+            samples=train_samples,
+            seed=args.seed,
+            shuffle_buffer_size=args.shuffle_buffer_size,
+        )
+        loader = DataLoader(ds, batch_size=args.batch_size)
 
+        run_loop(
+            args=args,
+            device=device,
+            loader=loader,
+            val_samples=val_samples,
+            run_dir=run_dir,
+            ckpt_dir=ckpt_dir,
+        )
+
+
+def run_loop(
+    args: argparse.Namespace,
+    device: torch.device,
+    loader: DataLoader,
+    val_samples: list[tuple[Path, int]],
+    run_dir: Path,
+    ckpt_dir: Path,
+) -> None:
+    """Build the model + optimizer and drive the epoch loop.
+
+    Per epoch: train pass via `train_one_epoch`, full val pass via
+    `run_val`, checkpoint save, one row to `epochs.jsonl`, console
+    summary. JSONL handles are line-buffered and closed in `finally` so
+    `tail -f` works and a mid-epoch raise still flushes records to disk.
+    """
     # --- Model + optimizer ---
     print(f"building model on {device}")
     model = BCModel().to(device)
