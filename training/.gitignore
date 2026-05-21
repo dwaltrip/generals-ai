@@ -2,3 +2,4 @@
 # Manifests at data/splits/ stay tracked — leave-as-default unless we
 # decide manifests are noise too.
 data/runs/
+data/probes/
