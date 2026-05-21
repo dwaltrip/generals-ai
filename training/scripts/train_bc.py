@@ -1,17 +1,19 @@
 """BC training loop scaffold.
 
 Reads a split manifest produced by `bc.splits build`, walks the train split
-via `IterableDataset`, runs N epochs of AdamW SGD with `bc_loss`. Prints
-per-batch component losses + rolling samples/sec every `--log-every` batches;
-end-of-epoch summary collects the sample-weighted means via `LossAccumulator`.
+via `IterableDataset`, runs N epochs of AdamW SGD with `bc_loss`. After each
+epoch, runs a full validation pass via `bc.eval.run_val` and saves a
+checkpoint. Prints per-batch component losses + rolling samples/sec every
+`--log-every` batches; end-of-epoch summary collects the sample-weighted
+means via `LossAccumulator`.
 
 Each invocation writes to its own `<out-dir>/<YYYYMMDD-HHMMSS>/` directory:
   - `args.json`         — full CLI invocation as JSON, for provenance.
   - `batches.jsonl`     — one record per batch.
-  - `epochs.jsonl`      — one record per epoch (sample-weighted means + timing).
+  - `epochs.jsonl`      — one record per epoch (train + val summary, ckpt name).
   - `checkpoints/epoch_NNN.pt` — model state_dict at end of each epoch.
 
-No val pass. Pass `--max-batches N` to cap a run for smoke testing.
+Pass `--max-batches N` to cap a run for smoke testing.
 
 Run from `training/`:
     uv run python scripts/train_bc.py \\
@@ -32,6 +34,7 @@ import torch
 from torch.utils.data import DataLoader
 
 from bc.dataset import IterableDataset
+from bc.eval import run_val
 from bc.loss import LossAccumulator, bc_loss
 from bc.model import BCModel
 from bc.splits import load_manifest, samples_for_split
@@ -101,6 +104,12 @@ def _write_jsonl(fp: TextIO, record: dict) -> None:
     fp.write(json.dumps(record) + "\n")
 
 
+def _fmt_metric(x: float | None, prec: int = 4) -> str:
+    """Format a metric for console output, with `n/a` fallback for `None`.
+    `run_val` returns `None` for accuracies whose denominators are 0."""
+    return f"{x:.{prec}f}" if x is not None else "n/a"
+
+
 def _save_checkpoint(model: torch.nn.Module, ckpt_dir: Path, epoch: int) -> str:
     """Save the model's `state_dict` to `<ckpt_dir>/epoch_NNN.pt`. Returns
     the filename (sans dir) for logging.
@@ -135,6 +144,11 @@ def train_one_epoch(
     `LossAccumulator`) plus `n_batches`, `duration_sec`, `samples_per_sec`.
     Caller owns the per-epoch JSONL row and ckpt save.
     """
+    # Reset train mode every epoch — pairs with `run_val`'s `model.eval()`
+    # so each epoch's train pass starts in train mode regardless of where
+    # the previous epoch left the model.
+    model.train()
+
     acc = LossAccumulator()
     epoch_start = time.perf_counter()
     n_batches_seen = 0
@@ -227,11 +241,13 @@ def run(args: argparse.Namespace) -> None:
     print(f"loading manifest: {args.manifest}")
     manifest = load_manifest(args.manifest)
     train_samples = samples_for_split(manifest, "train", args.intermediate)
+    val_samples = samples_for_split(manifest, "val", args.intermediate)
     print(
         f"  filter_version={manifest['filter_version']}  "
         f"git_sha={manifest['git_sha']}  "
         f"kept_pairs={manifest['kept_pairs']:,}  "
-        f"train_pairs={len(train_samples):,}"
+        f"train_pairs={len(train_samples):,}  "
+        f"val_pairs={len(val_samples):,}"
     )
 
     ds = IterableDataset(samples=train_samples, seed=args.seed)
@@ -257,7 +273,6 @@ def run(args: argparse.Namespace) -> None:
     batches_fp = (run_dir / "batches.jsonl").open("w", buffering=1)
     epochs_fp = (run_dir / "epochs.jsonl").open("w", buffering=1)
     run_start = time.perf_counter()
-    model.train()
     try:
         for epoch in range(1, args.epochs + 1):
             summary = train_one_epoch(
@@ -271,8 +286,20 @@ def run(args: argparse.Namespace) -> None:
                 max_batches=args.max_batches,
                 log_every=args.log_every,
             )
+            val_summary = run_val(
+                model=model,
+                val_samples=val_samples,
+                device=device,
+                batch_size=args.batch_size,
+                seed=args.seed,
+            )
             ckpt_name = _save_checkpoint(model, ckpt_dir, epoch)
-            _write_jsonl(epochs_fp, {"epoch": epoch, **summary, "ckpt": ckpt_name})
+            _write_jsonl(epochs_fp, {
+                "epoch": epoch,
+                **summary,
+                "val": val_summary,
+                "ckpt": ckpt_name,
+            })
             print()
             print(
                 f"[epoch {epoch}] complete | "
@@ -286,6 +313,21 @@ def run(args: argparse.Namespace) -> None:
                 f"value {summary['value']:.4f}  "
                 f"pass {summary['pass']:.4f}  |  "
                 f"total {summary['total']:.4f}"
+            )
+            print(
+                f"[epoch {epoch}] val | "
+                f"{val_summary['n_samples']:,} frames ({val_summary['n_non_pass']:,} non-pass) | "
+                f"policy {val_summary['policy']:.4f}  "
+                f"value {val_summary['value']:.4f}  "
+                f"pass {val_summary['pass']:.4f}  |  "
+                f"total {val_summary['total']:.4f}"
+            )
+            print(
+                f"[epoch {epoch}] val | "
+                f"top1 {_fmt_metric(val_summary['top1'])}  "
+                f"top3 {_fmt_metric(val_summary['top3'])}  "
+                f"pass_acc {_fmt_metric(val_summary['pass_acc'])}  "
+                f"pass_frac {_fmt_metric(val_summary['pass_frac'])}"
             )
             print(f"[epoch {epoch}] saved checkpoint: checkpoints/{ckpt_name}")
             print()
