@@ -34,7 +34,6 @@ until it trains. Worth coming back to:
     header for the weighted-edge upgrade path.
   - Broadcast-scalar normalization divisors (currently: hand-picked typical
     late-game values; could be game-normalized or rolling-window scaled).
-  - Production-subtracted vs. raw army_delta in dense history (currently raw).
   - opp_N_city_inference (currently zero-stubbed — full encoding is the
     "infer cities from peacetime growth" heuristic from 5.05-1 §F).
 """
@@ -646,6 +645,39 @@ def _cat_contact_capture(
     return [*opp_contacted, *opp_captured_by]
 
 
+def _encode_army_delta(
+    armies_newer: np.ndarray,
+    armies_older: np.ndarray,
+    own_newer: np.ndarray,
+    t_newer: int,
+    city_mask: np.ndarray,
+    general_mask: np.ndarray,
+) -> np.ndarray:
+    """Production-subtracted signed-log army delta (5.05-1 §G + §7.2).
+
+    Subtracts the per-cell expected production applied between
+    `snapshot[t_newer-1]` and `snapshot[t_newer]` before encoding. Production
+    rules (sim-core README — production fires post-step-increment):
+      - At `t_newer % 2 == 0`: each owned general or city gains +1 army.
+      - At `t_newer % 50 == 0` (land tick): each owned cell gains +1 army.
+
+    Subtraction is universal across cell types — at combat cells the +1/+2
+    correction is dwarfed by the combat-magnitude delta, so the encoding
+    stays dominated by the combat signal where it matters. The point of the
+    subtraction is to remove peacetime production noise so the channel
+    highlights non-trivial events (combat, expansion).
+    """
+    is_owned = own_newer >= 0
+    prod = np.zeros_like(armies_newer, dtype=np.float32)
+    if t_newer % 2 == 0:
+        prod += ((city_mask | general_mask) & is_owned).astype(np.float32)
+    if t_newer % 50 == 0:
+        prod += is_owned.astype(np.float32)
+    raw_delta = armies_newer.astype(np.float32) - armies_older.astype(np.float32)
+    adjusted = raw_delta - prod
+    return (np.sign(adjusted) * np.log1p(np.abs(adjusted))).astype(np.float32)
+
+
 def _encode_ownership_transition(
     own_newer: np.ndarray,
     own_older: np.ndarray,
@@ -676,6 +708,8 @@ def _encode_ownership_transition(
 
 def _cat_dense_history(
     state: MemoryState,
+    sim: dict[str, np.ndarray],
+    t: int,
     perspective_slot: int,
     opp_slots: list[int],
     H: int, W: int,
@@ -683,10 +717,17 @@ def _cat_dense_history(
     # Cat 10: Dense recent spatial history (2N channels, N=DENSE_HISTORY_N).
     # ownership_transition[t-k]: categorical encoding keyed on the older
     # owner (see `_encode_ownership_transition`).
-    # army_delta[t-k]: signed-log raw army change at tick t-k+1.
+    # army_delta[t-k]: production-subtracted signed-log army change applied
+    # between snapshot[t_newer-1] and snapshot[t_newer] (see
+    # `_encode_army_delta`).
     own_transitions = []
     army_deltas = []
     buf_len = len(state.own_buf)  # how many snapshots we have so far
+    HW = H * W
+    # initial_generals as a flat mask, reused across k. The general→city
+    # transition on capture is handled by subtracting cities_at_t_flat below.
+    initial_generals_flat = np.zeros(HW, dtype=bool)
+    initial_generals_flat[sim["initial_generals"]] = True
     for k in range(1, DENSE_HISTORY_N + 1):
         # own_buf is right-aligned at t. Snapshot at t-(k-1) = own_buf[-k];
         # snapshot at t-k = own_buf[-k-1]. We need both for a transition.
@@ -706,9 +747,20 @@ def _cat_dense_history(
                 own_newer, own_older, perspective_slot, opp_slots,
             )
         )
-        # Signed log: sign * log1p(|delta|). Preserves direction at low cost.
-        delta = (armies_newer.astype(np.float32) - armies_older.astype(np.float32))
-        army_deltas.append(np.sign(delta) * np.log1p(np.abs(delta)).astype(np.float32))
+        # City/general masks at t_newer — feed the production-subtraction.
+        # Same derivation as step_memory's known_city update logic.
+        t_newer = t - (k - 1)
+        cities_at_t_flat = sim["cities"][sim["cities_present_at"] <= t_newer]
+        city_mask_flat = np.zeros(HW, dtype=bool)
+        city_mask_flat[cities_at_t_flat] = True
+        general_mask = (initial_generals_flat & ~city_mask_flat).reshape(H, W)
+        city_mask = city_mask_flat.reshape(H, W)
+        army_deltas.append(
+            _encode_army_delta(
+                armies_newer, armies_older, own_newer, t_newer,
+                city_mask, general_mask,
+            )
+        )
     return [*own_transitions, *army_deltas]
 
 
@@ -762,7 +814,7 @@ def build_obs(
         *_cat_opp_broadcast(state, t, opp_slots, H, W),
         *_cat_scoreboard(state, t, opp_slots, H, W),
         *_cat_contact_capture(state, perspective_slot, opp_slots, H, W),
-        *_cat_dense_history(state, perspective_slot, opp_slots, H, W),
+        *_cat_dense_history(state, sim, t, perspective_slot, opp_slots, H, W),
     ]
 
     assert len(channels) == OBS_CHANNELS, (

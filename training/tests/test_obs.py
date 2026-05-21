@@ -9,7 +9,11 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from bc.obs import _encode_ownership_transition, canonical_slot_order
+from bc.obs import (
+    _encode_army_delta,
+    _encode_ownership_transition,
+    canonical_slot_order,
+)
 
 
 @pytest.mark.parametrize(
@@ -59,3 +63,63 @@ def test_encode_ownership_transition_all_categories():
         own_newer, own_older, perspective, opp_slots,
     )
     np.testing.assert_array_equal(result, expected)
+
+
+def test_encode_army_delta_production_subtraction():
+    """Production subtraction at per-2-step + land-tick boundaries (5.05-1 §G).
+
+    Each scenario is crafted so `raw_delta - expected_prod` is either 0 (when
+    production should be subtracted in full) or +1 (when not), making the
+    encoded outputs either 0 or log(2) — easy to assert exactly.
+    """
+    # --- Scenario A: t_newer=50 (per-2-step AND land-tick both fire) ---
+    # cell 0: city  owned → prod=2 (city + land-tick), raw=2 → adj=0
+    # cell 1: general owned → prod=2, raw=2 → adj=0
+    # cell 2: plain owned → prod=1 (land-tick only), raw=1 → adj=0
+    # cell 3: neutral city (unowned) → prod=0, raw=1 → adj=1
+    # cell 4: mountain → prod=0, raw=0 → adj=0
+    # cell 5: plain owned with raw=2 → prod=1, adj=1 (catches "subtract too much")
+    own_newer = np.array([[3, 3, 3, -1, -2, 3]], dtype=np.int8)
+    arm_older = np.array([[10, 10, 10, 10, 0, 10]], dtype=np.int16)
+    arm_newer = np.array([[12, 12, 11, 11, 0, 12]], dtype=np.int16)
+    city_mask = np.array([[True, False, False, True, False, False]])
+    general_mask = np.array([[False, True, False, False, False, False]])
+    expected = np.array([[0.0, 0.0, 0.0, np.log(2), 0.0, np.log(2)]], dtype=np.float32)
+    np.testing.assert_allclose(
+        _encode_army_delta(
+            arm_newer, arm_older, own_newer, 50, city_mask, general_mask,
+        ),
+        expected, atol=1e-6,
+    )
+
+    # --- Scenario B: t_newer=2 (per-2-step only; not land-tick) ---
+    # cell 0: city owned → prod=1, raw=1 → adj=0
+    # cell 1: plain owned → prod=0 (no land-tick), raw=1 → adj=1
+    # cell 2: general owned → prod=1, raw=1 → adj=0
+    own_newer = np.array([[3, 3, 3]], dtype=np.int8)
+    arm_older = np.array([[10, 10, 10]], dtype=np.int16)
+    arm_newer = np.array([[11, 11, 11]], dtype=np.int16)
+    city_mask = np.array([[True, False, False]])
+    general_mask = np.array([[False, False, True]])
+    expected = np.array([[0.0, np.log(2), 0.0]], dtype=np.float32)
+    np.testing.assert_allclose(
+        _encode_army_delta(
+            arm_newer, arm_older, own_newer, 2, city_mask, general_mask,
+        ),
+        expected, atol=1e-6,
+    )
+
+    # --- Scenario C: t_newer=3 (odd → neither rule fires) ---
+    # cell 0: city owned → prod=0, raw=1 → adj=1 (catches "fired on odd t")
+    own_newer = np.array([[3]], dtype=np.int8)
+    arm_older = np.array([[10]], dtype=np.int16)
+    arm_newer = np.array([[11]], dtype=np.int16)
+    city_mask = np.array([[True]])
+    general_mask = np.array([[False]])
+    expected = np.array([[np.log(2)]], dtype=np.float32)
+    np.testing.assert_allclose(
+        _encode_army_delta(
+            arm_newer, arm_older, own_newer, 3, city_mask, general_mask,
+        ),
+        expected, atol=1e-6,
+    )
