@@ -646,13 +646,44 @@ def _cat_contact_capture(
     return [*opp_contacted, *opp_captured_by]
 
 
-def _cat_dense_history(state: MemoryState, H: int, W: int) -> list[np.ndarray]:
+def _encode_ownership_transition(
+    own_newer: np.ndarray,
+    own_older: np.ndarray,
+    perspective_slot: int,
+    opp_slots: list[int],
+) -> np.ndarray:
+    """Per-cell categorical encoding of an ownership transition (5.05-1 §G).
+
+    Returns a `[H, W]` float32 with:
+      - `0.0`  no change (or uncategorized transition, e.g. mountains).
+      - `-1.0` self lost (older was perspective; ownership has changed).
+      - `+0.5` neutral lost (older was neutral; ownership has changed).
+      - `+(1 + k/8)` opp at canonical channel k lost, for k = 1..7.
+
+    Sign separates self-involved (negative) from informational (positive);
+    magnitude separates neutral from opponent. Encoder keys on the *older*
+    owner only — the gainer's identity isn't part of the categorical signal.
+    """
+    H, W = own_newer.shape
+    out = np.zeros((H, W), dtype=np.float32)
+    changed = own_newer != own_older
+    out[changed & (own_older == perspective_slot)] = -1.0
+    out[changed & (own_older == -1)] = 0.5
+    for k, opp in enumerate(opp_slots, start=1):
+        out[changed & (own_older == opp)] = 1.0 + k / 8.0
+    return out
+
+
+def _cat_dense_history(
+    state: MemoryState,
+    perspective_slot: int,
+    opp_slots: list[int],
+    H: int, W: int,
+) -> list[np.ndarray]:
     # Cat 10: Dense recent spatial history (2N channels, N=DENSE_HISTORY_N).
-    # ownership_transition[t-k] for k=1..N: "what changed at tick t-k+1
-    # (relative to t-k) that I could see." Encoded simply for v1 spike — a
-    # cell-changed mask. The full design encoding (sign + magnitude per
-    # change type) is a refinement.
-    # army_delta[t-k]: log-scaled signed army change at tick t-k+1.
+    # ownership_transition[t-k]: categorical encoding keyed on the older
+    # owner (see `_encode_ownership_transition`).
+    # army_delta[t-k]: signed-log raw army change at tick t-k+1.
     own_transitions = []
     army_deltas = []
     buf_len = len(state.own_buf)  # how many snapshots we have so far
@@ -670,11 +701,11 @@ def _cat_dense_history(state: MemoryState, H: int, W: int) -> list[np.ndarray]:
         own_older = state.own_buf[idx_older]
         armies_newer = state.armies_buf[idx_newer]
         armies_older = state.armies_buf[idx_older]
-        # Simple cell-changed mask for v1; refine the encoding (signed per
-        # design 5.05-1 §G) once the pipeline is end-to-end.
-        # TODO: replace with the full signed encoding (self lost = -1,
-        # neutral lost = +0.5, opp k lost = +(1 + k/8)).
-        own_transitions.append((own_newer != own_older).astype(np.float32))
+        own_transitions.append(
+            _encode_ownership_transition(
+                own_newer, own_older, perspective_slot, opp_slots,
+            )
+        )
         # Signed log: sign * log1p(|delta|). Preserves direction at low cost.
         delta = (armies_newer.astype(np.float32) - armies_older.astype(np.float32))
         army_deltas.append(np.sign(delta) * np.log1p(np.abs(delta)).astype(np.float32))
@@ -731,7 +762,7 @@ def build_obs(
         *_cat_opp_broadcast(state, t, opp_slots, H, W),
         *_cat_scoreboard(state, t, opp_slots, H, W),
         *_cat_contact_capture(state, perspective_slot, opp_slots, H, W),
-        *_cat_dense_history(state, H, W),
+        *_cat_dense_history(state, perspective_slot, opp_slots, H, W),
     ]
 
     assert len(channels) == OBS_CHANNELS, (
