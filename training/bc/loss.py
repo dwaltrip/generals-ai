@@ -43,6 +43,25 @@ MU_PASS = 1.0
 MASK_NEG = -1e9
 
 
+def flatten_policy_logits(
+    policy_logits: torch.Tensor,
+    mask: torch.Tensor,
+) -> torch.Tensor:
+    """Flatten NCHW policy logits to cell-major `[B, H·W·8]` and apply
+    the legality mask. Owner of the cell-major permute contract (5.18-3
+    session note); callers use the flat layout for CE / argmax.
+    """
+    B = policy_logits.shape[0]
+    # Permute moves the direction channel last, matching the action
+    # target's cell-major layout (flat_idx = cell_padded*8 + sub,
+    # sub = dir*2 + split):
+    #   [B, 8, H, W]  →  [B, H, W, 8]  →  [B, H·W·8]
+    flat = policy_logits.permute(0, 2, 3, 1).contiguous().reshape(B, -1)
+    # Apply legality mask. Illegal positions get MASK_NEG (large-negative,
+    # mixed-precision-safe vs -inf) — post-softmax, prob ≈ 0.
+    return flat.masked_fill(~mask.reshape(B, -1), MASK_NEG)
+
+
 def bc_loss(
     model_out: dict[str, torch.Tensor],
     targets: dict[str, torch.Tensor],
@@ -83,20 +102,12 @@ def bc_loss(
     B = policy_logits.shape[0]
 
     # --- Policy CE ---
-    # Step 1: permute to cell-major layout matching the action target.
-    #   [B, 8, H, W] → [B, H, W, 8] → [B, H·W·8]
-    policy_logits_flat = (
-        policy_logits.permute(0, 2, 3, 1).contiguous().reshape(B, -1)
-    )
-    mask_flat = mask.reshape(B, -1)
+    # F.cross_entropy applies log-softmax internally; the flatten helper's
+    # MASK_NEG fill is equivalent to a multiplicative mask on the
+    # probability simplex (masked positions → prob ≈ 0).
+    policy_logits_masked = flatten_policy_logits(policy_logits, mask)
 
-    # Step 2: apply the legality mask. Illegal positions get a large
-    # negative logit so they contribute ~0 probability post-softmax.
-    # F.cross_entropy applies log-softmax internally; masking the logits
-    # is equivalent to a multiplicative mask on the probability simplex.
-    policy_logits_masked = policy_logits_flat.masked_fill(~mask_flat, MASK_NEG)
-
-    # Step 3: cross-entropy with ignore_index=-1 to skip pass frames.
+    # Cross-entropy with ignore_index=-1 to skip pass frames.
     # Pass frames have action_target == -1 by construction (see
     # `bc/actions.py` `_PASS_FLAT_IDX`). They contribute no policy gradient.
     n_non_pass = int((~is_pass).sum().item())
