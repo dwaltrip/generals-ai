@@ -18,11 +18,14 @@ Manifest JSON schema (v1):
     only — `samples_for_split` resolves rids against the caller's root.
   - `filter_version` (str): `bc.filters.FILTER_VERSION` at build time.
   - `git_sha` (str): short git SHA when built; "unknown" if git fails.
-  - `corpus_size` (int): total sim files scanned.
+  - `corpus_size` (int): total sim files scanned (post-`scan_limit` if set).
   - `dropped_games` (int): games rejected by the filter (`eligible_perspectives` → []).
   - `kept_pairs` (int): total `(rid, k)` pairs after filtering.
   - `val_frac` (float): requested validation fraction (actual ratio may
     differ by one pair due to rounding).
+  - `scan_limit` (int | null): if set, caps the corpus scan to the first N
+    sim files — used to build smoke manifests cheaply. `null` means a
+    full-corpus scan.
   - `train` (list[[str, int]]): list of `[replay_id, perspective_index]`.
   - `val` (list[[str, int]]): same shape.
 
@@ -66,6 +69,7 @@ def build_manifest(
     seed: int,
     val_frac: float = DEFAULT_VAL_FRAC,
     sim_paths: list[Path] | None = None,
+    scan_limit: int | None = None,
     log_every: int | None = None,
 ) -> dict:
     """
@@ -76,12 +80,18 @@ def build_manifest(
     recorded `intermediate_root` field still reflects the caller's argument
     so the manifest is machine-portable.
 
+    `scan_limit`, if set, caps the resolved path list to the first N entries
+    — produces a smoke manifest in seconds rather than minutes. Applied after
+    `sim_paths` resolution, so the two compose.
+
     `log_every` prints "scanned X / Y" progress every N games; useful for the
     CLI on the full corpus. Pass `None` to silence (tests don't need it).
     """
     assert 0.0 < val_frac < 1.0, f"val_frac must be in (0, 1), got {val_frac}"
 
     paths = list(sim_paths) if sim_paths is not None else list_sim_paths(intermediate_root)
+    if scan_limit is not None:
+        paths = paths[:scan_limit]
     n_total = len(paths)
 
     pairs: list[tuple[str, int]] = []
@@ -132,6 +142,7 @@ def build_manifest(
         "dropped_games": dropped_games,
         "kept_pairs": len(pairs),
         "val_frac": val_frac,
+        "scan_limit": scan_limit,
         "train": [list(p) for p in train],
         "val": [list(p) for p in val],
     }
@@ -184,11 +195,15 @@ def _cmd_build(args: argparse.Namespace) -> None:
         raise SystemExit(f"refusing to overwrite existing manifest: {out_path} (pass --force)")
 
     print(f"building manifest from {intermediate_root}")
-    print(f"  seed={args.seed}  val_frac={args.val_frac}  filter_version={FILTER_VERSION}")
+    print(
+        f"  seed={args.seed}  val_frac={args.val_frac}  "
+        f"filter_version={FILTER_VERSION}  scan_limit={args.scan_limit}"
+    )
     manifest = build_manifest(
         intermediate_root=intermediate_root,
         seed=args.seed,
         val_frac=args.val_frac,
+        scan_limit=args.scan_limit,
         log_every=args.log_every,
     )
 
@@ -222,6 +237,15 @@ def main() -> None:
         help="Intermediate corpus root (defaults to replay-parser/data/intermediate).",
     )
     build.add_argument("--val-frac", type=float, default=DEFAULT_VAL_FRAC)
+    build.add_argument(
+        "--scan-limit",
+        type=int,
+        default=None,
+        help=(
+            "Cap the corpus scan to the first N sim files. Used to build smoke "
+            "manifests cheaply (seconds instead of minutes). Omit for full scan."
+        ),
+    )
     build.add_argument(
         "--log-every",
         type=int,
