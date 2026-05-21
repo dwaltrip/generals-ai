@@ -47,6 +47,7 @@ from pathlib import Path
 
 from bc.filters import DROP_REASONS, FILTER_VERSION, eligible_perspectives
 from bc.utils import list_sim_paths, meta_path_for, sim_path_for
+from utils.json_io import write_json
 from utils.player_name_lists import load_union
 
 
@@ -251,9 +252,7 @@ def _cmd_build(args: argparse.Namespace) -> None:
         log_every=args.log_every,
     )
 
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    with out_path.open("w") as fp:
-        json.dump(manifest, fp, indent=2)
+    write_json(out_path, manifest)
 
     n_train = len(manifest["train"])
     n_val = len(manifest["val"])

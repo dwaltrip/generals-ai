@@ -8,7 +8,6 @@ covers the path-resolution seam that the dataset depends on.
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 from bc.splits import (
@@ -17,6 +16,7 @@ from bc.splits import (
     load_manifest,
     samples_for_split,
 )
+from utils.json_io import write_json
 
 
 def test_same_seed_is_deterministic(intermediate_root: Path, sim_paths: list[Path]) -> None:
@@ -70,8 +70,7 @@ def test_load_and_resolve_roundtrip(
     """Build → write → load → samples_for_split yields valid (Path, int) tuples."""
     m = build_manifest(intermediate_root, seed=7, sim_paths=sim_paths[:50])
     out_path = tmp_path / "v1.json"
-    with out_path.open("w") as fp:
-        json.dump(m, fp)
+    write_json(out_path, m)
 
     loaded = load_manifest(out_path)
     train_samples = samples_for_split(loaded, "train", intermediate_root)
