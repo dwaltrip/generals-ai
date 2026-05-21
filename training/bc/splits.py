@@ -97,10 +97,27 @@ def build_manifest(
         if log_every is not None and (i + 1) % log_every == 0:
             print(f"  scanned {i + 1:,} / {n_total:,} games | kept {len(pairs):,} pairs")
 
+    if not pairs:
+        # Catches "pointed CLI at the wrong directory" + "filters rejected
+        # everything" before downstream code (CLI print, training loop) hits
+        # a div-by-zero or silent-no-op on empty splits.
+        raise ValueError(
+            f"no eligible (game, perspective) pairs found under {intermediate_root}. "
+            f"Scanned {n_total} games; filters dropped all of them."
+        )
+
     rng = random.Random(seed)
     rng.shuffle(pairs)
 
     n_val = round(len(pairs) * val_frac)
+    if n_val == 0:
+        # Banker's rounding (`round(10 * 0.05) == 0`) silently empties the val
+        # split at tiny `kept_pairs` — chunk 5's per-epoch val iteration would
+        # then yield zero batches without complaint. Loud is better.
+        raise ValueError(
+            f"val split would be empty: kept_pairs={len(pairs)}, val_frac={val_frac}. "
+            "Use a larger corpus or a higher val_frac."
+        )
     val = pairs[:n_val]
     train = pairs[n_val:]
 
@@ -127,10 +144,17 @@ def load_manifest(path: Path) -> dict:
     """
     with path.open() as fp:
         m = json.load(fp)
-    for key in ("version", "seed", "filter_version", "train", "val"):
+    for key in ("version", "seed", "filter_version", "kept_pairs", "train", "val"):
         assert key in m, f"manifest missing required key: {key}"
     assert m["version"] == MANIFEST_VERSION, (
         f"manifest schema version mismatch: file has {m['version']}, code expects {MANIFEST_VERSION}"
+    )
+    # Catches truncation / hand-edit damage that would silently shrink the train
+    # or val list. A non-matching count means the file isn't what its provenance
+    # claims it is.
+    n_train_val = len(m["train"]) + len(m["val"])
+    assert n_train_val == m["kept_pairs"], (
+        f"manifest length mismatch: train+val={n_train_val}, kept_pairs={m['kept_pairs']}"
     )
     return m
 

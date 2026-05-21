@@ -5,12 +5,9 @@ Consumed pairs are produced by `bc.splits.build_manifest` + resolved via
 `bc.splits.samples_for_split`. The dataset has no opinion about eligibility —
 the manifest is the contract for what trains. Pass only eligible pairs.
 
-Two iteration entry points:
-  - `iter_frames()` yields raw `Frame(sim, meta, k, t)` — public seam for
-    tests and ad-hoc inspection. No fog/memory state attached.
-  - `__iter__` yields encoded `dict[str, Tensor]` — what `DataLoader` collates.
-    Manages per-(game, k) `MemoryState` + `BFSCache` internally, calls
-    `step_memory` + `encode_frame` each tick.
+`__iter__` yields encoded `dict[str, Tensor]` — what `DataLoader` collates.
+Manages per-(game, k) `MemoryState` + `BFSCache` internally, calls
+`step_memory` + `encode_frame` each tick.
 
 Iteration order: samples are grouped by `sim_path` so each game's listed
 perspectives are walked back-to-back (one file open per game). Groups are
@@ -22,7 +19,6 @@ determines within-epoch ordering.
 from __future__ import annotations
 
 from collections.abc import Iterator
-from dataclasses import dataclass
 from pathlib import Path
 import random
 
@@ -41,21 +37,6 @@ from bc.obs import (
     step_memory,
 )
 from bc.visibility import compute_visibility
-
-
-@dataclass
-class Frame:
-    """
-    Per-frame raw payload yielded by `iter_frames` (the test/inspection seam).
-
-    The production `__iter__` path builds encoded tensor dicts directly and
-    does not pass through `Frame` — it would need fog/memory state alongside
-    the raw arrays, and that's a tighter coupling than the raw seam should own.
-    """
-    sim: dict[str, np.ndarray]
-    meta: dict[str, np.ndarray]
-    k: int
-    t: int
 
 
 def _group_by_path(samples: list[tuple[Path, int]]) -> list[tuple[Path, tuple[int, ...]]]:
@@ -149,34 +130,15 @@ class IterableDataset(TorchIterableDataset):
         rng.shuffle(groups)
         return groups
 
-    def iter_frames(self) -> Iterator[Frame]:
+    def __iter__(self) -> Iterator[dict[str, torch.Tensor]]:
         """
-        Walk the manifest and yield raw `Frame` objects.
+        Production walk: manages per-(game, k) MemoryState + BFSCache, calls
+        step_memory each tick, yields encoded sample dicts ready for DataLoader.
 
         Per-perspective frame range stops at `elim_timestep[k]` for eliminated
         perspectives — once a player is out, their subsequent "actions" are
         all-pass and carry no training signal (would just teach the model to
         pass when dead).
-        """
-        for sim_path, ks in self._shuffled_groups():
-            meta_path = sim_path.with_name(sim_path.stem + ".meta.npz")
-
-            with np.load(sim_path) as sim_npz:
-                sim = {key: sim_npz[key] for key in sim_npz.files}
-            with np.load(meta_path) as meta_npz:
-                meta = {key: meta_npz[key] for key in meta_npz.files}
-
-            T = sim["ownership"].shape[0]
-            for k in ks:
-                elim_t = int(meta["elim_timestep"][k])
-                end_t = T - 1 if elim_t == -1 else min(T - 1, elim_t)
-                for t in range(end_t):
-                    yield Frame(sim=sim, meta=meta, k=k, t=t)
-
-    def __iter__(self) -> Iterator[dict[str, torch.Tensor]]:
-        """
-        Production walk: manages per-(game, k) MemoryState + BFSCache, calls
-        step_memory each tick, yields encoded sample dicts ready for DataLoader.
         """
         for sim_path, ks in self._shuffled_groups():
             meta_path = sim_path.with_name(sim_path.stem + ".meta.npz")

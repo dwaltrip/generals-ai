@@ -1,72 +1,13 @@
-"""Smoke test for `bc.dataset.IterableDataset` against the real corpus."""
+"""Smoke test for `bc.filters.is_eligible` against the real corpus."""
 
 from __future__ import annotations
 
-from itertools import islice
 from pathlib import Path
 
 import numpy as np
 
 from bc.constants import ELIGIBLE_PLAYER_COUNT, MAX_BOARD_SIDE
-from bc.dataset import Frame, IterableDataset
 from bc.filters import is_eligible
-
-
-def test_yields_frames_with_expected_keys(samples: list[tuple[Path, int]]) -> None:
-    ds = IterableDataset(samples=samples, seed=0)
-    frames = list(islice(ds.iter_frames(), 50))
-    assert len(frames) > 0
-
-    f = frames[0]
-    assert isinstance(f, Frame)
-    for key in ("ownership", "armies", "actions_source", "map_width", "map_height"):
-        assert key in f.sim
-    for key in ("perspective_player_ids", "placement"):
-        assert key in f.meta
-
-
-def test_walk_order_is_k_outer_t_inner(samples: list[tuple[Path, int]]) -> None:
-    """Within one game, k is non-decreasing; for each k, t goes 0, 1, 2, ..."""
-    ds = IterableDataset(samples=samples, seed=0)
-    frames = list(islice(ds.iter_frames(), 500))
-
-    by_game: dict[int, list[Frame]] = {}
-    for f in frames:
-        by_game.setdefault(id(f.sim), []).append(f)
-
-    multi_frame_games = [g for g in by_game.values() if len(g) > 1]
-    assert multi_frame_games, "expected at least one game with multiple frames"
-
-    for game_frames in multi_frame_games:
-        prev_k = -1
-        prev_t = -1
-        for f in game_frames:
-            if f.k == prev_k:
-                assert f.t == prev_t + 1, (
-                    f"t should increment within fixed k; got t={f.t} after t={prev_t}"
-                )
-            else:
-                assert f.k > prev_k, (
-                    f"k should be non-decreasing; got k={f.k} after k={prev_k}"
-                )
-                assert f.t == 0, f"t should reset to 0 at new k; got t={f.t}"
-            prev_k, prev_t = f.k, f.t
-
-
-def test_same_game_frames_share_sim_meta_refs(samples: list[tuple[Path, int]]) -> None:
-    """Per-game eager load — every frame from one game points at the same dicts."""
-    ds = IterableDataset(samples=samples, seed=0)
-    frames = list(islice(ds.iter_frames(), 200))
-
-    by_game: dict[int, list[Frame]] = {}
-    for f in frames:
-        by_game.setdefault(id(f.sim), []).append(f)
-
-    for game_frames in by_game.values():
-        sim0, meta0 = game_frames[0].sim, game_frames[0].meta
-        for f in game_frames:
-            assert f.sim is sim0
-            assert f.meta is meta0
 
 
 def test_is_eligible_matches_filter(intermediate_root: Path) -> None:
