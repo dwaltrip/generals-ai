@@ -29,6 +29,12 @@ MAX_BOARD_SIDE = 32  # inclusive; drop games where max(w, h) > MAX_BOARD_SIDE
 # post-spike if the model is starved for tactical-history signal.
 DENSE_HISTORY_N = 5
 
+# Sentinel value for cells outside the perspective's vision in a
+# `PerspectiveView` (see `bc/obs.py`). Distinct from existing ownership values
+# (-2 = mountain, -1 = neutral, 0..7 = player slot). The corresponding armies
+# value at a fogged cell is 0 — there's no separate armies sentinel.
+OWN_FOG = -3
+
 # BFS city-passability knob (obs.py cat 5). A non-own city is treated as passable
 # iff `perspective_total_army > city_army * CITY_TRAVERSABILITY_FACTOR`. Crude
 # v1 model of "do I have enough army that capturing this city is feasible" —

@@ -52,6 +52,7 @@ from bc.constants import (
     DENSE_HISTORY_N,
     H_PADDED,
     OBS_CHANNELS,
+    OWN_FOG,
     W_PADDED,
 )
 
@@ -98,6 +99,40 @@ def canonical_slot_order(perspective_slot: int, P: int = 8) -> list[int]:
 
 
 # ---------------------------------------------------------------------------
+# Perspective-filtered board view
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class PerspectiveView:
+    """A single-tick board state filtered to what the perspective observed.
+
+    Cells outside the perspective's vision at this tick have `own = OWN_FOG`
+    and `armies = 0` — matching what the perspective would see in the live
+    game under fog of war. Cells within vision carry their true sim values.
+
+    Used by `step_memory` to populate the dense-history buffer; the same
+    abstraction is available for any future consumer that needs a per-tick
+    "what the perspective sees" snapshot (e.g., a future pre-filter at the
+    top of `build_obs` for current-tick cats).
+    """
+    own: np.ndarray    # int8 [H, W]
+    armies: np.ndarray  # int16 [H, W]
+
+
+def make_perspective_view(
+    own_raw: np.ndarray, armies_raw: np.ndarray, vis: np.ndarray,
+) -> PerspectiveView:
+    """Build a `PerspectiveView` from raw sim arrays + the perspective's
+    current vision mask. Fog cells get the OWN_FOG sentinel and zero armies.
+    """
+    return PerspectiveView(
+        own=np.where(vis, own_raw, OWN_FOG).astype(np.int8),
+        armies=np.where(vis, armies_raw, 0).astype(np.int16),
+    )
+
+
+# ---------------------------------------------------------------------------
 # Per-perspective running memory
 # ---------------------------------------------------------------------------
 
@@ -119,7 +154,8 @@ class MemoryState:
       - Per-opponent: `opp_contacted` (binary monotonic), `opp_captured_by`
         (-1=alive, 0..7=raw slot of captor).
       - Source pins: `general_locations` (-1 = unknown).
-      - Dense-history buffers: bounded deques of size DENSE_HISTORY_N + 1.
+      - Dense-history buffer: bounded deque of `PerspectiveView` snapshots,
+        length DENSE_HISTORY_N + 1.
     """
 
     # ---- Static within a game ----
@@ -178,11 +214,12 @@ class MemoryState:
     # of fog.
     opp_captured_by: np.ndarray
 
-    # ---- Dense-history buffers (bounded deques of length DENSE_HISTORY_N+1) ----
-    # Each entry is the [H, W] sim snapshot at one tick. After `step_memory`
-    # at tick t, the right end is own[t] / armies[t].
-    own_buf: deque = field(default_factory=lambda: deque(maxlen=DENSE_HISTORY_N + 1))
-    armies_buf: deque = field(default_factory=lambda: deque(maxlen=DENSE_HISTORY_N + 1))
+    # ---- Dense-history buffer (bounded deque of length DENSE_HISTORY_N+1) ----
+    # Each entry is a perspective-filtered snapshot at one tick. After
+    # `step_memory` at tick t, the right end is the view at tick t. Fog cells
+    # in each view carry the OWN_FOG sentinel (see `PerspectiveView`); this is
+    # what keeps the dense-history channels fog-respecting per game-mechanics §5.
+    view_buf: deque = field(default_factory=lambda: deque(maxlen=DENSE_HISTORY_N + 1))
 
 
 def init_memory(
@@ -195,14 +232,18 @@ def init_memory(
     """Build a fresh `MemoryState` for one (game, perspective) walk."""
     HW = H * W
 
-    # The static "is this cell a structure" mask: union of mountains, initial
-    # cities, and initial generals. Per game-mechanics, the perspective can
-    # see structure positions from t=0 (just not their type), so this set is
-    # fully known from the start of the game.
+    # The static "is this cell a structure" mask: mountains + initial cities
+    # + the perspective's own general. Per game-mechanics §5, mountain and
+    # city existence is always visible through fog, so those positions are
+    # known from t=0. Opp generals are deliberately excluded — per §5, enemy
+    # generals behind fog appear as ordinary empty tiles, not as structures.
+    # Post-capture cities (general → city transitions) enter the visible-
+    # structure set via cities_present_at; that's folded into the fog-
+    # structure mask dynamically in build_obs rather than mutating this set.
     is_structure_flat = np.zeros(HW, dtype=bool)
     is_structure_flat[sim["mountains"]] = True
     is_structure_flat[sim["initial_cities"]] = True
-    is_structure_flat[sim["initial_generals"]] = True
+    is_structure_flat[int(sim["initial_generals"][perspective_slot])] = True
     is_structure = is_structure_flat.reshape(H, W)
 
     # Self general known at t=0; opponents unknown.
@@ -359,10 +400,12 @@ def step_memory(
             captured = int(ev[2])
             state.opp_captured_by[captured] = captor
 
-    # Dense-history buffers: append the current tick. Bounded deque drops the
-    # oldest automatically once length exceeds DENSE_HISTORY_N + 1.
-    state.own_buf.append(own_t.copy())
-    state.armies_buf.append(armies_t.copy())
+    # Dense-history buffer: append a perspective-filtered snapshot of the
+    # current tick. Fog cells get OWN_FOG / 0 — so anything downstream that
+    # reads from view_buf sees only what the perspective observed at each
+    # tick, not the global ground truth. Bounded deque drops the oldest
+    # entry automatically once length exceeds DENSE_HISTORY_N + 1.
+    state.view_buf.append(make_perspective_view(own_t, armies_t, vis))
 
     return graph_grew
 
@@ -720,17 +763,22 @@ def _cat_dense_history(
     # army_delta[t-k]: production-subtracted signed-log army change applied
     # between snapshot[t_newer-1] and snapshot[t_newer] (see
     # `_encode_army_delta`).
+    #
+    # Inputs come from `state.view_buf` — each entry is a `PerspectiveView`,
+    # so fog cells carry the OWN_FOG sentinel rather than ground truth. We
+    # multiply both encoder outputs by a `both_observed` mask so any cell
+    # not visible at both endpoints encodes as 0, matching 5.05-1 §7.2.
     own_transitions = []
     army_deltas = []
-    buf_len = len(state.own_buf)  # how many snapshots we have so far
+    buf_len = len(state.view_buf)  # how many snapshots we have so far
     HW = H * W
     # initial_generals as a flat mask, reused across k. The general→city
     # transition on capture is handled by subtracting cities_at_t_flat below.
     initial_generals_flat = np.zeros(HW, dtype=bool)
     initial_generals_flat[sim["initial_generals"]] = True
     for k in range(1, DENSE_HISTORY_N + 1):
-        # own_buf is right-aligned at t. Snapshot at t-(k-1) = own_buf[-k];
-        # snapshot at t-k = own_buf[-k-1]. We need both for a transition.
+        # view_buf is right-aligned at t. Snapshot at t-(k-1) = view_buf[-k];
+        # snapshot at t-k = view_buf[-k-1]. We need both for a transition.
         idx_newer = buf_len - k
         idx_older = buf_len - k - 1
         if idx_older < 0:
@@ -738,15 +786,23 @@ def _cat_dense_history(
             own_transitions.append(np.zeros((H, W), dtype=np.float32))
             army_deltas.append(np.zeros((H, W), dtype=np.float32))
             continue
-        own_newer = state.own_buf[idx_newer]
-        own_older = state.own_buf[idx_older]
-        armies_newer = state.armies_buf[idx_newer]
-        armies_older = state.armies_buf[idx_older]
-        own_transitions.append(
-            _encode_ownership_transition(
-                own_newer, own_older, perspective_slot, opp_slots,
-            )
+        view_newer = state.view_buf[idx_newer]
+        view_older = state.view_buf[idx_older]
+        own_newer = view_newer.own
+        own_older = view_older.own
+        armies_newer = view_newer.armies
+        armies_older = view_older.armies
+        # both_observed: cells where the perspective had direct vision at
+        # both the older and newer snapshot. Cells outside this mask emit 0
+        # in both channels — per 5.05-1 §7.2 ("newly-visible: zero") and by
+        # extension to the ownership channel for the same reason.
+        both_observed = (
+            (own_newer != OWN_FOG) & (own_older != OWN_FOG)
+        ).astype(np.float32)
+        transition = _encode_ownership_transition(
+            own_newer, own_older, perspective_slot, opp_slots,
         )
+        own_transitions.append(transition * both_observed)
         # City/general masks at t_newer — feed the production-subtraction.
         # Same derivation as step_memory's known_city update logic.
         t_newer = t - (k - 1)
@@ -755,12 +811,11 @@ def _cat_dense_history(
         city_mask_flat[cities_at_t_flat] = True
         general_mask = (initial_generals_flat & ~city_mask_flat).reshape(H, W)
         city_mask = city_mask_flat.reshape(H, W)
-        army_deltas.append(
-            _encode_army_delta(
-                armies_newer, armies_older, own_newer, t_newer,
-                city_mask, general_mask,
-            )
+        delta = _encode_army_delta(
+            armies_newer, armies_older, own_newer, t_newer,
+            city_mask, general_mask,
         )
+        army_deltas.append(delta * both_observed)
     return [*own_transitions, *army_deltas]
 
 
@@ -796,8 +851,15 @@ def build_obs(
 
     # Cross-cat helper — bool form feeds both cat 3 (as a channel) and cat 5
     # (the BFS passability policy treats fog-structures as impassable).
+    # cities_now_2d folds in any city that exists at tick t — initial cities
+    # plus post-capture cities (general → city per §9 line 168), whose
+    # existence is visible through fog per §5 line 87 even when the
+    # perspective doesn't have direct vision of the cell.
+    cities_now_flat = np.zeros(H * W, dtype=bool)
+    cities_now_flat[sim["cities"][sim["cities_present_at"] <= t]] = True
+    cities_now_2d = cities_now_flat.reshape(H, W)
     structures_in_fog_mask = (
-        state.is_structure
+        (state.is_structure | cities_now_2d)
         & ~state.known_mountain
         & ~state.known_city
         & ~state.known_general
