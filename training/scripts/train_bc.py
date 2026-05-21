@@ -43,6 +43,38 @@ DEFAULT_INTERMEDIATE = REPO_ROOT / "replay-parser" / "data" / "intermediate"
 DEFAULT_RUNS_DIR = REPO_ROOT / "training" / "data" / "runs"
 
 
+def _build_arg_parser() -> argparse.ArgumentParser:
+    # TODO: as the knob count grows past ~15, or when we start doing
+    # cross-run sweeps, revisit moving to a config file (YAML/TOML).
+    # The args.json dump in the run dir captures per-run provenance for now.
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--manifest", type=Path, required=True)
+    parser.add_argument("--intermediate", type=Path, default=DEFAULT_INTERMEDIATE)
+    parser.add_argument("--epochs", type=int, default=1)
+    parser.add_argument("--batch-size", type=int, default=64)
+    parser.add_argument("--lr", type=float, default=3e-4)
+    parser.add_argument("--weight-decay", type=float, default=1e-4)
+    parser.add_argument("--device", choices=("auto", "mps", "cpu"), default="auto")
+    parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--log-every", type=int, default=50)
+    parser.add_argument(
+        "--max-batches",
+        type=int,
+        default=None,
+        help=(
+            "Stop each epoch early after N batches — for smoke testing the "
+            "loop end-to-end without committing to a full epoch's runtime."
+        ),
+    )
+    parser.add_argument(
+        "--out-dir",
+        type=Path,
+        default=DEFAULT_RUNS_DIR,
+        help="Root for run dirs; each run gets a <YYYYMMDD-HHMMSS>/ subdir.",
+    )
+    return parser
+
+
 def _serialize_arg(obj: object) -> str:
     """JSON `default=` for `vars(args)`. Stringifies `Path`; anything else
     that lands here is an unexpected arg type — raise to surface it."""
@@ -165,37 +197,14 @@ def train_one_epoch(
     }
 
 
-def main() -> None:
-    # TODO: as the knob count grows past ~15, or when we start doing
-    # cross-run sweeps, revisit moving to a config file (YAML/TOML).
-    # The args.json dump in the run dir captures per-run provenance for now.
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--manifest", type=Path, required=True)
-    parser.add_argument("--intermediate", type=Path, default=DEFAULT_INTERMEDIATE)
-    parser.add_argument("--epochs", type=int, default=1)
-    parser.add_argument("--batch-size", type=int, default=64)
-    parser.add_argument("--lr", type=float, default=3e-4)
-    parser.add_argument("--weight-decay", type=float, default=1e-4)
-    parser.add_argument("--device", choices=("auto", "mps", "cpu"), default="auto")
-    parser.add_argument("--seed", type=int, default=0)
-    parser.add_argument("--log-every", type=int, default=50)
-    parser.add_argument(
-        "--max-batches",
-        type=int,
-        default=None,
-        help=(
-            "Stop each epoch early after N batches — for smoke testing the "
-            "loop end-to-end without committing to a full epoch's runtime."
-        ),
-    )
-    parser.add_argument(
-        "--out-dir",
-        type=Path,
-        default=DEFAULT_RUNS_DIR,
-        help="Root for run dirs; each run gets a <YYYYMMDD-HHMMSS>/ subdir.",
-    )
-    args = parser.parse_args()
+def run(args: argparse.Namespace) -> None:
+    """Drive a BC training run end-to-end from parsed args.
 
+    Sets up the run dir + JSONL handles, loads the manifest and builds the
+    dataset/model/optimizer, then drives the epoch loop (per-epoch train,
+    ckpt, log). Callable from a notebook or test with a hand-built
+    Namespace; the CLI shell is `main()`.
+    """
     disable_mps_fallback()
 
     if not args.manifest.exists():
@@ -283,6 +292,11 @@ def main() -> None:
     finally:
         batches_fp.close()
         epochs_fp.close()
+
+
+def main() -> None:
+    args = _build_arg_parser().parse_args()
+    run(args)
 
 
 if __name__ == "__main__":
