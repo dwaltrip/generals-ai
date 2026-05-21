@@ -59,6 +59,16 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--weight-decay", type=float, default=1e-4)
     parser.add_argument("--device", choices=("auto", "mps", "cpu"), default="auto")
     parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument(
+        "--shuffle-buffer-size",
+        type=int,
+        default=2048,
+        help=(
+            "Reservoir-shuffle buffer over the IterableDataset's yielded "
+            "samples. Decorrelates batches from the per-perspective causal "
+            "walk. Pass 0 to disable (raw walk order)."
+        ),
+    )
     parser.add_argument("--log-every", type=int, default=50)
     parser.add_argument(
         "--max-batches",
@@ -250,7 +260,11 @@ def run(args: argparse.Namespace) -> None:
         f"val_pairs={len(val_samples):,}"
     )
 
-    ds = IterableDataset(samples=train_samples, seed=args.seed)
+    ds = IterableDataset(
+        samples=train_samples,
+        seed=args.seed,
+        shuffle_buffer_size=args.shuffle_buffer_size,
+    )
     loader = DataLoader(ds, batch_size=args.batch_size)
 
     # --- Model + optimizer ---

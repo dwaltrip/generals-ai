@@ -13,14 +13,20 @@ Iteration order: samples are grouped by `sim_path` so each game's listed
 perspectives are walked back-to-back (one file open per game). Groups are
 shuffled per-epoch by `seed + epoch_counter`. The split-time shuffle in
 `bc.splits` determines train/val membership; this per-epoch shuffle
-determines within-epoch ordering.
+determines within-epoch group ordering.
+
+Within a perspective, frames are generated in causal order (state at t
+depends on having stepped 0..t-1). An optional reservoir-style shuffle
+buffer decorrelates the yielded stream so DataLoader batches aren't
+dominated by one perspective's consecutive frames.
 """
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from pathlib import Path
 import random
+from typing import TypeVar
 
 import numpy as np
 import torch
@@ -51,6 +57,46 @@ def _group_by_path(samples: list[tuple[Path, int]]) -> list[tuple[Path, tuple[in
     for path, k in samples:
         by_path.setdefault(path, []).append(k)
     return [(p, tuple(ks)) for p, ks in by_path.items()]
+
+
+T = TypeVar("T")
+
+
+def _shuffle_buffered(
+    upstream: Iterable[T],
+    buffer_size: int,
+    rng: random.Random,
+) -> Iterator[T]:
+    """
+    Reservoir-style shuffle buffer over an iterable.
+
+    Fill phase pulls items until the buffer holds `buffer_size`. Steady state:
+    each step yields a random buffered item and replaces its slot with the
+    next upstream item. Drain phase shuffles the remaining buffer and yields
+    it. Every input item is yielded exactly once.
+
+    Decorrelates a path-dependent producer (here: per-perspective frame walk)
+    from the consumer's batch slicing, without requiring random access to
+    the producer. Caller owns the RNG so determinism is seed-controlled.
+    """
+    # Call iter() so the two phases share a cursor — passing a list would
+    # otherwise restart from the front after the fill loop breaks.
+    it = iter(upstream)
+
+    buffer: list[T] = []
+    for item in it:
+        buffer.append(item)
+        if len(buffer) >= buffer_size:
+            break
+
+    for item in it:
+        i = rng.randrange(len(buffer))
+        out = buffer[i]
+        buffer[i] = item
+        yield out
+
+    rng.shuffle(buffer)
+    yield from buffer
 
 
 def encode_frame(
@@ -102,6 +148,9 @@ class IterableDataset(TorchIterableDataset):
     """
     Single-worker iterable over a manifest of `(sim_path, perspective_k)` pairs.
 
+    `shuffle_buffer_size` enables a reservoir shuffle over yielded samples;
+    values ≤ 1 disable it (raw per-perspective walk for diagnostics).
+
     Multi-worker semantics (per-worker split + per-worker seed offset)
     are not implemented — running with `num_workers > 1` will yield each
     sample `num_workers` times. Add worker-aware splitting when the
@@ -112,6 +161,7 @@ class IterableDataset(TorchIterableDataset):
         self,
         samples: list[tuple[Path, int]],
         seed: int,
+        shuffle_buffer_size: int = 0,
     ) -> None:
         """
         `samples` is a list of `(sim_path, perspective_k)` pairs. Caller is
@@ -120,15 +170,8 @@ class IterableDataset(TorchIterableDataset):
         """
         self._groups = _group_by_path(samples)
         self._seed = seed
+        self._shuffle_buffer_size = shuffle_buffer_size
         self._epoch_counter = 0
-
-    def _shuffled_groups(self) -> list[tuple[Path, tuple[int, ...]]]:
-        """Per-epoch shuffle of `(sim_path, k-tuple)` groups."""
-        rng = random.Random(self._seed + self._epoch_counter)
-        self._epoch_counter += 1
-        groups = list(self._groups)
-        rng.shuffle(groups)
-        return groups
 
     def __iter__(self) -> Iterator[dict[str, torch.Tensor]]:
         """
@@ -139,8 +182,28 @@ class IterableDataset(TorchIterableDataset):
         perspectives — once a player is out, their subsequent "actions" are
         all-pass and carry no training signal (would just teach the model to
         pass when dead).
+
+        One per-epoch RNG drives both the group shuffle and the buffer's
+        replacement/drain choices — keeps reproducibility tied to
+        `seed + epoch_counter` alone.
         """
-        for sim_path, ks in self._shuffled_groups():
+        rng = random.Random(self._seed + self._epoch_counter)
+        self._epoch_counter += 1
+
+        groups = list(self._groups)
+        rng.shuffle(groups)
+
+        walk = self._walk(groups)
+        if self._shuffle_buffer_size > 1:
+            yield from _shuffle_buffered(walk, self._shuffle_buffer_size, rng)
+        else:
+            yield from walk
+
+    def _walk(
+        self,
+        groups: list[tuple[Path, tuple[int, ...]]],
+    ) -> Iterator[dict[str, torch.Tensor]]:
+        for sim_path, ks in groups:
             meta_path = sim_path.with_name(sim_path.stem + ".meta.npz")
 
             with np.load(sim_path) as sim_npz:

@@ -12,6 +12,7 @@ from __future__ import annotations
 from itertools import islice
 from pathlib import Path
 
+import pytest
 import torch
 from torch.utils.data import DataLoader
 
@@ -26,8 +27,19 @@ NUM_BATCHES = 100
 FLAT_ACTION_COUNT = H_PADDED * W_PADDED * 8
 
 
-def test_dataloader_pipeline_smoke(samples: list[tuple[Path, int]]) -> None:
-    ds = IterableDataset(samples=samples, seed=0)
+# Exercise both the raw per-perspective walk (0) and the buffered path (256).
+# A small buffer is enough to confirm the wiring; helper correctness is
+# unit-tested in test_dataset.py.
+@pytest.mark.parametrize("shuffle_buffer_size", [0, 256])
+def test_dataloader_pipeline_smoke(
+    samples: list[tuple[Path, int]],
+    shuffle_buffer_size: int,
+) -> None:
+    ds = IterableDataset(
+        samples=samples,
+        seed=0,
+        shuffle_buffer_size=shuffle_buffer_size,
+    )
     loader = DataLoader(ds, batch_size=BATCH_SIZE)
 
     for batch in islice(loader, NUM_BATCHES):
