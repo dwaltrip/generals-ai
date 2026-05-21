@@ -37,6 +37,7 @@ Architectural notes:
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 
 import torch
@@ -80,6 +81,7 @@ def run_val(
     val_ds = IterableDataset(samples=val_samples, seed=seed)
     val_loader = DataLoader(val_ds, batch_size=batch_size)
 
+    val_start = time.perf_counter()
     acc = LossAccumulator()
     n_top1_correct = 0
     n_top3_correct = 0
@@ -133,6 +135,7 @@ def run_val(
                 pred_counts += torch.bincount(pred_subs, minlength=8)
                 target_counts += torch.bincount(target_subs, minlength=8)
 
+    duration_sec = time.perf_counter() - val_start
     s = acc.summary()
     n_non_pass = s["n_non_pass"]
     n_samples = s["n_samples"]
@@ -140,6 +143,7 @@ def run_val(
     top3_acc = n_top3_correct / n_non_pass if n_non_pass > 0 else None
     pass_acc = n_pass_correct / n_samples if n_samples > 0 else None
     pass_frac = n_pass_observed / n_samples if n_samples > 0 else None
+    samples_per_sec = n_samples / duration_sec if duration_sec > 0 else 0.0
 
     return {
         "policy": s["policy"],
@@ -152,6 +156,8 @@ def run_val(
         "top3": top3_acc,
         "pass_acc": pass_acc,
         "pass_frac": pass_frac,
+        "duration_sec": round(duration_sec, 3),
+        "samples_per_sec": round(samples_per_sec, 2),
         # action_target_dist is constant across epochs — duplicated per
         # row for grep-ability when comparing to action_dist.
         "action_dist": _dist(pred_counts, n_non_pass),

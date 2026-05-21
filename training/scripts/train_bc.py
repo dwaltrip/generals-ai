@@ -316,7 +316,9 @@ def run(args: argparse.Namespace) -> None:
             )
             print(
                 f"[epoch {epoch}] val | "
-                f"{val_summary['n_samples']:,} frames ({val_summary['n_non_pass']:,} non-pass) | "
+                f"{val_summary['n_samples']:,} frames ({val_summary['n_non_pass']:,} non-pass) "
+                f"in {val_summary['duration_sec']:.1f}s | "
+                f"{val_summary['samples_per_sec']:.0f} samples/sec | "
                 f"policy {val_summary['policy']:.4f}  "
                 f"value {val_summary['value']:.4f}  "
                 f"pass {val_summary['pass']:.4f}  |  "
