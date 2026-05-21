@@ -64,9 +64,9 @@ from bc.constants import (
 def _moore_dilate(mask: np.ndarray) -> np.ndarray:
     """Moore-neighborhood (3x3) binary dilation of a 2D bool mask.
 
-    Same 8-direction OR pattern as `visibility.compute_visibility`, factored
-    out for reuse by `step_memory` when expanding the agent's vision of an
-    opponent's tile into "opponent had vision around here."
+    Same 8-direction OR pattern as `visibility.compute_visibility`, used by
+    `step_memory` when expanding the agent's vision of an opponent's tile
+    into "opponent had vision around here."
     """
     out = mask.copy()
     out[:-1, :] |= mask[1:, :]
