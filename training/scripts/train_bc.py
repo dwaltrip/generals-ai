@@ -5,9 +5,13 @@ via `IterableDataset`, runs N epochs of AdamW SGD with `bc_loss`. Prints
 per-batch component losses + rolling samples/sec every `--log-every` batches;
 end-of-epoch summary collects the sample-weighted means via `LossAccumulator`.
 
-This is the loss-curve scaffold — no val pass (chunk 5), no JSONL logging
-(chunk 3), no checkpoints (chunk 4). Pass `--max-batches N` to cap a run
-for smoke testing.
+Each invocation writes to its own `<out-dir>/<YYYYMMDD-HHMMSS>/` directory:
+  - `args.json`    — full CLI invocation as JSON, for provenance.
+  - `batches.jsonl` — one record per batch.
+  - `epochs.jsonl`  — one record per epoch (sample-weighted means + timing).
+
+No val pass, no checkpoints. Pass `--max-batches N` to cap a run for
+smoke testing.
 
 Run from `training/`:
     uv run python scripts/train_bc.py \\
@@ -18,8 +22,11 @@ Run from `training/`:
 from __future__ import annotations
 
 import argparse
+import json
 import time
+from datetime import datetime
 from pathlib import Path
+from typing import TextIO
 
 import torch
 from torch.utils.data import DataLoader
@@ -33,12 +40,39 @@ from shared.device import disable_mps_fallback, move_batch, pick_device
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 DEFAULT_INTERMEDIATE = REPO_ROOT / "replay-parser" / "data" / "intermediate"
+DEFAULT_RUNS_DIR = REPO_ROOT / "training" / "data" / "runs"
+
+
+def _serialize_arg(obj: object) -> str:
+    """JSON `default=` for `vars(args)`. Stringifies `Path`; anything else
+    that lands here is an unexpected arg type — raise to surface it."""
+    if isinstance(obj, Path):
+        return str(obj)
+    raise TypeError(f"unserializable: {type(obj).__name__}: {obj!r}")
+
+
+def _make_run_dir(out_root: Path) -> Path:
+    """Fresh `<YYYYMMDD-HHMMSS>/` subdir under `out_root` (local time).
+
+    `exist_ok=False` so two runs starting in the same wall-clock second
+    error out instead of silently sharing a directory.
+    """
+    ts = datetime.now().strftime("%Y%m%d-%H%M%S")
+    run_dir = out_root / ts
+    run_dir.mkdir(parents=True, exist_ok=False)
+    return run_dir
+
+
+def _write_jsonl(fp: TextIO, record: dict) -> None:
+    """Append one record + newline. Files are opened line-buffered, so a
+    `tail -f` sees each record as soon as the newline lands."""
+    fp.write(json.dumps(record) + "\n")
 
 
 def main() -> None:
     # TODO: as the knob count grows past ~15, or when we start doing
-    # cross-run sweeps, revisit moving to a config file (YAML/TOML). The
-    # args.json dump (chunk 3) captures per-run config provenance for now.
+    # cross-run sweeps, revisit moving to a config file (YAML/TOML).
+    # The args.json dump in the run dir captures per-run provenance for now.
     parser = argparse.ArgumentParser()
     parser.add_argument("--manifest", type=Path, required=True)
     parser.add_argument("--intermediate", type=Path, default=DEFAULT_INTERMEDIATE)
@@ -58,6 +92,12 @@ def main() -> None:
             "loop end-to-end without committing to a full epoch's runtime."
         ),
     )
+    parser.add_argument(
+        "--out-dir",
+        type=Path,
+        default=DEFAULT_RUNS_DIR,
+        help="Root for run dirs; each run gets a <YYYYMMDD-HHMMSS>/ subdir.",
+    )
     args = parser.parse_args()
 
     disable_mps_fallback()
@@ -69,6 +109,12 @@ def main() -> None:
 
     device = pick_device(args.device)
     torch.manual_seed(args.seed)
+
+    # --- Run dir + provenance ---
+    run_dir = _make_run_dir(args.out_dir)
+    print(f"run dir: {run_dir}")
+    with (run_dir / "args.json").open("w") as fp:
+        json.dump(vars(args), fp, default=_serialize_arg, indent=2)
 
     # --- Manifest + dataset ---
     print(f"loading manifest: {args.manifest}")
@@ -98,65 +144,99 @@ def main() -> None:
     print()
 
     # --- Train loop ---
+    # JSONL writers are line-buffered (buffering=1) so `tail -f` sees each
+    # record as soon as it's written. The try/finally ensures the file
+    # handles flush + close even if training raises mid-epoch.
+    batches_fp = (run_dir / "batches.jsonl").open("w", buffering=1)
+    epochs_fp = (run_dir / "epochs.jsonl").open("w", buffering=1)
+    run_start = time.perf_counter()
     model.train()
-    for epoch in range(1, args.epochs + 1):
-        acc = LossAccumulator()
-        epoch_start = time.perf_counter()
-        n_batches_seen = 0
+    try:
+        for epoch in range(1, args.epochs + 1):
+            acc = LossAccumulator()
+            epoch_start = time.perf_counter()
+            n_batches_seen = 0
 
-        # Rolling samples/sec — instantaneous rate across the last log-every
-        # window. Reset every print so the number tracks current throughput
-        # rather than smoothing over the whole epoch.
-        window_start = epoch_start
-        window_samples = 0
+            # Rolling samples/sec — instantaneous rate across the last
+            # log-every window. Reset every print so the number tracks
+            # current throughput rather than smoothing over the epoch.
+            window_start = epoch_start
+            window_samples = 0
 
-        for batch_idx, batch in enumerate(loader):
-            if args.max_batches is not None and batch_idx >= args.max_batches:
-                break
+            for batch_idx, batch in enumerate(loader):
+                if args.max_batches is not None and batch_idx >= args.max_batches:
+                    break
 
-            batch = move_batch(batch, device)
-            optim.zero_grad()
-            out = model(batch["obs"])
-            losses = bc_loss(out, batch)
-            losses["total"].backward()
-            optim.step()
+                batch = move_batch(batch, device)
+                optim.zero_grad()
+                out = model(batch["obs"])
+                losses = bc_loss(out, batch)
+                losses["total"].backward()
+                optim.step()
 
-            B = batch["obs"].shape[0]
-            acc.update(losses, batch_size=B)
-            window_samples += B
-            n_batches_seen += 1
+                B = batch["obs"].shape[0]
+                acc.update(losses, batch_size=B)
+                window_samples += B
+                n_batches_seen += 1
 
-            if (batch_idx + 1) % args.log_every == 0:
-                rate = window_samples / (time.perf_counter() - window_start)
-                print(
-                    f"[epoch {epoch}] batch {batch_idx + 1} | "
-                    f"policy {losses['policy'].item():6.4f} "
-                    f"value {losses['value'].item():6.4f} "
-                    f"pass {losses['pass'].item():6.4f} "
-                    f"total {losses['total'].item():6.4f} | "
-                    f"{rate:.0f} samples/sec"
-                )
-                window_start = time.perf_counter()
-                window_samples = 0
+                _write_jsonl(batches_fp, {
+                    "epoch": epoch,
+                    "batch_idx": batch_idx,
+                    "batch_size": B,
+                    "policy": float(losses["policy"].item()),
+                    "value": float(losses["value"].item()),
+                    "pass": float(losses["pass"].item()),
+                    "total": float(losses["total"].item()),
+                    "n_non_pass": int(losses["n_non_pass"].item()),
+                    "wall_time_sec": round(time.perf_counter() - run_start, 3),
+                })
 
-        epoch_dur = time.perf_counter() - epoch_start
-        s = acc.summary()
-        rate = s["n_samples"] / epoch_dur if epoch_dur > 0 else 0.0
-        print()
-        print(
-            f"[epoch {epoch}] complete | "
-            f"{s['n_samples']:,} frames ({s['n_non_pass']:,} non-pass) "
-            f"in {epoch_dur:.1f}s | "
-            f"{rate:.0f} samples/sec ({n_batches_seen} batches)"
-        )
-        print(
-            f"[epoch {epoch}] mean: "
-            f"policy {s['policy']:.4f}  "
-            f"value {s['value']:.4f}  "
-            f"pass {s['pass']:.4f}  |  "
-            f"total {s['total']:.4f}"
-        )
-        print()
+                if (batch_idx + 1) % args.log_every == 0:
+                    rate = window_samples / (time.perf_counter() - window_start)
+                    print(
+                        f"[epoch {epoch}] batch {batch_idx + 1} | "
+                        f"policy {losses['policy'].item():6.4f} "
+                        f"value {losses['value'].item():6.4f} "
+                        f"pass {losses['pass'].item():6.4f} "
+                        f"total {losses['total'].item():6.4f} | "
+                        f"{rate:.0f} samples/sec"
+                    )
+                    window_start = time.perf_counter()
+                    window_samples = 0
+
+            epoch_dur = time.perf_counter() - epoch_start
+            s = acc.summary()
+            rate = s["n_samples"] / epoch_dur if epoch_dur > 0 else 0.0
+            _write_jsonl(epochs_fp, {
+                "epoch": epoch,
+                "policy": s["policy"],
+                "value": s["value"],
+                "pass": s["pass"],
+                "total": s["total"],
+                "n_non_pass": s["n_non_pass"],
+                "n_samples": s["n_samples"],
+                "n_batches": n_batches_seen,
+                "duration_sec": round(epoch_dur, 3),
+                "samples_per_sec": round(rate, 2),
+            })
+            print()
+            print(
+                f"[epoch {epoch}] complete | "
+                f"{s['n_samples']:,} frames ({s['n_non_pass']:,} non-pass) "
+                f"in {epoch_dur:.1f}s | "
+                f"{rate:.0f} samples/sec ({n_batches_seen} batches)"
+            )
+            print(
+                f"[epoch {epoch}] mean: "
+                f"policy {s['policy']:.4f}  "
+                f"value {s['value']:.4f}  "
+                f"pass {s['pass']:.4f}  |  "
+                f"total {s['total']:.4f}"
+            )
+            print()
+    finally:
+        batches_fp.close()
+        epochs_fp.close()
 
 
 if __name__ == "__main__":
