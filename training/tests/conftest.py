@@ -12,11 +12,16 @@ from pathlib import Path
 
 import pytest
 
-from bc.utils import list_sim_paths
+from bc.filters import eligible_perspectives
+from bc.utils import list_sim_paths, meta_path_for
 
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 INTERMEDIATE_DIR = _REPO_ROOT / "replay-parser" / "data" / "intermediate"
+
+# Cap how many sim files the `samples` fixture scans. Tests only ever pull
+# a few hundred frames at most; full-corpus scans cost minutes for no benefit.
+_SAMPLES_SCAN_LIMIT = 200
 
 
 @pytest.fixture(scope="session")
@@ -30,3 +35,17 @@ def intermediate_root() -> Path:
 def sim_paths(intermediate_root: Path) -> list[Path]:
     """Cached sim-path list — computed once per session."""
     return list_sim_paths(intermediate_root)
+
+
+@pytest.fixture(scope="session")
+def samples(sim_paths: list[Path]) -> list[tuple[Path, int]]:
+    """
+    Cached `(sim_path, perspective_k)` list scanned from the first
+    `_SAMPLES_SCAN_LIMIT` sim files. Mirrors what `bc.splits.build_manifest`
+    produces, scoped down for test cost.
+    """
+    out: list[tuple[Path, int]] = []
+    for sim_path in sim_paths[:_SAMPLES_SCAN_LIMIT]:
+        for k in eligible_perspectives(sim_path, meta_path_for(sim_path)):
+            out.append((sim_path, k))
+    return out

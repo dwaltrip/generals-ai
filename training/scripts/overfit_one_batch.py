@@ -27,9 +27,10 @@ import torch
 from torch.utils.data import DataLoader
 
 from bc.dataset import IterableDataset
+from bc.filters import eligible_perspectives
 from bc.loss import bc_loss
 from bc.model import BCModel
-from bc.utils import list_sim_paths
+from bc.utils import list_sim_paths, meta_path_for
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -75,6 +76,16 @@ def main() -> None:
         default=100,
         help="Give up if no mixed-enough batch is found within this many tries.",
     )
+    parser.add_argument(
+        "--subset-size",
+        type=int,
+        default=1000,
+        help=(
+            "Number of sim files to scan for eligible (game, perspective) pairs. "
+            "The overfit harness only needs one batch; we cap scan cost rather "
+            "than building a full-corpus manifest just to pull a single batch."
+        ),
+    )
     args = parser.parse_args()
 
     # Unset MPS fallback so unsupported ops fail loudly (see module docstring).
@@ -90,8 +101,13 @@ def main() -> None:
 
     # --- Pull one fixed batch ---
     print(f"building dataset (intermediate={args.intermediate})...")
-    sim_paths = list_sim_paths(args.intermediate)
-    ds = IterableDataset(args.intermediate, seed=args.seed, sim_paths=sim_paths)
+    sim_paths = list_sim_paths(args.intermediate)[: args.subset_size]
+    samples: list[tuple[Path, int]] = []
+    for sim_path in sim_paths:
+        for k in eligible_perspectives(sim_path, meta_path_for(sim_path)):
+            samples.append((sim_path, k))
+    print(f"scanned {len(sim_paths):,} games -> {len(samples):,} eligible (game, k) pairs")
+    ds = IterableDataset(samples=samples, seed=args.seed)
     loader = DataLoader(ds, batch_size=args.batch_size)
     min_non_pass = int(args.batch_size * args.min_non_pass_frac)
     print(

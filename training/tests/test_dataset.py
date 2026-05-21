@@ -8,11 +8,12 @@ from pathlib import Path
 import numpy as np
 
 from bc.constants import ELIGIBLE_PLAYER_COUNT, MAX_BOARD_SIDE
-from bc.dataset import Frame, IterableDataset, is_eligible
+from bc.dataset import Frame, IterableDataset
+from bc.filters import is_eligible
 
 
-def test_yields_frames_with_expected_keys(intermediate_root: Path, sim_paths: list[Path]) -> None:
-    ds = IterableDataset(intermediate_root, seed=0, sim_paths=sim_paths)
+def test_yields_frames_with_expected_keys(samples: list[tuple[Path, int]]) -> None:
+    ds = IterableDataset(samples=samples, seed=0)
     frames = list(islice(ds.iter_frames(), 50))
     assert len(frames) > 0
 
@@ -24,9 +25,9 @@ def test_yields_frames_with_expected_keys(intermediate_root: Path, sim_paths: li
         assert key in f.meta
 
 
-def test_walk_order_is_k_outer_t_inner(intermediate_root: Path, sim_paths: list[Path]) -> None:
+def test_walk_order_is_k_outer_t_inner(samples: list[tuple[Path, int]]) -> None:
     """Within one game, k is non-decreasing; for each k, t goes 0, 1, 2, ..."""
-    ds = IterableDataset(intermediate_root, seed=0, sim_paths=sim_paths)
+    ds = IterableDataset(samples=samples, seed=0)
     frames = list(islice(ds.iter_frames(), 500))
 
     by_game: dict[int, list[Frame]] = {}
@@ -52,9 +53,9 @@ def test_walk_order_is_k_outer_t_inner(intermediate_root: Path, sim_paths: list[
             prev_k, prev_t = f.k, f.t
 
 
-def test_same_game_frames_share_sim_meta_refs(intermediate_root: Path, sim_paths: list[Path]) -> None:
+def test_same_game_frames_share_sim_meta_refs(samples: list[tuple[Path, int]]) -> None:
     """Per-game eager load — every frame from one game points at the same dicts."""
-    ds = IterableDataset(intermediate_root, seed=0, sim_paths=sim_paths)
+    ds = IterableDataset(samples=samples, seed=0)
     frames = list(islice(ds.iter_frames(), 200))
 
     by_game: dict[int, list[Frame]] = {}

@@ -1,9 +1,9 @@
 """
-IterableDataset over the per-game parsed corpus.
+IterableDataset over a manifest of `(sim_path, perspective_k)` pairs.
 
-Walks per-game (`<id>.npz`) + per-game-meta (`<id>.meta.npz`) sibling pairs
-under `replay-parser/data/intermediate/`, producing training samples for the
-behavioral-cloning policy/value network.
+Consumed pairs are produced by `bc.splits.build_manifest` + resolved via
+`bc.splits.samples_for_split`. The dataset has no opinion about eligibility —
+the manifest is the contract for what trains. Pass only eligible pairs.
 
 Two iteration entry points:
   - `iter_frames()` yields raw `Frame(sim, meta, k, t)` — public seam for
@@ -12,12 +12,11 @@ Two iteration entry points:
     Manages per-(game, k) `MemoryState` + `BFSCache` internally, calls
     `step_memory` + `encode_frame` each tick.
 
-Sampling: random shuffle over the eligible-file list per iteration,
-seeded by the constructor's `seed` plus an internal epoch counter so
-successive epochs see different orderings while remaining deterministic.
-Eligibility filtering is lazy — applied as the iterator walks the
-shuffled file list. A pre-filtered manifest is the natural extension
-when self-play / larger-corpus training arrives.
+Iteration order: samples are grouped by `sim_path` so each game's listed
+perspectives are walked back-to-back (one file open per game). Groups are
+shuffled per-epoch by `seed + epoch_counter`. The split-time shuffle in
+`bc.splits` determines train/val membership; this per-epoch shuffle
+determines within-epoch ordering.
 """
 
 from __future__ import annotations
@@ -32,11 +31,7 @@ import torch
 from torch.utils.data import IterableDataset as TorchIterableDataset
 
 from bc import actions, bfs
-from bc.constants import (
-    ELIGIBLE_PLAYER_COUNT,
-    MAX_BOARD_SIDE,
-    W_PADDED,
-)
+from bc.constants import W_PADDED
 from bc.mask import build_mask
 from bc.obs import (
     MemoryState,
@@ -45,7 +40,6 @@ from bc.obs import (
     init_memory,
     step_memory,
 )
-from bc.utils import list_sim_paths, meta_path_for
 from bc.visibility import compute_visibility
 
 
@@ -64,23 +58,18 @@ class Frame:
     t: int
 
 
-def is_eligible(sim_path: Path) -> bool:
+def _group_by_path(samples: list[tuple[Path, int]]) -> list[tuple[Path, tuple[int, ...]]]:
     """
-    True iff the per-game sim file passes the spike's drop filter.
+    Collapse a flat `(path, k)` list into one `(path, ks)` entry per unique path.
 
-    Two conditions: `max(map_width, map_height) <= MAX_BOARD_SIDE` and
-    player count == ELIGIBLE_PLAYER_COUNT. Map dims are checked first —
-    they're 0-d scalars (~8 bytes), while player count requires reading
-    `actions_source.shape` which materializes a ~32 KB array. The ~7% of
-    games dropped on map dims short-circuit before paying the larger read.
+    Preserves first-seen order for paths and within-path order for k's
+    (Python dicts are insertion-ordered). The dataset trusts caller-supplied
+    k ordering — no internal sort.
     """
-    with np.load(sim_path) as sim:
-        w = int(sim["map_width"])
-        h = int(sim["map_height"])
-        if max(w, h) > MAX_BOARD_SIDE:
-            return False
-        p = sim["actions_source"].shape[0]
-    return p == ELIGIBLE_PLAYER_COUNT
+    by_path: dict[Path, list[int]] = {}
+    for path, k in samples:
+        by_path.setdefault(path, []).append(k)
+    return [(p, tuple(ks)) for p, ks in by_path.items()]
 
 
 def encode_frame(
@@ -130,7 +119,7 @@ def encode_frame(
 
 class IterableDataset(TorchIterableDataset):
     """
-    Single-worker iterable over the per-game parsed corpus.
+    Single-worker iterable over a manifest of `(sim_path, perspective_k)` pairs.
 
     Multi-worker semantics (per-worker split + per-worker seed offset)
     are not implemented — running with `num_workers > 1` will yield each
@@ -140,50 +129,37 @@ class IterableDataset(TorchIterableDataset):
 
     def __init__(
         self,
-        intermediate_root: Path,
+        samples: list[tuple[Path, int]],
         seed: int,
-        sim_paths: list[Path] | None = None,
     ) -> None:
         """
-        `sim_paths`, if provided, skips the per-iteration `list_sim_paths` glob
-        and uses the supplied list instead. Hooks the same seam that a
-        pre-filtered training manifest will use (and that tests use to share
-        a session-scoped cached list across the suite).
+        `samples` is a list of `(sim_path, perspective_k)` pairs. Caller is
+        responsible for filtering — this class trusts every pair is trainable.
+        See `bc.splits.samples_for_split` for the production producer.
         """
-        self._intermediate_root = intermediate_root
+        self._groups = _group_by_path(samples)
         self._seed = seed
-        self._sim_paths = sim_paths
         self._epoch_counter = 0
 
-    def _shuffled_paths(self) -> list[Path]:
-        """Shared shuffle + epoch-counter increment. Used by iter_frames + __iter__."""
+    def _shuffled_groups(self) -> list[tuple[Path, tuple[int, ...]]]:
+        """Per-epoch shuffle of `(sim_path, k-tuple)` groups."""
         rng = random.Random(self._seed + self._epoch_counter)
         self._epoch_counter += 1
-        # Defensive copy: rng.shuffle mutates in place; never mutate the caller's list.
-        paths = (
-            list(self._sim_paths)
-            if self._sim_paths is not None
-            else list_sim_paths(self._intermediate_root)
-        )
-        rng.shuffle(paths)
-        return paths
+        groups = list(self._groups)
+        rng.shuffle(groups)
+        return groups
 
     def iter_frames(self) -> Iterator[Frame]:
         """
-        Walk the corpus and yield raw `Frame` objects, one per (perspective, timestep).
-
-        Public seam for tests and ad-hoc inspection. Production iteration goes
-        through `__iter__` which does its own state-managed walk.
+        Walk the manifest and yield raw `Frame` objects.
 
         Per-perspective frame range stops at `elim_timestep[k]` for eliminated
         perspectives — once a player is out, their subsequent "actions" are
         all-pass and carry no training signal (would just teach the model to
         pass when dead).
         """
-        for sim_path in self._shuffled_paths():
-            if not is_eligible(sim_path):
-                continue
-            meta_path = meta_path_for(sim_path)
+        for sim_path, ks in self._shuffled_groups():
+            meta_path = sim_path.with_name(sim_path.stem + ".meta.npz")
 
             with np.load(sim_path) as sim_npz:
                 sim = {key: sim_npz[key] for key in sim_npz.files}
@@ -191,8 +167,7 @@ class IterableDataset(TorchIterableDataset):
                 meta = {key: meta_npz[key] for key in meta_npz.files}
 
             T = sim["ownership"].shape[0]
-            K = meta["perspective_player_ids"].shape[0]
-            for k in range(K):
+            for k in ks:
                 elim_t = int(meta["elim_timestep"][k])
                 end_t = T - 1 if elim_t == -1 else min(T - 1, elim_t)
                 for t in range(end_t):
@@ -203,10 +178,8 @@ class IterableDataset(TorchIterableDataset):
         Production walk: manages per-(game, k) MemoryState + BFSCache, calls
         step_memory each tick, yields encoded sample dicts ready for DataLoader.
         """
-        for sim_path in self._shuffled_paths():
-            if not is_eligible(sim_path):
-                continue
-            meta_path = meta_path_for(sim_path)
+        for sim_path, ks in self._shuffled_groups():
+            meta_path = sim_path.with_name(sim_path.stem + ".meta.npz")
 
             with np.load(sim_path) as sim_npz:
                 sim = {key: sim_npz[key] for key in sim_npz.files}
@@ -214,11 +187,10 @@ class IterableDataset(TorchIterableDataset):
                 meta = {key: meta_npz[key] for key in meta_npz.files}
 
             T = sim["ownership"].shape[0]
-            K = meta["perspective_player_ids"].shape[0]
             H = int(sim["map_height"])
             W = int(sim["map_width"])
 
-            for k in range(K):
+            for k in ks:
                 perspective_slot = int(meta["perspective_player_ids"][k])
                 opp_slots = canonical_slot_order(perspective_slot)[1:]
 

@@ -26,8 +26,8 @@ NUM_BATCHES = 100
 FLAT_ACTION_COUNT = H_PADDED * W_PADDED * 8
 
 
-def test_dataloader_pipeline_smoke(intermediate_root: Path, sim_paths: list[Path]) -> None:
-    ds = IterableDataset(intermediate_root, seed=0, sim_paths=sim_paths)
+def test_dataloader_pipeline_smoke(samples: list[tuple[Path, int]]) -> None:
+    ds = IterableDataset(samples=samples, seed=0)
     loader = DataLoader(ds, batch_size=BATCH_SIZE)
 
     for batch in islice(loader, NUM_BATCHES):
