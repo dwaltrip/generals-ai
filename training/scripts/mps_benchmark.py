@@ -19,11 +19,12 @@ Note: The example config of 10, 50 currentlyruns in a bit over 1 minute.
 """
 
 import argparse
-import os
 import time
 
 import torch
 from torch import nn
+
+from shared.device import disable_mps_fallback
 
 
 IN_CHANNELS = 89
@@ -119,12 +120,7 @@ def main() -> None:
     parser.add_argument("--measure", type=int, default=100)
     args = parser.parse_args()
 
-    had_fallback = os.environ.pop("PYTORCH_ENABLE_MPS_FALLBACK", None)
-    if had_fallback is not None:
-        print(
-            f"NOTE: PYTORCH_ENABLE_MPS_FALLBACK was set in env ({had_fallback!r}); "
-            f"unset for this run so unsupported ops error loudly."
-        )
+    disable_mps_fallback()
 
     n_params = sum(p.numel() for p in PlaceholderUNet().parameters())
     print(

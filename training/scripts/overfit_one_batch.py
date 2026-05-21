@@ -19,7 +19,6 @@ algorithmic from MPS-coverage bugs.
 from __future__ import annotations
 
 import argparse
-import os
 import time
 from pathlib import Path
 
@@ -31,22 +30,11 @@ from bc.filters import eligible_perspectives
 from bc.loss import bc_loss
 from bc.model import BCModel
 from bc.utils import list_sim_paths, meta_path_for
+from shared.device import disable_mps_fallback, move_batch, pick_device
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 DEFAULT_INTERMEDIATE = REPO_ROOT / "replay-parser" / "data" / "intermediate"
-
-
-def pick_device(arg: str) -> str:
-    if arg != "auto":
-        return arg
-    if torch.backends.mps.is_available():
-        return "mps"
-    return "cpu"
-
-
-def move_batch(batch: dict[str, torch.Tensor], device: str) -> dict[str, torch.Tensor]:
-    return {k: v.to(device) for k, v in batch.items()}
 
 
 def main() -> None:
@@ -89,9 +77,7 @@ def main() -> None:
     args = parser.parse_args()
 
     # Unset MPS fallback so unsupported ops fail loudly (see module docstring).
-    had_fallback = os.environ.pop("PYTORCH_ENABLE_MPS_FALLBACK", None)
-    if had_fallback is not None:
-        print(f"NOTE: unset PYTORCH_ENABLE_MPS_FALLBACK (was {had_fallback!r})")
+    disable_mps_fallback()
 
     if not args.intermediate.exists():
         raise SystemExit(f"intermediate corpus not found at {args.intermediate}")
