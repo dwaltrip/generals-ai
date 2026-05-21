@@ -115,7 +115,7 @@ def encode_frame(
     """
     One (game, perspective, timestep) → one training sample dict.
 
-    Orchestrates `build_obs` (89 channels, requires state + vis + bfs cache),
+    Orchestrates `build_obs` (96 channels, requires state + vis + bfs cache),
     `build_mask` (legality, stateless), `actions.encode` (action target), and
     the value-target extraction. DataLoader's default collate stacks the
     result keywise into batched tensors.

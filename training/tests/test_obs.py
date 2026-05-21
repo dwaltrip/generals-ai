@@ -1,6 +1,6 @@
 """
 Targeted tests for `bc.obs`. Slot canonicalization is the high-silent-bug-risk
-surface; the rest of `build_obs` (89-channel full obs) is exercised end-to-end
+surface; the rest of `build_obs` (96-channel full obs) is exercised end-to-end
 by `test_dataloader_smoke.py` against real-corpus data.
 """
 

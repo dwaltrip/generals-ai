@@ -105,6 +105,7 @@ def _make_fixture(total_army: int, *, enemy_city_visible: bool = True):
         last_seen_owner=last_seen_owner,
         last_seen_armies=last_seen_armies,
         turns_since_seen=np.full((H, W), -1, dtype=np.int32),
+        opp_has_seen=np.zeros((P, H, W), dtype=bool),
         opp_contacted=np.zeros(P, dtype=bool),
         opp_captured_by=np.full(P, -1, dtype=np.int8),
     )

@@ -27,7 +27,7 @@ from torch import nn
 from shared.device import disable_mps_fallback
 
 
-IN_CHANNELS = 89
+IN_CHANNELS = 96
 SPATIAL = 32
 BATCH = 64
 

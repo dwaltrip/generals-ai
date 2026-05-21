@@ -256,6 +256,10 @@ def test_t2_first_structure_resolutions(sim):
     # No opp contact yet — (1, 4) far from current vision.
     assert not state.opp_contacted[OPP]
     assert state.opp_captured_by[OPP] == -1
+    # opp_has_seen[OPP] is empty until perspective directly sights an opp tile.
+    np.testing.assert_array_equal(
+        state.opp_has_seen[OPP], np.zeros((H, W), dtype=bool),
+    )
 
 
 # ===========================================================================
@@ -291,6 +295,18 @@ def test_t5_opp_general_discovered(sim):
     # Cities: (2, 0)@t=2 + (3, 4)@t=4.
     np.testing.assert_array_equal(
         state.known_city, _mask_with([(2, 0), (3, 4)]),
+    )
+
+    # opp_has_seen[OPP] activates at t=5: perspective takes (2,4), whose
+    # Moore-nbhd includes (1,4) — opp's general. The dilation around (1,4)
+    # marks the 3x3 block (0,3)..(2,5) (all in-bounds on 5x6 board).
+    np.testing.assert_array_equal(
+        state.opp_has_seen[OPP],
+        _mask_with([
+            (0, 3), (0, 4), (0, 5),
+            (1, 3), (1, 4), (1, 5),
+            (2, 3), (2, 4), (2, 5),
+        ]),
     )
 
 
@@ -347,4 +363,16 @@ def test_t7_post_capture(sim):
 
     # (0, 0) is still never seen by t=7.
     assert state.last_seen_owner[0, 0] == -2
+
+    # opp_has_seen[OPP] hasn't grown since t=5: t=6's vision over (1,4) is
+    # the same Moore-nbhd (no new cells added); at t=7 opp owns nothing
+    # visible, so no further dilation fires.
+    np.testing.assert_array_equal(
+        state.opp_has_seen[OPP],
+        _mask_with([
+            (0, 3), (0, 4), (0, 5),
+            (1, 3), (1, 4), (1, 5),
+            (2, 3), (2, 4), (2, 5),
+        ]),
+    )
     assert state.turns_since_seen[0, 0] == -1

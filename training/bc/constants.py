@@ -44,7 +44,7 @@ CITY_TRAVERSABILITY_FACTOR = 4
 # This contract is enforced uniformly across `opp_N_owned`, `opp_N_army_count`,
 # `last_seen_owner_opp_N`, BFS-to-opp-N, `opp_N_contacted`, `opp_N_captured_by`, etc.
 
-# Channel layout for the v1 spike obs tensor (89 channels).
+# Channel layout for the v1 spike obs tensor (96 channels).
 # Grouped by category; comments mark the boundaries. Order here = stack order in
 # `bc.obs.build_obs`.
 CHANNEL_ORDER = [
@@ -65,6 +65,10 @@ CHANNEL_ORDER = [
     "last_seen_owner_neutral",
     # Memory: scalars (3)
     "last_seen_armies", "turns_since_seen", "historically_seen",
+    # Memory: per-opp has-seen (7) — Moore-nbhd of any cell agent observed
+    # to be owned by opp N. Derived per 5.05-1 §3.4.2 / §I.
+    "opp_1_has_seen", "opp_2_has_seen", "opp_3_has_seen", "opp_4_has_seen",
+    "opp_5_has_seen", "opp_6_has_seen", "opp_7_has_seen",
     # BFS distance-from-known-generals (8)
     "bfs_self_general",
     "bfs_opp_1_general", "bfs_opp_2_general", "bfs_opp_3_general",
@@ -94,7 +98,7 @@ CHANNEL_ORDER = [
     "army_delta_t-1", "army_delta_t-2", "army_delta_t-3", "army_delta_t-4", "army_delta_t-5",
 ]
 
-OBS_CHANNELS = len(CHANNEL_ORDER)  # 89
-assert OBS_CHANNELS == 89, f"channel count drifted; CHANNEL_ORDER has {OBS_CHANNELS} entries"
+OBS_CHANNELS = len(CHANNEL_ORDER)  # 96
+assert OBS_CHANNELS == 96, f"channel count drifted; CHANNEL_ORDER has {OBS_CHANNELS} entries"
 
 CHANNEL_INDEX = {name: i for i, name in enumerate(CHANNEL_ORDER)}

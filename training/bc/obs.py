@@ -1,12 +1,12 @@
 """
-Observation-tensor construction — the 89-channel input to the policy/value
+Observation-tensor construction — the 96-channel input to the policy/value
 network at one (game, perspective, timestep) snapshot.
 
 This module owns three things:
   - `canonical_slot_order` — pin from Phase 1 (perspective→slot-0 layout).
   - `MemoryState` + `init_memory` + `step_memory` — per-perspective running
     memory, advanced once per tick.
-  - `build_obs` — pure read of (sim, state, vis, bfs_cache) → [89, H_PADDED, W_PADDED].
+  - `build_obs` — pure read of (sim, state, vis, bfs_cache) → [96, H_PADDED, W_PADDED].
 
 The channel set is grouped by category internally (named vars per channel),
 then assembled in `CHANNEL_ORDER` at the bottom of `build_obs`. The named-var
@@ -17,8 +17,8 @@ visually self-contained and easy to audit.
 
 Every per-opp channel group (`opp_N_owned`, `opp_N_army_count`,
 `last_seen_owner_opp_N`, BFS-to-opp-N, `opp_N_contacted`, `opp_N_captured_by`,
-...) follows the same canonical mapping: channel index `i` for `i ∈ 1..7`
-corresponds to the raw slot `opp_slots[i-1]`, where
+`opp_N_has_seen`, ...) follows the same canonical mapping: channel index `i`
+for `i ∈ 1..7` corresponds to the raw slot `opp_slots[i-1]`, where
 `opp_slots = canonical_slot_order(perspective)[1:]`.
 
 Channel 0 (in any per-opp grouping that *includes* self) is always the
@@ -60,6 +60,25 @@ from bc.constants import (
 # ---------------------------------------------------------------------------
 # Canonicalization (unchanged from Phase 1)
 # ---------------------------------------------------------------------------
+
+
+def _moore_dilate(mask: np.ndarray) -> np.ndarray:
+    """Moore-neighborhood (3x3) binary dilation of a 2D bool mask.
+
+    Same 8-direction OR pattern as `visibility.compute_visibility`, factored
+    out for reuse by `step_memory` when expanding the agent's vision of an
+    opponent's tile into "opponent had vision around here."
+    """
+    out = mask.copy()
+    out[:-1, :] |= mask[1:, :]
+    out[1:, :] |= mask[:-1, :]
+    out[:, :-1] |= mask[:, 1:]
+    out[:, 1:] |= mask[:, :-1]
+    out[:-1, :-1] |= mask[1:, 1:]
+    out[:-1, 1:] |= mask[1:, :-1]
+    out[1:, :-1] |= mask[:-1, 1:]
+    out[1:, 1:] |= mask[:-1, :-1]
+    return out
 
 
 def canonical_slot_order(perspective_slot: int, P: int = 8) -> list[int]:
@@ -141,6 +160,14 @@ class MemoryState:
     # int32 [H, W]: ticks since last vision of this cell. -1 = never seen.
     turns_since_seen: np.ndarray
 
+    # ---- Per-opponent spatial memory ----
+    # bool [P, H, W]: opp_has_seen[p] = cells the perspective has ever observed
+    # to be within opponent p's Moore-neighborhood vision. Whenever the
+    # perspective sees a tile owned by p, the tile + its 8 neighbors are
+    # marked — i.e., "p had vision around here at some point." Monotonic.
+    # See 5.05-1 §3.4.2 + §I. The self-slot row is unused (kept all-False).
+    opp_has_seen: np.ndarray
+
     # ---- Per-opponent broadcast state ----
     # bool [P]: opp_contacted[p] = True iff perspective has ever seen a cell
     # owned by p. Monotonic.
@@ -207,6 +234,7 @@ def init_memory(
         last_seen_owner=np.full((H, W), -2, dtype=np.int8),
         last_seen_armies=np.full((H, W), -1, dtype=np.int16),
         turns_since_seen=np.full((H, W), -1, dtype=np.int32),
+        opp_has_seen=np.zeros((P, H, W), dtype=bool),
         opp_contacted=np.zeros(P, dtype=bool),
         opp_captured_by=np.full(P, -1, dtype=np.int8),
     )
@@ -308,13 +336,18 @@ def step_memory(
     fogged_known = state.historically_seen & ~vis
     state.turns_since_seen[fogged_known] += 1
 
-    # Contact: opp_contacted[p] flips True the first time perspective sees
-    # any cell owned by p. Monotonic.
+    # Contact + opp_has_seen: both derived from "agent's vision of cells
+    # owned by p." Contact is the OR-reduction (have I seen any of p's
+    # tiles?); opp_has_seen is the Moore-dilation (which cells were within
+    # p's vision when I saw them?). One pass per opponent covers both.
     for p in range(P):
-        if p == perspective_slot or state.opp_contacted[p]:
+        if p == perspective_slot:
             continue
-        if (vis & (own_t == p)).any():
-            state.opp_contacted[p] = True
+        visible_owned_by_p = vis & (own_t == p)
+        if not visible_owned_by_p.any():
+            continue
+        state.opp_contacted[p] = True
+        state.opp_has_seen[p] |= _moore_dilate(visible_owned_by_p)
 
     # Capture events: filter to events occurring at this tick, update
     # opp_captured_by. Global event — perspective sees all captures regardless
@@ -455,9 +488,10 @@ def _cat_persistent_map(
 def _cat_memory(
     state: MemoryState, perspective_slot: int, opp_slots: list[int],
 ) -> list[np.ndarray]:
-    # Cat 4: Memory of formerly-visible cells (12 channels). 9-way one-hot
-    # last_seen_owner (self + 7 opp + neutral), plus log-scaled
-    # last_seen_armies, turns_since_seen, and a historically_seen mask.
+    # Cat 4: Memory of formerly-visible cells (19 channels). 9-way one-hot
+    # last_seen_owner (self + 7 opp + neutral), log-scaled last_seen_armies,
+    # turns_since_seen, historically_seen mask, plus 7 per-opp
+    # `opp_N_has_seen` masks (5.05-1 §3.4.2 / §I).
     # `-1.0` post-log sentinel for never-seen cells; consistent pattern
     # across all log-scaled memory channels.
     last_seen_owner_self = (state.last_seen_owner == perspective_slot).astype(np.float32)
@@ -476,9 +510,11 @@ def _cat_memory(
         state.turns_since_seen >= 0, np.log1p(turns_since_seen_safe), -1.0
     ).astype(np.float32)
     historically_seen_ch = state.historically_seen.astype(np.float32)
+    opp_has_seen = [state.opp_has_seen[opp].astype(np.float32) for opp in opp_slots]
     return [
         last_seen_owner_self, *last_seen_owner_opp, last_seen_owner_neutral,
         last_seen_armies_ch, turns_since_seen_ch, historically_seen_ch,
+        *opp_has_seen,
     ]
 
 
@@ -662,7 +698,7 @@ def build_obs(
     W: int,
 ) -> np.ndarray:
     """
-    Build the 89-channel obs tensor for one (game, perspective, tick).
+    Build the 96-channel obs tensor for one (game, perspective, tick).
 
     Channel layout: see `bc.constants.CHANNEL_ORDER`. Each `_cat_*` helper
     returns its slice in CHANNEL_ORDER position; this function stacks them.
