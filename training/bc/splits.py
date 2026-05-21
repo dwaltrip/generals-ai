@@ -45,7 +45,7 @@ import random
 import subprocess
 from pathlib import Path
 
-from bc.filters import FILTER_VERSION, eligible_perspectives
+from bc.filters import DROP_REASONS, FILTER_VERSION, eligible_perspectives
 from bc.utils import list_sim_paths, meta_path_for, sim_path_for
 from utils.player_name_lists import load_union
 
@@ -119,13 +119,24 @@ def build_manifest(
 
     paths = list(sim_paths) if sim_paths is not None else list_sim_paths(intermediate_root)
     if scan_limit is not None:
+        # TODO: scan_limit slices the lexicographically-first N rids (list_sim_paths
+        # sorts by shard dir then filename), drawn from the earliest few `rid[:2]`
+        # shard dirs. Replay IDs *appear* to be random strings, so in practice the
+        # sample is probably not strongly biased — but we're relying on that
+        # assumption rather than enforcing it. Not robust: if rid generation ever
+        # had any structure (timestamp prefix, user-id prefix, etc.), this would
+        # silently produce a skewed slice. For a true "N random games" mode,
+        # shuffle `paths` with `seed` before slicing.
         paths = paths[:scan_limit]
     n_total = len(paths)
 
     pairs: list[tuple[str, int]] = []
     dropped_games = 0
+    drop_counts: dict[str, int] = {r: 0 for r in DROP_REASONS}
     for i, sim_path in enumerate(paths):
-        ks = eligible_perspectives(sim_path, meta_path_for(sim_path), curated_names)
+        ks = eligible_perspectives(
+            sim_path, meta_path_for(sim_path), curated_names, drop_counts,
+        )
         if not ks:
             dropped_games += 1
         else:
@@ -134,6 +145,10 @@ def build_manifest(
                 pairs.append((rid, k))
         if log_every is not None and (i + 1) % log_every == 0:
             print(f"  scanned {i + 1:,} / {n_total:,} games | kept {len(pairs):,} pairs")
+
+    if log_every is not None:
+        parts = "  ".join(f"{r}={drop_counts[r]:,}" for r in DROP_REASONS)
+        print(f"  perspective drops: {parts}")
 
     if not pairs:
         # Catches "pointed CLI at the wrong directory" + "filters rejected
