@@ -82,6 +82,89 @@ def _save_checkpoint(model: torch.nn.Module, ckpt_dir: Path, epoch: int) -> str:
     return name
 
 
+def train_one_epoch(
+    epoch: int,
+    model: torch.nn.Module,
+    optim: torch.optim.Optimizer,
+    loader: DataLoader,
+    device: torch.device,
+    batches_fp: TextIO,
+    run_start: float,
+    max_batches: int | None,
+    log_every: int,
+) -> dict:
+    """Run one epoch of BC training.
+
+    Iterates `loader`, performs forward/backward/optim.step per batch,
+    writes per-batch JSONL records to `batches_fp`, and prints a console
+    line every `log_every` batches with a rolling samples/sec rate.
+
+    Returns the epoch summary dict: sample-weighted mean losses (via
+    `LossAccumulator`) plus `n_batches`, `duration_sec`, `samples_per_sec`.
+    Caller owns the per-epoch JSONL row and ckpt save.
+    """
+    acc = LossAccumulator()
+    epoch_start = time.perf_counter()
+    n_batches_seen = 0
+
+    # Rolling samples/sec — instantaneous rate across the last
+    # log-every window. Reset every print so the number tracks
+    # current throughput rather than smoothing over the epoch.
+    window_start = epoch_start
+    window_samples = 0
+
+    for batch_idx, batch in enumerate(loader):
+        if max_batches is not None and batch_idx >= max_batches:
+            break
+
+        batch = move_batch(batch, device)
+        optim.zero_grad()
+        out = model(batch["obs"])
+        losses = bc_loss(out, batch)
+        losses["total"].backward()
+        optim.step()
+
+        B = batch["obs"].shape[0]
+        acc.update(losses, batch_size=B)
+        window_samples += B
+        n_batches_seen += 1
+
+        _write_jsonl(batches_fp, {
+            "epoch": epoch,
+            "batch_idx": batch_idx,
+            "batch_size": B,
+            "policy": float(losses["policy"].item()),
+            "value": float(losses["value"].item()),
+            "pass": float(losses["pass"].item()),
+            "total": float(losses["total"].item()),
+            "n_non_pass": int(losses["n_non_pass"].item()),
+            "wall_time_sec": round(time.perf_counter() - run_start, 3),
+        })
+
+        if (batch_idx + 1) % log_every == 0:
+            rate = window_samples / (time.perf_counter() - window_start)
+            print(
+                f"[epoch {epoch}] batch {batch_idx + 1} | "
+                f"policy {losses['policy'].item():6.4f} "
+                f"value {losses['value'].item():6.4f} "
+                f"pass {losses['pass'].item():6.4f} "
+                f"total {losses['total'].item():6.4f} | "
+                f"{rate:.0f} samples/sec"
+            )
+            window_start = time.perf_counter()
+            window_samples = 0
+
+    epoch_dur = time.perf_counter() - epoch_start
+    s = acc.summary()
+    rate = s["n_samples"] / epoch_dur if epoch_dur > 0 else 0.0
+    return {
+        **s,
+        "n_batches": n_batches_seen,
+        "duration_sec": round(epoch_dur, 3),
+        "samples_per_sec": round(rate, 2),
+    }
+
+
 def main() -> None:
     # TODO: as the knob count grows past ~15, or when we start doing
     # cross-run sweeps, revisit moving to a config file (YAML/TOML).
@@ -168,87 +251,32 @@ def main() -> None:
     model.train()
     try:
         for epoch in range(1, args.epochs + 1):
-            acc = LossAccumulator()
-            epoch_start = time.perf_counter()
-            n_batches_seen = 0
-
-            # Rolling samples/sec — instantaneous rate across the last
-            # log-every window. Reset every print so the number tracks
-            # current throughput rather than smoothing over the epoch.
-            window_start = epoch_start
-            window_samples = 0
-
-            for batch_idx, batch in enumerate(loader):
-                if args.max_batches is not None and batch_idx >= args.max_batches:
-                    break
-
-                batch = move_batch(batch, device)
-                optim.zero_grad()
-                out = model(batch["obs"])
-                losses = bc_loss(out, batch)
-                losses["total"].backward()
-                optim.step()
-
-                B = batch["obs"].shape[0]
-                acc.update(losses, batch_size=B)
-                window_samples += B
-                n_batches_seen += 1
-
-                _write_jsonl(batches_fp, {
-                    "epoch": epoch,
-                    "batch_idx": batch_idx,
-                    "batch_size": B,
-                    "policy": float(losses["policy"].item()),
-                    "value": float(losses["value"].item()),
-                    "pass": float(losses["pass"].item()),
-                    "total": float(losses["total"].item()),
-                    "n_non_pass": int(losses["n_non_pass"].item()),
-                    "wall_time_sec": round(time.perf_counter() - run_start, 3),
-                })
-
-                if (batch_idx + 1) % args.log_every == 0:
-                    rate = window_samples / (time.perf_counter() - window_start)
-                    print(
-                        f"[epoch {epoch}] batch {batch_idx + 1} | "
-                        f"policy {losses['policy'].item():6.4f} "
-                        f"value {losses['value'].item():6.4f} "
-                        f"pass {losses['pass'].item():6.4f} "
-                        f"total {losses['total'].item():6.4f} | "
-                        f"{rate:.0f} samples/sec"
-                    )
-                    window_start = time.perf_counter()
-                    window_samples = 0
-
-            epoch_dur = time.perf_counter() - epoch_start
-            s = acc.summary()
-            rate = s["n_samples"] / epoch_dur if epoch_dur > 0 else 0.0
+            summary = train_one_epoch(
+                epoch=epoch,
+                model=model,
+                optim=optim,
+                loader=loader,
+                device=device,
+                batches_fp=batches_fp,
+                run_start=run_start,
+                max_batches=args.max_batches,
+                log_every=args.log_every,
+            )
             ckpt_name = _save_checkpoint(model, ckpt_dir, epoch)
-            _write_jsonl(epochs_fp, {
-                "epoch": epoch,
-                "policy": s["policy"],
-                "value": s["value"],
-                "pass": s["pass"],
-                "total": s["total"],
-                "n_non_pass": s["n_non_pass"],
-                "n_samples": s["n_samples"],
-                "n_batches": n_batches_seen,
-                "duration_sec": round(epoch_dur, 3),
-                "samples_per_sec": round(rate, 2),
-                "ckpt": ckpt_name,
-            })
+            _write_jsonl(epochs_fp, {"epoch": epoch, **summary, "ckpt": ckpt_name})
             print()
             print(
                 f"[epoch {epoch}] complete | "
-                f"{s['n_samples']:,} frames ({s['n_non_pass']:,} non-pass) "
-                f"in {epoch_dur:.1f}s | "
-                f"{rate:.0f} samples/sec ({n_batches_seen} batches)"
+                f"{summary['n_samples']:,} frames ({summary['n_non_pass']:,} non-pass) "
+                f"in {summary['duration_sec']:.1f}s | "
+                f"{summary['samples_per_sec']:.0f} samples/sec ({summary['n_batches']} batches)"
             )
             print(
                 f"[epoch {epoch}] mean: "
-                f"policy {s['policy']:.4f}  "
-                f"value {s['value']:.4f}  "
-                f"pass {s['pass']:.4f}  |  "
-                f"total {s['total']:.4f}"
+                f"policy {summary['policy']:.4f}  "
+                f"value {summary['value']:.4f}  "
+                f"pass {summary['pass']:.4f}  |  "
+                f"total {summary['total']:.4f}"
             )
             print(f"[epoch {epoch}] saved checkpoint: checkpoints/{ckpt_name}")
             print()
