@@ -57,8 +57,8 @@ def test_manifest_provenance_fields_present(
     m = build_manifest(intermediate_root, seed=0, sim_paths=sim_paths[:50])
     for key in (
         "version", "seed", "built_at", "filter_version", "git_sha",
-        "corpus_size", "dropped_games", "kept_pairs", "val_frac",
-        "train", "val",
+        "corpus_size", "dropped_games", "kept_pairs", "curated_names_count",
+        "val_frac", "train", "val",
     ):
         assert key in m, f"manifest missing provenance field: {key}"
     assert m["version"] == MANIFEST_VERSION

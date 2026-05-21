@@ -21,6 +21,9 @@ Manifest JSON schema (v1):
   - `corpus_size` (int): total sim files scanned (post-`scan_limit` if set).
   - `dropped_games` (int): games rejected by the filter (`eligible_perspectives` → []).
   - `kept_pairs` (int): total `(rid, k)` pairs after filtering.
+  - `curated_names_count` (int): size of the curated-name set the filter
+    intersected against — provenance for "which curated lists were in
+    effect when this manifest was built."
   - `val_frac` (float): requested validation fraction (actual ratio may
     differ by one pair due to rounding).
   - `scan_limit` (int | null): if set, caps the corpus scan to the first N
@@ -44,10 +47,27 @@ from pathlib import Path
 
 from bc.filters import FILTER_VERSION, eligible_perspectives
 from bc.utils import list_sim_paths, meta_path_for, sim_path_for
+from utils.player_name_lists import load_union
 
 
 MANIFEST_VERSION = 1
 DEFAULT_VAL_FRAC = 0.05
+
+# Repo-relative path to the curated-list manifest. Resolved here so callers
+# (build_manifest's default, CLI) don't each recompute the same walk.
+_REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+CURATED_LISTS_MANIFEST = _REPO_ROOT / "curated-player-lists.txt"
+
+
+def load_curated_names() -> set[str]:
+    """Load the default curated-player-name union as a set for O(1)
+    membership tests. The set is the cross-list union (insertion-order
+    dedup) at the current state of `curated-player-lists.txt`.
+
+    Callers can pass an explicit `curated_names=` to `build_manifest` to
+    override — useful for tests that want a small known fixture set.
+    """
+    return set(load_union(CURATED_LISTS_MANIFEST, _REPO_ROOT))
 
 
 def _git_sha() -> str:
@@ -71,6 +91,7 @@ def build_manifest(
     sim_paths: list[Path] | None = None,
     scan_limit: int | None = None,
     log_every: int | None = None,
+    curated_names: set[str] | None = None,
 ) -> dict:
     """
     Scan corpus, apply filters, seeded-shuffle eligible `(rid, k)` pairs, split.
@@ -86,8 +107,15 @@ def build_manifest(
 
     `log_every` prints "scanned X / Y" progress every N games; useful for the
     CLI on the full corpus. Pass `None` to silence (tests don't need it).
+
+    `curated_names`, if `None`, defaults to `load_curated_names()` — the
+    cross-list union from `curated-player-lists.txt`. Tests pass an explicit
+    set to keep fixtures small and known.
     """
     assert 0.0 < val_frac < 1.0, f"val_frac must be in (0, 1), got {val_frac}"
+
+    if curated_names is None:
+        curated_names = load_curated_names()
 
     paths = list(sim_paths) if sim_paths is not None else list_sim_paths(intermediate_root)
     if scan_limit is not None:
@@ -97,7 +125,7 @@ def build_manifest(
     pairs: list[tuple[str, int]] = []
     dropped_games = 0
     for i, sim_path in enumerate(paths):
-        ks = eligible_perspectives(sim_path, meta_path_for(sim_path))
+        ks = eligible_perspectives(sim_path, meta_path_for(sim_path), curated_names)
         if not ks:
             dropped_games += 1
         else:
@@ -141,6 +169,7 @@ def build_manifest(
         "corpus_size": n_total,
         "dropped_games": dropped_games,
         "kept_pairs": len(pairs),
+        "curated_names_count": len(curated_names),
         "val_frac": val_frac,
         "scan_limit": scan_limit,
         "train": [list(p) for p in train],

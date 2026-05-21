@@ -13,6 +13,7 @@ from pathlib import Path
 import pytest
 
 from bc.filters import eligible_perspectives
+from bc.splits import load_curated_names
 from bc.utils import list_sim_paths, meta_path_for
 
 
@@ -44,8 +45,9 @@ def samples(sim_paths: list[Path]) -> list[tuple[Path, int]]:
     `_SAMPLES_SCAN_LIMIT` sim files. Mirrors what `bc.splits.build_manifest`
     produces, scoped down for test cost.
     """
+    curated = load_curated_names()
     out: list[tuple[Path, int]] = []
     for sim_path in sim_paths[:_SAMPLES_SCAN_LIMIT]:
-        for k in eligible_perspectives(sim_path, meta_path_for(sim_path)):
+        for k in eligible_perspectives(sim_path, meta_path_for(sim_path), curated):
             out.append((sim_path, k))
     return out

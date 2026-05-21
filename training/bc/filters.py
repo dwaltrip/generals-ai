@@ -2,10 +2,9 @@
 Game- and perspective-level eligibility filters for the BC training corpus.
 
 `is_eligible` is the game-level filter (cheap — peeks at sim scalars only).
-`eligible_perspectives` is the full pipeline: game-level gate + future
-per-perspective gates (e.g., short-eliminated perspectives, low-skill
-opponents). v1 is all-or-nothing — if the game is eligible, every
-perspective is eligible.
+`eligible_perspectives` is the full pipeline: game-level gate plus a
+per-perspective curated-name gate (a perspective enters training only if
+its username appears in the caller-supplied curated set).
 
 `FILTER_VERSION` is a manually-bumped string stamped into the split manifest.
 Bump it whenever filter logic changes so manifests built under different
@@ -43,16 +42,42 @@ def is_eligible(sim_path: Path) -> bool:
     return p == ELIGIBLE_PLAYER_COUNT
 
 
-def eligible_perspectives(sim_path: Path, meta_path: Path) -> list[int]:
+def eligible_perspectives(
+    sim_path: Path,
+    meta_path: Path,
+    curated_names: set[str],
+) -> list[int]:
     """
     List of perspective indices for this game that pass all training filters.
 
-    Empty list means "this game contributes no training samples." v1 is
-    all-or-nothing: either the game-level filter passes and every perspective
-    is in, or nothing is. Per-perspective gates land here as they're added.
+    Empty list means "this game contributes no training samples." Game-level
+    filter via `is_eligible` plus the per-perspective curated-name gate: a
+    perspective is kept iff its username is in `curated_names`.
+
+    NOTE: `curated_names` was added during a session where it wasn't yet
+    clear whether the parser-produced `meta["perspective_usernames"]` had
+    already been intersected with the curated-player list. It turns out
+    the parser *does* this intersection at parse time
+    (`replay_parser/driver.py` drops non-curated perspectives before
+    writing the meta file), so against the live corpus today this filter
+    is a no-op — every name we see here is already in the curated set.
+
+    Kept anyway for two reasons:
+      1. Defense-in-depth: a future parser change that silently introduces
+         non-curated perspectives would otherwise leak into training.
+      2. Tighter-filtering hook: a training run can pass a *subset* of the
+         parser's curated list to train on a narrower group (e.g., the
+         top-N of the 205 curated players). The parser fixes the outer
+         set; this gate lets training pick a finer slice without
+         re-parsing the corpus.
+    
+    Cost is one set-membership check per perspective.
+
+    TODO: Revisit in the future and decide whether it's worth keeping,
+    or if it's confusing having a similar filter here and in the parser.
     """
     if not is_eligible(sim_path):
         return []
     with np.load(meta_path) as meta:
-        n_perspectives = int(meta["perspective_player_ids"].shape[0])
-    return list(range(n_perspectives))
+        usernames = meta["perspective_usernames"]
+    return [k for k, name in enumerate(usernames) if str(name) in curated_names]
