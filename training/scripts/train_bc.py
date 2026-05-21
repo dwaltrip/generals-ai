@@ -6,12 +6,12 @@ per-batch component losses + rolling samples/sec every `--log-every` batches;
 end-of-epoch summary collects the sample-weighted means via `LossAccumulator`.
 
 Each invocation writes to its own `<out-dir>/<YYYYMMDD-HHMMSS>/` directory:
-  - `args.json`    — full CLI invocation as JSON, for provenance.
-  - `batches.jsonl` — one record per batch.
-  - `epochs.jsonl`  — one record per epoch (sample-weighted means + timing).
+  - `args.json`         — full CLI invocation as JSON, for provenance.
+  - `batches.jsonl`     — one record per batch.
+  - `epochs.jsonl`      — one record per epoch (sample-weighted means + timing).
+  - `checkpoints/epoch_NNN.pt` — model state_dict at end of each epoch.
 
-No val pass, no checkpoints. Pass `--max-batches N` to cap a run for
-smoke testing.
+No val pass. Pass `--max-batches N` to cap a run for smoke testing.
 
 Run from `training/`:
     uv run python scripts/train_bc.py \\
@@ -69,6 +69,19 @@ def _write_jsonl(fp: TextIO, record: dict) -> None:
     fp.write(json.dumps(record) + "\n")
 
 
+def _save_checkpoint(model: torch.nn.Module, ckpt_dir: Path, epoch: int) -> str:
+    """Save the model's `state_dict` to `<ckpt_dir>/epoch_NNN.pt`. Returns
+    the filename (sans dir) for logging.
+
+    State-dict only — no optim/RNG/epoch payload. Resume-from-checkpoint
+    isn't on the spike's path; reloading for eval or inference needs only
+    the weights. Epoch number lives in the filename + `epochs.jsonl`.
+    """
+    name = f"epoch_{epoch:03d}.pt"
+    torch.save(model.state_dict(), ckpt_dir / name)
+    return name
+
+
 def main() -> None:
     # TODO: as the knob count grows past ~15, or when we start doing
     # cross-run sweeps, revisit moving to a config file (YAML/TOML).
@@ -112,6 +125,8 @@ def main() -> None:
 
     # --- Run dir + provenance ---
     run_dir = _make_run_dir(args.out_dir)
+    ckpt_dir = run_dir / "checkpoints"
+    ckpt_dir.mkdir()
     print(f"run dir: {run_dir}")
     with (run_dir / "args.json").open("w") as fp:
         json.dump(vars(args), fp, default=_serialize_arg, indent=2)
@@ -207,6 +222,7 @@ def main() -> None:
             epoch_dur = time.perf_counter() - epoch_start
             s = acc.summary()
             rate = s["n_samples"] / epoch_dur if epoch_dur > 0 else 0.0
+            ckpt_name = _save_checkpoint(model, ckpt_dir, epoch)
             _write_jsonl(epochs_fp, {
                 "epoch": epoch,
                 "policy": s["policy"],
@@ -218,6 +234,7 @@ def main() -> None:
                 "n_batches": n_batches_seen,
                 "duration_sec": round(epoch_dur, 3),
                 "samples_per_sec": round(rate, 2),
+                "ckpt": ckpt_name,
             })
             print()
             print(
@@ -233,6 +250,7 @@ def main() -> None:
                 f"pass {s['pass']:.4f}  |  "
                 f"total {s['total']:.4f}"
             )
+            print(f"[epoch {epoch}] saved checkpoint: checkpoints/{ckpt_name}")
             print()
     finally:
         batches_fp.close()
