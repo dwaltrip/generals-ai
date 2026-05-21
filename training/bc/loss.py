@@ -24,6 +24,8 @@ that lines the two up.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import torch
 import torch.nn.functional as F
 
@@ -130,3 +132,68 @@ def bc_loss(
         "pass": pass_bce,
         "n_non_pass": torch.tensor(n_non_pass),
     }
+
+
+@dataclass
+class LossAccumulator:
+    """
+    Sample-weighted running means over `bc_loss` returns for epoch summaries.
+
+    Aggregation rules (see module docstring for the per-batch definitions):
+      - `policy` is mean-over-non-pass-frames per batch, so the epoch mean
+        weights each batch by its `n_non_pass`. An all-pass batch's policy
+        loss is 0 by the `bc_loss` defensive guard, but more importantly
+        its `n_non_pass` is 0 → it contributes zero weight and zero sum,
+        which is the right thing.
+      - `value`, `pass` are mean-over-full-batch per batch, so the epoch
+        mean weights each batch by its sample count `B`.
+      - `total` is *derived* from the component epoch means using the
+        fixed weights `LAMBDA_VALUE`, `MU_PASS`. This preserves the
+        identity `total == policy + λ·value + μ·pass` at every
+        aggregation level — useful when reading the log to see which
+        head is driving the loss.
+
+    One accumulator per epoch per split (train + val each get their own).
+    No `reset()` — instantiate a fresh accumulator at the start of each
+    epoch / val pass.
+    """
+
+    n_non_pass: int = 0
+    n_samples: int = 0
+    sum_policy: float = 0.0  # weighted by n_non_pass per batch
+    sum_value: float = 0.0   # weighted by batch_size per batch
+    sum_pass: float = 0.0    # weighted by batch_size per batch
+
+    def update(
+        self,
+        losses: dict[str, torch.Tensor],
+        batch_size: int,
+    ) -> None:
+        """Fold one batch's `bc_loss` return dict into the running totals."""
+        n_np = int(losses["n_non_pass"].item())
+        self.n_non_pass += n_np
+        self.n_samples += batch_size
+        self.sum_policy += losses["policy"].item() * n_np
+        self.sum_value += losses["value"].item() * batch_size
+        self.sum_pass += losses["pass"].item() * batch_size
+
+    def summary(self) -> dict[str, float | int]:
+        """
+        Epoch-level loss summary as plain floats.
+
+        Pre-update accumulator returns zeros (no div-by-zero). An epoch
+        consisting entirely of all-pass batches also returns 0 for the
+        policy mean — `n_non_pass` is 0 across all batches.
+        """
+        policy = self.sum_policy / self.n_non_pass if self.n_non_pass > 0 else 0.0
+        value = self.sum_value / self.n_samples if self.n_samples > 0 else 0.0
+        pass_ = self.sum_pass / self.n_samples if self.n_samples > 0 else 0.0
+        total = policy + LAMBDA_VALUE * value + MU_PASS * pass_
+        return {
+            "policy": policy,
+            "value": value,
+            "pass": pass_,
+            "total": total,
+            "n_non_pass": self.n_non_pass,
+            "n_samples": self.n_samples,
+        }
