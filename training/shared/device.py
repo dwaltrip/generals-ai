@@ -41,8 +41,16 @@ def pick_device(arg: str) -> torch.device:
 def move_batch(
     batch: dict[str, torch.Tensor], device: torch.device
 ) -> dict[str, torch.Tensor]:
-    """Move every tensor in a flat dict-of-tensors batch onto `device`."""
-    return {k: v.to(device) for k, v in batch.items()}
+    """Move every tensor in a flat dict-of-tensors batch onto `device`.
+
+    `non_blocking=True` enables async H2D transfers when the source tensor
+    lives in pinned memory and the target is CUDA — the copy is queued on
+    the default CUDA stream and overlaps with GPU compute on the previous
+    batch. On non-CUDA devices, or with unpinned source tensors, the flag
+    is silently ignored, so it's safe to set unconditionally. See
+    `TrainConfig.pin_memory` for the full picture on why this matters.
+    """
+    return {k: v.to(device, non_blocking=True) for k, v in batch.items()}
 
 
 def disable_mps_fallback() -> None:

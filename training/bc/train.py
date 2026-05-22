@@ -227,7 +227,30 @@ def bc_run(config: TrainConfig) -> None:
             seed=config.seed,
             shuffle_buffer_size=config.shuffle_buffer_size,
         )
-        loader = DataLoader(ds, batch_size=config.batch_size)
+        # Resolve pin_memory `None` (auto) to a concrete bool based on
+        # device; see `TrainConfig.pin_memory` for the full explanation.
+        pin_memory = (
+            config.pin_memory
+            if config.pin_memory is not None
+            else device.type == "cuda"
+        )
+        loader_kwargs: dict = {
+            "batch_size": config.batch_size,
+            "num_workers": config.num_workers,
+            "pin_memory": pin_memory,
+        }
+        # prefetch_factor only applies when there are workers to prefetch
+        # *with*; PyTorch raises if it's passed with num_workers == 0.
+        if config.num_workers > 0:
+            loader_kwargs["prefetch_factor"] = config.prefetch_factor
+        loader = DataLoader(ds, **loader_kwargs)
+        print(
+            f"dataloader: batch_size={config.batch_size}  "
+            f"num_workers={config.num_workers}  "
+            f"pin_memory={pin_memory} (config={config.pin_memory!r})  "
+            f"prefetch_factor="
+            f"{config.prefetch_factor if config.num_workers > 0 else 'n/a'}"
+        )
 
         run_loop(
             config=config,
@@ -292,6 +315,9 @@ def run_loop(
                 val_samples=val_samples,
                 device=device,
                 batch_size=config.batch_size,
+                num_workers=config.num_workers,
+                pin_memory=config.pin_memory,
+                prefetch_factor=config.prefetch_factor,
                 seed=config.seed,
             )
             ckpt_name = _save_checkpoint(model, ckpt_dir, epoch)

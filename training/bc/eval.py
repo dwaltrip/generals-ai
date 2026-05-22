@@ -70,6 +70,9 @@ def run_val(
     val_samples: list[tuple[Path, int]],
     device: torch.device,
     batch_size: int,
+    num_workers: int,
+    pin_memory: bool | None,
+    prefetch_factor: int,
     seed: int = 0,
 ) -> dict:
     """Run one full validation pass and return the summary metrics.
@@ -77,9 +80,24 @@ def run_val(
     Returns a flat dict suitable for nesting under `val:` in the per-epoch
     JSONL row. Top-1/top-3, pass_acc, pass_frac, and the action histograms
     are `None`-guarded against empty denominators (see module docstring).
+
+    DataLoader knobs (`num_workers` / `pin_memory` / `prefetch_factor`)
+    are caller-supplied — `run_val` mirrors the train loop's choices for
+    apples-to-apples throughput numbers. `pin_memory=None` resolves to
+    auto (True iff device is CUDA).
     """
     val_ds = IterableDataset(samples=val_samples, seed=seed)
-    val_loader = DataLoader(val_ds, batch_size=batch_size)
+    pin_memory_resolved = (
+        pin_memory if pin_memory is not None else device.type == "cuda"
+    )
+    val_loader_kwargs: dict = {
+        "batch_size": batch_size,
+        "num_workers": num_workers,
+        "pin_memory": pin_memory_resolved,
+    }
+    if num_workers > 0:
+        val_loader_kwargs["prefetch_factor"] = prefetch_factor
+    val_loader = DataLoader(val_ds, **val_loader_kwargs)
 
     val_start = time.perf_counter()
     acc = LossAccumulator()

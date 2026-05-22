@@ -55,7 +55,28 @@ def build_arg_parser() -> argparse.ArgumentParser:
             "loop end-to-end without committing to a full epoch's runtime."
         ),
     )
+    parser.add_argument(
+        "--num-workers",
+        type=int,
+        default=2,
+        help="DataLoader worker subprocesses. 0 = main-process iteration.",
+    )
+    parser.add_argument(
+        "--pin-memory",
+        choices=("auto", "true", "false"),
+        default="auto",
+        help="DataLoader pin_memory. 'auto' = True iff device is CUDA.",
+    )
+    parser.add_argument(
+        "--prefetch-factor",
+        type=int,
+        default=2,
+        help="Batches each worker prefetches ahead. Ignored when num-workers=0.",
+    )
     return parser
+
+
+_PIN_MEMORY_MAP: dict[str, bool | None] = {"auto": None, "true": True, "false": False}
 
 
 def config_from_args(args: argparse.Namespace) -> TrainConfig:
@@ -81,4 +102,7 @@ def config_from_args(args: argparse.Namespace) -> TrainConfig:
         shuffle_buffer_size=args.shuffle_buffer_size,
         log_every=args.log_every,
         max_batches=args.max_batches,
+        num_workers=args.num_workers,
+        pin_memory=_PIN_MEMORY_MAP[args.pin_memory],
+        prefetch_factor=args.prefetch_factor,
     )

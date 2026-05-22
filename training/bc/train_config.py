@@ -40,6 +40,39 @@ class TrainConfig:
     shuffle_buffer_size: int = 2048
     log_every: int = 50
     max_batches: int | None = None
+    # --- DataLoader knobs ---
+    # Number of subprocess workers that prefetch batches in parallel with
+    # the main training loop. 0 = main-process iteration (no prefetch).
+    # Default `2` provides overlap without consuming the whole CPU budget;
+    # raise to 4+ on boxes with more cores.
+    num_workers: int = 2
+    # pin_memory controls how the DataLoader hands tensors to the GPU.
+    # Only meaningful for CUDA — MPS and CPU don't benefit (no PCIe
+    # transfer to overlap). `None` resolves to `True` iff the chosen
+    # device is CUDA; explicit True/False overrides.
+    #
+    # The mechanic: CPU-side tensors normally live in "pageable" memory —
+    # memory the OS is free to swap to disk under pressure. CUDA can't
+    # DMA (direct memory access) directly from pageable memory to GPU
+    # VRAM; it has to copy into a "pinned" (page-locked) staging buffer
+    # first, then DMA from there. Two steps, with the CPU thread blocked
+    # waiting for the staging copy to finish.
+    #
+    # pin_memory=True tells the DataLoader to allocate its batches in
+    # pinned memory directly. Two wins:
+    #   1. The pageable→pinned staging copy is skipped — one less hop.
+    #   2. With pinned memory, `tensor.to(device, non_blocking=True)`
+    #      actually runs async — the H2D transfer is queued on a CUDA
+    #      stream and can overlap with GPU compute on the previous batch.
+    #      Without pinned memory, `non_blocking=True` is silently ignored.
+    #
+    # Cost: pinned memory is a limited system-wide resource. A handful
+    # of training batches (~hundreds of MB) is fine; allocating GBs of
+    # it can starve other processes / cause allocation failures.
+    pin_memory: bool | None = None
+    # Number of batches each worker prefetches ahead of the consumer.
+    # PyTorch's default is 2; ignored when num_workers == 0.
+    prefetch_factor: int = 2
 
     def __post_init__(self) -> None:
         valid_devices = ("auto", "cuda", "mps", "cpu")
@@ -59,6 +92,10 @@ class TrainConfig:
             raise ValueError(f"log_every must be >= 1; got {self.log_every}")
         if self.max_batches is not None and self.max_batches < 1:
             raise ValueError(f"max_batches must be >= 1 or None; got {self.max_batches}")
+        if self.num_workers < 0:
+            raise ValueError(f"num_workers must be >= 0; got {self.num_workers}")
+        if self.prefetch_factor < 1:
+            raise ValueError(f"prefetch_factor must be >= 1; got {self.prefetch_factor}")
 
 
 def make_run_id() -> str:
