@@ -50,4 +50,3 @@ Full suite: 30 tests green in ~12s.
 
 - Per-game pass-rate is **bimodal**: active vs. sit-back ("open-turtle") games. `μ` may not be the right knob if some games dominate the loss; consider for Phase 2 loss design.
 - `load_replay_months()` in `training/investigations/_helpers.py` reaches into the collector sqlite DB for per-replay timestamps because the meta sidecar lacks a date field. Worth fixing if month-bucketing becomes a recurring need across training-side code; see TODO at top of that file.
-- `utils/utils/` has the same workspace/package name collision that bit `training/training/` — latent because no tests target it yet. Resolve before training-side code starts importing from utils in tests.

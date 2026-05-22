@@ -464,7 +464,7 @@ requires-dist = [
     { name = "replay-parser", editable = "replay-parser" },
     { name = "sim-core", editable = "sim-core" },
     { name = "training", editable = "training" },
-    { name = "utils", editable = "utils" },
+    { name = "utils", editable = "packages/utils" },
 ]
 
 [package.metadata.requires-dev]
@@ -1203,7 +1203,7 @@ requires-dist = [
     { name = "httpx", specifier = ">=0.28.1" },
     { name = "lzstring", specifier = ">=1.0.4" },
     { name = "python-dotenv", specifier = ">=1.2.2" },
-    { name = "utils", editable = "utils" },
+    { name = "utils", editable = "packages/utils" },
 ]
 
 [package.metadata.requires-dev]
@@ -1377,7 +1377,7 @@ requires-dist = [
     { name = "matplotlib", specifier = ">=3.10.9" },
     { name = "numpy", specifier = ">=2.0" },
     { name = "torch", specifier = ">=2.12" },
-    { name = "utils", editable = "utils" },
+    { name = "utils", editable = "packages/utils" },
 ]
 
 [[package]]
@@ -1421,7 +1421,7 @@ wheels = [
 [[package]]
 name = "utils"
 version = "0.0.0"
-source = { editable = "utils" }
+source = { editable = "packages/utils" }
 
 [[package]]
 name = "watchfiles"

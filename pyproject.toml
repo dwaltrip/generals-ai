@@ -16,8 +16,21 @@ dependencies = [
 [tool.uv]
 package = false
 
+# Convention: new shared/leaf packages go under `packages/` (e.g.
+# `packages/utils/utils/`). Putting a workspace member directly at the repo
+# root when its dir name equals the inner package name (`<root>/utils/utils/`)
+# causes pytest's importlib collection to resolve `import utils` to a PEP 420
+# namespace package at the outer dir, shadowing the real package. Wrapping in
+# `packages/` keeps the outer dir off sys.path's namespace-search candidates.
 [tool.uv.workspace]
-members = ["cloud-poc", "replay-collector", "replay-parser", "sim-core", "training", "utils"]
+members = [
+    "cloud-poc",
+    "replay-collector",
+    "replay-parser",
+    "sim-core",
+    "training",
+    "packages/utils",
+]
 
 [tool.uv.sources]
 cloud-train-poc = { workspace = true }
@@ -38,7 +51,12 @@ dev = [
 [tool.pytest.ini_options]
 addopts = "--import-mode=importlib"
 pythonpath = ["replay-parser/tests"]
-testpaths = ["replay-collector/tests", "replay-parser/tests", "training/tests", "utils/tests"]
+testpaths = [
+    "replay-collector/tests",
+    "replay-parser/tests",
+    "training/tests",
+    "packages/utils/tests",
+]
 
 # Ruff config lives in `ruff.toml`.
 # Pyright config lives in `pyrightconfig.json`.
