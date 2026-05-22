@@ -25,4 +25,4 @@ regen() {
 }
 
 regen cloud-train-poc cloud-poc/modal_requirements.txt
-# regen training training/modal_requirements.txt   # add when wiring up real training Modal entrypoint
+regen training training/modal_requirements.txt
