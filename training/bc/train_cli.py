@@ -1,0 +1,81 @@
+"""CLI scaffolding for BC training.
+
+Maps an `argparse.Namespace` into a validated `TrainConfig`. The parser
+itself carries no environment-specific path defaults — wrappers
+(`scripts/run_bc_local.py`, `scripts/run_bc_modal.py`) supply those via
+`parser.set_defaults(...)` before parsing.
+"""
+
+from __future__ import annotations
+
+import argparse
+from pathlib import Path
+
+from bc.train import TrainConfig
+
+
+def build_arg_parser() -> argparse.ArgumentParser:
+    # TODO: as the knob count grows past ~15, or when we start doing
+    # cross-run sweeps, revisit moving to a config file (YAML/TOML).
+    # The args.json dump in the run dir captures per-run provenance for now.
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--manifest", type=Path, required=True)
+    # `--intermediate` and `--out-dir` are required *values*, but the
+    # parser doesn't enforce `required=True` so wrappers can supply
+    # environment defaults via `set_defaults`. `config_from_args` raises
+    # if either is still missing after parse.
+    # TODO: possibly rename `--intermediate` arg? it's a bit of a vague name.
+    parser.add_argument("--intermediate", type=Path, default=None)
+    parser.add_argument("--out-dir", type=Path, default=None,
+                        help="Root for run dirs; each run gets a <YYYYMMDD-HHMMSS>/ subdir.")
+    parser.add_argument("--epochs", type=int, default=1)
+    parser.add_argument("--batch-size", type=int, default=64)
+    parser.add_argument("--lr", type=float, default=3e-4)
+    parser.add_argument("--weight-decay", type=float, default=1e-4)
+    parser.add_argument("--device", choices=("auto", "cuda", "mps", "cpu"), default="auto")
+    parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument(
+        "--shuffle-buffer-size",
+        type=int,
+        default=2048,
+        help=(
+            "Reservoir-shuffle buffer over the IterableDataset's yielded "
+            "samples. Decorrelates batches from the per-perspective causal "
+            "walk. Pass 0 to disable (raw walk order)."
+        ),
+    )
+    parser.add_argument("--log-every", type=int, default=50)
+    parser.add_argument(
+        "--max-batches",
+        type=int,
+        default=None,
+        help=(
+            "Stop each epoch early after N batches — for smoke testing the "
+            "loop end-to-end without committing to a full epoch's runtime."
+        ),
+    )
+    return parser
+
+
+def config_from_args(args: argparse.Namespace) -> TrainConfig:
+    """Build a `TrainConfig` from parsed CLI args. Raises `SystemExit` if a
+    required path is missing (wrapper forgot to set a default, and the user
+    didn't pass it)."""
+    if args.intermediate is None:
+        raise SystemExit("--intermediate is required (or set a default in the wrapper)")
+    if args.out_dir is None:
+        raise SystemExit("--out-dir is required (or set a default in the wrapper)")
+    return TrainConfig(
+        manifest=args.manifest,
+        intermediate=args.intermediate,
+        out_dir=args.out_dir,
+        epochs=args.epochs,
+        batch_size=args.batch_size,
+        lr=args.lr,
+        weight_decay=args.weight_decay,
+        device=args.device,
+        seed=args.seed,
+        shuffle_buffer_size=args.shuffle_buffer_size,
+        log_every=args.log_every,
+        max_batches=args.max_batches,
+    )

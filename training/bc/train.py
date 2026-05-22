@@ -1,31 +1,28 @@
-"""BC training loop scaffold.
+"""BC training runner.
+
+Takes a validated `TrainConfig`, drives an end-to-end training run.
+Pure runner: no CLI, no environment-specific defaults. CLI scaffolding
+lives in `bc.train_cli`; entry-point wrappers in `training/scripts/`.
 
 Reads a split manifest produced by `bc.splits build`, walks the train split
 via `IterableDataset`, runs N epochs of AdamW SGD with `bc_loss`. After each
 epoch, runs a full validation pass via `bc.eval.run_val` and saves a
 checkpoint. Prints per-batch component losses + rolling samples/sec every
-`--log-every` batches; end-of-epoch summary collects the sample-weighted
+`log_every` batches; end-of-epoch summary collects the sample-weighted
 means via `LossAccumulator`.
 
-Each invocation writes to its own `<out-dir>/<YYYYMMDD-HHMMSS>/` directory:
-  - `args.json`         — full CLI invocation as JSON, for provenance.
+Each invocation writes to its own `<out_dir>/<YYYYMMDD-HHMMSS>/` directory:
+  - `args.json`         — full config as JSON, for provenance.
   - `batches.jsonl`     — one record per batch.
   - `epochs.jsonl`      — one record per epoch (train + val summary, ckpt name).
   - `checkpoints/epoch_NNN.pt` — model state_dict at end of each epoch.
-
-Pass `--max-batches N` to cap a run for smoke testing.
-
-Run from `training/`:
-    uv run python scripts/train_bc.py \\
-        --manifest data/splits/smoke.json \\
-        --epochs 1 --batch-size 16 --max-batches 5
 """
 
 from __future__ import annotations
 
-import argparse
 import json
 import time
+from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import TextIO
@@ -42,56 +39,50 @@ from shared.device import disable_mps_fallback, move_batch, pick_device
 from shared.log import tee_stdio
 
 
-REPO_ROOT = Path(__file__).resolve().parent.parent.parent
-DEFAULT_INTERMEDIATE = REPO_ROOT / "replay-parser" / "data" / "intermediate"
-DEFAULT_RUNS_DIR = REPO_ROOT / "training" / "data" / "runs"
+@dataclass(frozen=True)
+class TrainConfig:
+    """Inputs to a BC training run. Structural invariants checked at
+    construction; existence checks for `manifest`/`intermediate` happen
+    in `bc_run` (so cloud runs check after the Volume is mounted)."""
+
+    # Required — no default that makes sense across environments.
+    manifest: Path
+    intermediate: Path
+    out_dir: Path
+    # Optional — sensible defaults independent of environment.
+    epochs: int = 1
+    batch_size: int = 64
+    lr: float = 3e-4
+    weight_decay: float = 1e-4
+    device: str = "auto"
+    seed: int = 0
+    shuffle_buffer_size: int = 2048
+    log_every: int = 50
+    max_batches: int | None = None
+
+    def __post_init__(self) -> None:
+        valid_devices = ("auto", "cuda", "mps", "cpu")
+        if self.device not in valid_devices:
+            raise ValueError(f"device must be one of {valid_devices}; got {self.device!r}")
+        if self.epochs < 1:
+            raise ValueError(f"epochs must be >= 1; got {self.epochs}")
+        if self.batch_size < 1:
+            raise ValueError(f"batch_size must be >= 1; got {self.batch_size}")
+        if self.lr <= 0:
+            raise ValueError(f"lr must be > 0; got {self.lr}")
+        if self.weight_decay < 0:
+            raise ValueError(f"weight_decay must be >= 0; got {self.weight_decay}")
+        if self.shuffle_buffer_size < 0:
+            raise ValueError(f"shuffle_buffer_size must be >= 0; got {self.shuffle_buffer_size}")
+        if self.log_every < 1:
+            raise ValueError(f"log_every must be >= 1; got {self.log_every}")
+        if self.max_batches is not None and self.max_batches < 1:
+            raise ValueError(f"max_batches must be >= 1 or None; got {self.max_batches}")
 
 
-def _build_arg_parser() -> argparse.ArgumentParser:
-    # TODO: as the knob count grows past ~15, or when we start doing
-    # cross-run sweeps, revisit moving to a config file (YAML/TOML).
-    # The args.json dump in the run dir captures per-run provenance for now.
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--manifest", type=Path, required=True)
-    parser.add_argument("--intermediate", type=Path, default=DEFAULT_INTERMEDIATE)
-    parser.add_argument("--epochs", type=int, default=1)
-    parser.add_argument("--batch-size", type=int, default=64)
-    parser.add_argument("--lr", type=float, default=3e-4)
-    parser.add_argument("--weight-decay", type=float, default=1e-4)
-    parser.add_argument("--device", choices=("auto", "mps", "cpu"), default="auto")
-    parser.add_argument("--seed", type=int, default=0)
-    parser.add_argument(
-        "--shuffle-buffer-size",
-        type=int,
-        default=2048,
-        help=(
-            "Reservoir-shuffle buffer over the IterableDataset's yielded "
-            "samples. Decorrelates batches from the per-perspective causal "
-            "walk. Pass 0 to disable (raw walk order)."
-        ),
-    )
-    parser.add_argument("--log-every", type=int, default=50)
-    parser.add_argument(
-        "--max-batches",
-        type=int,
-        default=None,
-        help=(
-            "Stop each epoch early after N batches — for smoke testing the "
-            "loop end-to-end without committing to a full epoch's runtime."
-        ),
-    )
-    parser.add_argument(
-        "--out-dir",
-        type=Path,
-        default=DEFAULT_RUNS_DIR,
-        help="Root for run dirs; each run gets a <YYYYMMDD-HHMMSS>/ subdir.",
-    )
-    return parser
-
-
-def _serialize_arg(obj: object) -> str:
-    """JSON `default=` for `vars(args)`. Stringifies `Path`; anything else
-    that lands here is an unexpected arg type — raise to surface it."""
+def _json_default(obj: object) -> str:
+    """JSON `default=` for `asdict(config)`. Stringifies `Path`; anything else
+    that lands here is an unexpected type — raise to surface it."""
     if isinstance(obj, Path):
         return str(obj)
     raise TypeError(f"unserializable: {type(obj).__name__}: {obj!r}")
@@ -222,31 +213,31 @@ def train_one_epoch(
     }
 
 
-def run(args: argparse.Namespace) -> None:
-    """Drive a BC training run end-to-end from parsed args.
+def bc_run(config: TrainConfig) -> None:
+    """Drive a BC training run end-to-end from a validated config.
 
     Sets up the run dir + provenance, loads the manifest and builds the
     train dataset, then hands off to `run_loop` for model build + training.
-    Callable from a notebook or test with a hand-built Namespace; the CLI
-    shell is `main()`.
+    Callable from a notebook or test by constructing a `TrainConfig`
+    directly.
     """
     disable_mps_fallback()
 
-    if not args.manifest.exists():
-        raise SystemExit(f"manifest not found: {args.manifest}")
-    if not args.intermediate.exists():
-        raise SystemExit(f"intermediate corpus not found: {args.intermediate}")
+    if not config.manifest.exists():
+        raise SystemExit(f"manifest not found: {config.manifest}")
+    if not config.intermediate.exists():
+        raise SystemExit(f"intermediate corpus not found: {config.intermediate}")
 
-    device = pick_device(args.device)
-    torch.manual_seed(args.seed)
+    device = pick_device(config.device)
+    torch.manual_seed(config.seed)
 
     # --- Run dir + provenance ---
-    run_dir = _make_run_dir(args.out_dir)
+    run_dir = _make_run_dir(config.out_dir)
     ckpt_dir = run_dir / "checkpoints"
     ckpt_dir.mkdir()
     print(f"run dir: {run_dir}")
     with (run_dir / "args.json").open("w") as fp:
-        json.dump(vars(args), fp, default=_serialize_arg, indent=2)
+        json.dump(asdict(config), fp, default=_json_default, indent=2)
 
     # Tee from here so everything past the run-dir announce — manifest
     # load, dataset summary, model build, training — lands in console.log.
@@ -254,10 +245,10 @@ def run(args: argparse.Namespace) -> None:
     # the log would just be noise.
     with tee_stdio(run_dir / "console.log"):
         # --- Manifest + dataset ---
-        print(f"loading manifest: {args.manifest}")
-        manifest = load_manifest(args.manifest)
-        train_samples = samples_for_split(manifest, "train", args.intermediate)
-        val_samples = samples_for_split(manifest, "val", args.intermediate)
+        print(f"loading manifest: {config.manifest}")
+        manifest = load_manifest(config.manifest)
+        train_samples = samples_for_split(manifest, "train", config.intermediate)
+        val_samples = samples_for_split(manifest, "val", config.intermediate)
         print(
             f"  filter_version={manifest['filter_version']}  "
             f"git_sha={manifest['git_sha']}  "
@@ -268,13 +259,13 @@ def run(args: argparse.Namespace) -> None:
 
         ds = IterableDataset(
             samples=train_samples,
-            seed=args.seed,
-            shuffle_buffer_size=args.shuffle_buffer_size,
+            seed=config.seed,
+            shuffle_buffer_size=config.shuffle_buffer_size,
         )
-        loader = DataLoader(ds, batch_size=args.batch_size)
+        loader = DataLoader(ds, batch_size=config.batch_size)
 
         run_loop(
-            args=args,
+            config=config,
             device=device,
             loader=loader,
             val_samples=val_samples,
@@ -284,7 +275,7 @@ def run(args: argparse.Namespace) -> None:
 
 
 def run_loop(
-    args: argparse.Namespace,
+    config: TrainConfig,
     device: torch.device,
     loader: DataLoader,
     val_samples: list[tuple[Path, int]],
@@ -303,8 +294,8 @@ def run_loop(
     model = BCModel().to(device)
     optim = torch.optim.AdamW(
         model.parameters(),
-        lr=args.lr,
-        weight_decay=args.weight_decay,
+        lr=config.lr,
+        weight_decay=config.weight_decay,
         betas=(0.9, 0.999),
     )
     n_params = sum(p.numel() for p in model.parameters())
@@ -319,7 +310,7 @@ def run_loop(
     epochs_fp = (run_dir / "epochs.jsonl").open("w", buffering=1)
     run_start = time.perf_counter()
     try:
-        for epoch in range(1, args.epochs + 1):
+        for epoch in range(1, config.epochs + 1):
             summary = train_one_epoch(
                 epoch=epoch,
                 model=model,
@@ -328,15 +319,15 @@ def run_loop(
                 device=device,
                 batches_fp=batches_fp,
                 run_start=run_start,
-                max_batches=args.max_batches,
-                log_every=args.log_every,
+                max_batches=config.max_batches,
+                log_every=config.log_every,
             )
             val_summary = run_val(
                 model=model,
                 val_samples=val_samples,
                 device=device,
-                batch_size=args.batch_size,
-                seed=args.seed,
+                batch_size=config.batch_size,
+                seed=config.seed,
             )
             ckpt_name = _save_checkpoint(model, ckpt_dir, epoch)
             _write_jsonl(epochs_fp, {
@@ -381,12 +372,3 @@ def run_loop(
     finally:
         batches_fp.close()
         epochs_fp.close()
-
-
-def main() -> None:
-    args = _build_arg_parser().parse_args()
-    run(args)
-
-
-if __name__ == "__main__":
-    main()

@@ -184,7 +184,7 @@ def build_head(variant: str, in_ch: int, H: int, W: int) -> nn.Module:
 # ---------------------------------------------------------------------------
 
 
-def load_frozen_trunk(ckpt_path: Path, device: str) -> nn.Module:
+def load_frozen_trunk(ckpt_path: Path, device: torch.device) -> nn.Module:
     """Load BCModel state_dict, return the trunk in frozen eval mode.
 
     Constructs a full BCModel so the state_dict load is strict — catches
@@ -268,7 +268,7 @@ def collate_frames(frames: list[dict[str, torch.Tensor]]) -> dict[str, torch.Ten
 def cache_trunk_features(
     trunk: nn.Module,
     obs: torch.Tensor,
-    device: str,
+    device: torch.device,
     chunk: int = 64,
 ) -> torch.Tensor:
     """Run trunk over `obs` in chunks; return `[N, C, H, W]` features on device.
@@ -361,7 +361,7 @@ def run_overfit_mode(
     val_samples: list[tuple[Path, int]],
     variants: list[str],
     args: argparse.Namespace,
-    device: str,
+    device: torch.device,
     out_dir: Path,
 ) -> None:
     print(f"\n--- gather stratified batch (target {args.per_class}/class) ---")
@@ -467,7 +467,7 @@ def split_perspectives(
 def stream_trunk_features(
     trunk: nn.Module,
     samples: list[tuple[Path, int]],
-    device: str,
+    device: torch.device,
     seed: int,
     chunk: int = 64,
     max_frames: int | None = None,
@@ -536,7 +536,7 @@ def evaluate_head(
     feats: torch.Tensor,
     targets: torch.Tensor,
     batch_size: int,
-    device: str,
+    device: torch.device,
 ) -> tuple[float, float]:
     """Run head over cached features, return `(mean_ce_loss, top1_accuracy)`.
 
@@ -570,7 +570,7 @@ def train_head_minibatched(
     batch_size: int,
     lr: float,
     seed: int,
-    device: str,
+    device: torch.device,
 ) -> dict[str, list[float]]:
     """Train `head` on the cached train_probe features; eval on val_probe each epoch.
 
@@ -684,7 +684,7 @@ def run_probe_mode(
     val_samples: list[tuple[Path, int]],
     variants: list[str],
     args: argparse.Namespace,
-    device: str,
+    device: torch.device,
     out_dir: Path,
 ) -> None:
     print(f"\n--- sub-split val perspectives ({1 - args.probe_val_frac:.0%}/{args.probe_val_frac:.0%}) ---")

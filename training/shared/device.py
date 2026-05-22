@@ -10,22 +10,36 @@ import os
 import torch
 
 
-def pick_device(arg: str) -> str:
+def pick_device(arg: str) -> torch.device:
     """
-    Resolve `"auto" | "mps" | "cpu"` to a concrete device string.
+    Resolve `"auto" | "cuda" | "mps" | "cpu"` to a concrete `torch.device`.
 
-    `"auto"` picks MPS if available, else CPU. CUDA isn't considered — add
-    a branch here when we start running on CUDA boxes.
+    `"auto"` picks CUDA if available, then MPS, then CPU. Explicit choices
+    raise if the requested accelerator isn't available — silent fallback to
+    CPU on a cloud GPU box or an M-series Mac is a worse failure mode than
+    a loud error at startup.
     """
-    if arg != "auto":
-        return arg
-    if torch.backends.mps.is_available():
-        return "mps"
-    return "cpu"
+    if arg == "cuda":
+        if not torch.cuda.is_available():
+            raise RuntimeError("--device cuda requested but CUDA is not available")
+        return torch.device("cuda")
+    if arg == "mps":
+        if not torch.backends.mps.is_available():
+            raise RuntimeError("--device mps requested but MPS is not available")
+        return torch.device("mps")
+    if arg == "cpu":
+        return torch.device("cpu")
+    if arg == "auto":
+        if torch.cuda.is_available():
+            return torch.device("cuda")
+        if torch.backends.mps.is_available():
+            return torch.device("mps")
+        return torch.device("cpu")
+    raise ValueError(f"unknown device arg: {arg!r}")
 
 
 def move_batch(
-    batch: dict[str, torch.Tensor], device: str
+    batch: dict[str, torch.Tensor], device: torch.device
 ) -> dict[str, torch.Tensor]:
     """Move every tensor in a flat dict-of-tensors batch onto `device`."""
     return {k: v.to(device) for k, v in batch.items()}
