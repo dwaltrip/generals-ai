@@ -19,11 +19,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
     # cross-run sweeps, revisit moving to a config file (YAML/TOML).
     # The args.json dump in the run dir captures per-run provenance for now.
     parser = argparse.ArgumentParser()
-    parser.add_argument("--manifest", type=Path, required=True)
-    # `--intermediate` and `--out-dir` are required *values*, but the
-    # parser doesn't enforce `required=True` so wrappers can supply
-    # environment defaults via `set_defaults`. `config_from_args` raises
-    # if either is still missing after parse.
+    # `--manifest`, `--intermediate`, `--out-dir` are required *values*, but
+    # the parser doesn't enforce `required=True` so wrappers can supply
+    # environment defaults via `set_defaults` (e.g. the cloud wrapper points
+    # `--manifest` at the Volume-mounted probe manifest). `config_from_args`
+    # raises if any is still missing after parse.
+    parser.add_argument("--manifest", type=Path, default=None)
     # TODO: possibly rename `--intermediate` arg? it's a bit of a vague name.
     parser.add_argument("--intermediate", type=Path, default=None)
     parser.add_argument("--out-dir", type=Path, default=None,
@@ -61,6 +62,8 @@ def config_from_args(args: argparse.Namespace) -> TrainConfig:
     """Build a `TrainConfig` from parsed CLI args. Raises `SystemExit` if a
     required path is missing (wrapper forgot to set a default, and the user
     didn't pass it)."""
+    if args.manifest is None:
+        raise SystemExit("--manifest is required (or set a default in the wrapper)")
     if args.intermediate is None:
         raise SystemExit("--intermediate is required (or set a default in the wrapper)")
     if args.out_dir is None:
