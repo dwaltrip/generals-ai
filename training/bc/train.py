@@ -2,7 +2,8 @@
 
 Takes a validated `TrainConfig`, drives an end-to-end training run.
 Pure runner: no CLI, no environment-specific defaults. CLI scaffolding
-lives in `bc.train_cli`; entry-point wrappers in `training/scripts/`.
+lives in `bc.train_cli`; the config dataclass + run-id factory live in
+`bc.train_config`; entry-point wrappers in `training/scripts/`.
 
 Reads a split manifest produced by `bc.splits build`, walks the train split
 via `IterableDataset`, runs N epochs of AdamW SGD with `bc_loss`. After each
@@ -11,7 +12,7 @@ checkpoint. Prints per-batch component losses + rolling samples/sec every
 `log_every` batches; end-of-epoch summary collects the sample-weighted
 means via `LossAccumulator`.
 
-Each invocation writes to its own `<out_dir>/<YYYYMMDD-HHMMSS>/` directory:
+Writes into `config.run_dir` (created by `bc_run` with `exist_ok=False`):
   - `args.json`         — full config as JSON, for provenance.
   - `batches.jsonl`     — one record per batch.
   - `epochs.jsonl`      — one record per epoch (train + val summary, ckpt name).
@@ -22,8 +23,7 @@ from __future__ import annotations
 
 import json
 import time
-from dataclasses import asdict, dataclass
-from datetime import datetime
+from dataclasses import asdict
 from pathlib import Path
 from typing import TextIO
 
@@ -35,69 +35,9 @@ from bc.eval import run_val
 from bc.loss import LossAccumulator, bc_loss
 from bc.model import BCModel
 from bc.splits import load_manifest, samples_for_split
+from bc.train_config import TrainConfig, json_default
 from shared.device import disable_mps_fallback, move_batch, pick_device
 from shared.log import tee_stdio
-
-
-@dataclass(frozen=True)
-class TrainConfig:
-    """Inputs to a BC training run. Structural invariants checked at
-    construction; existence checks for `manifest`/`intermediate` happen
-    in `bc_run` (so cloud runs check after the Volume is mounted)."""
-
-    # Required — no default that makes sense across environments.
-    manifest: Path
-    intermediate: Path
-    out_dir: Path
-    # Optional — sensible defaults independent of environment.
-    epochs: int = 1
-    batch_size: int = 64
-    lr: float = 3e-4
-    weight_decay: float = 1e-4
-    device: str = "auto"
-    seed: int = 0
-    shuffle_buffer_size: int = 2048
-    log_every: int = 50
-    max_batches: int | None = None
-
-    def __post_init__(self) -> None:
-        valid_devices = ("auto", "cuda", "mps", "cpu")
-        if self.device not in valid_devices:
-            raise ValueError(f"device must be one of {valid_devices}; got {self.device!r}")
-        if self.epochs < 1:
-            raise ValueError(f"epochs must be >= 1; got {self.epochs}")
-        if self.batch_size < 1:
-            raise ValueError(f"batch_size must be >= 1; got {self.batch_size}")
-        if self.lr <= 0:
-            raise ValueError(f"lr must be > 0; got {self.lr}")
-        if self.weight_decay < 0:
-            raise ValueError(f"weight_decay must be >= 0; got {self.weight_decay}")
-        if self.shuffle_buffer_size < 0:
-            raise ValueError(f"shuffle_buffer_size must be >= 0; got {self.shuffle_buffer_size}")
-        if self.log_every < 1:
-            raise ValueError(f"log_every must be >= 1; got {self.log_every}")
-        if self.max_batches is not None and self.max_batches < 1:
-            raise ValueError(f"max_batches must be >= 1 or None; got {self.max_batches}")
-
-
-def _json_default(obj: object) -> str:
-    """JSON `default=` for `asdict(config)`. Stringifies `Path`; anything else
-    that lands here is an unexpected type — raise to surface it."""
-    if isinstance(obj, Path):
-        return str(obj)
-    raise TypeError(f"unserializable: {type(obj).__name__}: {obj!r}")
-
-
-def _make_run_dir(out_root: Path) -> Path:
-    """Fresh `<YYYYMMDD-HHMMSS>/` subdir under `out_root` (local time).
-
-    `exist_ok=False` so two runs starting in the same wall-clock second
-    error out instead of silently sharing a directory.
-    """
-    ts = datetime.now().strftime("%Y%m%d-%H%M%S")
-    run_dir = out_root / ts
-    run_dir.mkdir(parents=True, exist_ok=False)
-    return run_dir
 
 
 def _write_jsonl(fp: TextIO, record: dict) -> None:
@@ -232,12 +172,15 @@ def bc_run(config: TrainConfig) -> None:
     torch.manual_seed(config.seed)
 
     # --- Run dir + provenance ---
-    run_dir = _make_run_dir(config.out_dir)
+    # `exist_ok=False` so two runs landing in the same wall-clock second
+    # collide explicitly rather than silently sharing a directory.
+    run_dir = config.run_dir
+    run_dir.mkdir(parents=True, exist_ok=False)
     ckpt_dir = run_dir / "checkpoints"
     ckpt_dir.mkdir()
     print(f"run dir: {run_dir}")
     with (run_dir / "args.json").open("w") as fp:
-        json.dump(asdict(config), fp, default=_json_default, indent=2)
+        json.dump(asdict(config), fp, default=json_default, indent=2)
 
     # Tee from here so everything past the run-dir announce — manifest
     # load, dataset summary, model build, training — lands in console.log.

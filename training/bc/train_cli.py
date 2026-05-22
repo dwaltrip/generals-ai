@@ -11,7 +11,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from bc.train import TrainConfig
+from bc.train_config import TrainConfig, make_run_id
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
@@ -27,7 +27,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     # TODO: possibly rename `--intermediate` arg? it's a bit of a vague name.
     parser.add_argument("--intermediate", type=Path, default=None)
     parser.add_argument("--out-dir", type=Path, default=None,
-                        help="Root for run dirs; each run gets a <YYYYMMDD-HHMMSS>/ subdir.")
+                        help="Parent dir for runs. Joined with a fresh run-id to form `TrainConfig.run_dir`.")
     parser.add_argument("--epochs", type=int, default=1)
     parser.add_argument("--batch-size", type=int, default=64)
     parser.add_argument("--lr", type=float, default=3e-4)
@@ -68,7 +68,7 @@ def config_from_args(args: argparse.Namespace) -> TrainConfig:
     return TrainConfig(
         manifest=args.manifest,
         intermediate=args.intermediate,
-        out_dir=args.out_dir,
+        run_dir=args.out_dir / make_run_id(),
         epochs=args.epochs,
         batch_size=args.batch_size,
         lr=args.lr,
