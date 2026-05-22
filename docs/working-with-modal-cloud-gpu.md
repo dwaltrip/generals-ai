@@ -4,6 +4,13 @@ Reference for running our training code on Modal's serverless GPU infrastructure
 
 Official docs: [Modal guide root](https://modal.com/docs/guide) · [Image reference](https://modal.com/docs/reference/modal.Image) · [Pricing](https://modal.com/pricing).
 
+> **NOTE — partially stale.** A few sections lag the current cloud entry implementation:
+> - **Native vs shell-out** — code example shows a two-parser `parse_known_args` shape; we ship the extended-parser shape (cloud-only flags `add_argument`'d to the shared training parser). The "Flag collisions" caveat is also inverted: collisions raise `argparse.ArgumentError` at startup, they don't silently consume.
+> - **Volumes** — example uses placeholder name `"generals-corpus"`. Real Volumes: `generals-ai.parsed-replays` (RO inputs) and `generals-ai.training-runs` (RW outputs); naming convention is `generals-ai.<role>` as a pseudo-namespace.
+> - **"`modal_entry.py` is auto-mounted" gotcha** — references the prototype filename; current entry is `training/scripts/run_bc_modal.py`.
+>
+> TODO: refresh these in one pass once the data-pipeline pattern (DataLoader workers / staging-to-local-SSD) is settled, so the update captures the full cloud story rather than rewriting in two passes.
+
 ## Mental model
 
 Modal is **serverless functions, with GPUs**. Conceptually closer to AWS Lambda than to a rented VM — you don't have a persistent server. You define a function, decorate it with `@app.function(...)`, and Modal spins up a container with your image, runs the function, returns the result, and tears the container down. You're billed per second of container clock-time.
