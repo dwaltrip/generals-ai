@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# When uv.lock is part of the commit, regenerate the modal_requirements.txt
+# files and stage them so they stay in sync with the lockfile.
+set -euo pipefail
+
+if ! git diff --cached --name-only | grep -qx 'uv\.lock'; then
+    exit 0
+fi
+
+echo "[pre-commit] uv.lock changed — regenerating modal_requirements.txt files"
+./tools/regen_modal_reqs.sh
+git add cloud-poc/modal_requirements.txt training/modal_requirements.txt

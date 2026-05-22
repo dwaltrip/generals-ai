@@ -1,7 +1,7 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run python
 """docs_info — show mtime + recent commit history for markdown docs.
 
-Run with: `uv run tools/docs_info.py [root] [options]`
+Run with: `./tools/docs_info.py [root] [options]`
 """
 
 import argparse

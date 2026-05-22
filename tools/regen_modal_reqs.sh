@@ -12,17 +12,25 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
+mkdir -p tmp
+LOG="tmp/regen_modal_reqs.log"
+echo "generated at: $(date '+%Y-%m-%d %H:%M:%S %Z')" > "$LOG"
+
 regen() {
     local package="$1"
     local out="$2"
     echo "regenerating $out (package: $package)"
+    echo "=== $package ===" >> "$LOG"
     uv export \
         --package "$package" \
         --format requirements-txt \
         --no-dev \
         --no-emit-project \
-        -o "$out"
+        -o "$out" \
+        >> "$LOG"
 }
 
 regen cloud-train-poc cloud-poc/modal_requirements.txt
 regen training training/modal_requirements.txt
+
+echo "(uv export stdout captured in $LOG)"

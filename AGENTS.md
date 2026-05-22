@@ -1,6 +1,6 @@
 # generals-ai
 
-A project for working on an AI program to play the [generals.io](https://generals.io) strategy game.
+Building an AI bot to play the [generals.io](https://generals.io) strategy game in FFA mode.
 
 ## Sub-projects
 
@@ -18,6 +18,16 @@ Operates at a safe and reasonable rate to avoid placing strain on the generals.i
 
 The collector entry point is `replay_collector.runner.collect_many` (see `replay-collector/replay_collector/runner.py`).
 
+## Setup (one-time, after clone)
+
+```sh
+./tools/setup-git-hooks.sh
+```
+
+Points git at the repo's tracked hooks under `.githooks/`, which includes a pre-commit hook that regenerates `modal_requirements.txt` files whenever `uv.lock` changes.
+
 ## Tools
 
-- [`tools/docs_info.py`](./tools/docs_info.py) — list project docs with mtime + recent git history (commit hash, date, diff size, subject). Useful when judging doc freshness or finding what changed recently. In-doc `Date:` headers are origination dates and don't always reflect last edits; this tool is the authoritative signal. Run `uv run tools/docs_info.py -h` for options.
+- [`tools/docs_info.py`](./tools/docs_info.py) — list project docs with mtime + recent git history (commit hash, date, diff size, subject). Useful when judging doc freshness or finding what changed recently. In-doc `Date:` headers are origination dates and don't always reflect last edits; this tool is the authoritative signal. Run `./tools/docs_info.py -h` for options.
+- [`tools/regen_modal_reqs.sh`](./tools/regen_modal_reqs.sh) — regenerate per-package `modal_requirements.txt` files from `uv.lock`. Run automatically by the pre-commit hook when `uv.lock` is in the commit; can also be invoked manually.
+- [`tools/setup-git-hooks.sh`](./tools/setup-git-hooks.sh) — wire up `core.hooksPath` so the repo's `.githooks/` are active. Idempotent; safe to re-run.
