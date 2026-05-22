@@ -1,6 +1,8 @@
 # Working with Modal (cloud GPU runs)
 
-Reference for running our training code on Modal's serverless GPU infrastructure. Captures the mental model, the patterns we landed on after the `cloud-poc` exploration, and the gotchas worth knowing before writing more Modal code.
+Reference for running our training code on Modal's serverless GPU infrastructure: the mental model, the image-build patterns we use, and the gotchas worth knowing.
+
+Official docs: [Modal guide root](https://modal.com/docs/guide) · [Image reference](https://modal.com/docs/reference/modal.Image) · [Pricing](https://modal.com/pricing).
 
 ## Mental model
 
@@ -36,6 +38,8 @@ GPU clock-time dominates everything else by orders of magnitude. As of writing:
 | Volume storage | $0.09 / GiB / month (first 1 TiB free) |
 | Data transfer | Not on the pricing page — *appears* to be free, but unconfirmed |
 
+Source: [modal.com/pricing](https://modal.com/pricing).
+
 Modal's free tier gives $30/mo of credit. For comparison: our parsed corpus (~10 GB) sits inside the storage free tier ~100× over; iterating with smoke runs on a T4 costs sub-penny per run; a real H100 training run is the cost driver (~$15–40 per overnight run).
 
 **Practical implication.** Don't sweat upload costs or storage. Do sweat GPU wall-clock — be deliberate about which run actually needs the H100 and which can validate on a T4.
@@ -55,7 +59,7 @@ For training runs, **detached is the default** — kick off, walk away, check ba
 
 ## The image pattern we use
 
-After exploring a few approaches, we settled on the **Modal-blessed install path with full lockfile-driven reproducibility**. The pattern:
+**Modal-blessed install path with full lockfile-driven reproducibility.** See the [Images guide](https://modal.com/docs/guide/images) and [Image reference](https://modal.com/docs/reference/modal.Image) for the underlying API. The pattern:
 
 ```python
 import modal
@@ -79,8 +83,8 @@ image = (
 
 Why this shape:
 
-- **`debian_slim` is Modal's recommended base.** Confirmed to support Python 3.14.
-- **`uv_pip_install` is Modal's blessed install method.** Better cache behavior than running `uv pip install` via `run_commands`.
+- **[`debian_slim`](https://modal.com/docs/reference/modal.Image#debian_slim) is Modal's recommended base.** Supports Python 3.14.
+- **[`uv_pip_install`](https://modal.com/docs/reference/modal.Image#uv_pip_install) is Modal's blessed install method.** Better cache behavior than running `uv pip install` via `run_commands`.
 - **The `modal_requirements.txt` is generated** from the workspace's `uv.lock` via `tools/regen_modal_reqs.sh`. Single source of truth: our workspace lock. No drift.
 - **Layer ordering matters for caching:** heavy + rarely-changing layers first (the torch install), light + frequently-changing layers last (our package source). When you edit `work.py` and re-run, only the last `uv_pip_install("/pkg")` layer is invalidated.
 
@@ -137,7 +141,7 @@ def cli(args: str):
 
 ## Volumes (state across runs)
 
-The container's local filesystem is **ephemeral** — anything written there disappears when the container exits. Persistent state lives in Modal Volumes, which mount as a path inside the container.
+The container's local filesystem is **ephemeral** — anything written there disappears when the container exits. Persistent state lives in [Modal Volumes](https://modal.com/docs/guide/volumes), which mount as a path inside the container.
 
 ```python
 vol = modal.Volume.from_name("generals-corpus", create_if_missing=True)
@@ -155,13 +159,9 @@ Typical patterns:
 
 Volumes are content-addressed and snapshotted daily for billing; deletes take up to four days to drop from the bill.
 
-We have not used Volumes in the `cloud-poc`; this section is forward-looking.
-
 ## Gotchas worth knowing
 
-Cataloged from things that bit us during the exploration:
-
-### `add_local_dir` copies *everything* by default
+### [`add_local_dir`](https://modal.com/docs/reference/modal.Image#add_local_dir) copies *everything* by default
 
 It does **not** respect `.gitignore` or `.dockerignore`. With `copy=True` it uploads the full directory tree into an image layer; with `copy=False` it does the same on every container cold start (worse!). For our repo, blindly calling `add_local_dir(REPO_ROOT, ...)` would have shoveled 19 GB (mostly the replay corpus in `replay-collector/data/`) up to Modal.
 
