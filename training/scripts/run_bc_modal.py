@@ -1,20 +1,24 @@
 """Modal cloud entry point for BC training.
 
-Two smoke functions, neither does training:
+Three smoke functions, none of them does training:
 
 - `smoke` — image smoke. Builds the Modal image with the full training stack
   installed and verifies `bc.train` is importable inside the container.
   No GPU, no Volume.
-- `smoke_volume` — Volume smoke. Mounts the `generals-ai.parsed-replays`
-  Volume RO, opens the bundled manifest, resolves the first training sample,
-  and loads its `.npz` + `.meta.npz` to confirm path translation works
-  end-to-end.
+- `smoke_volume` — inputs-Volume read smoke. Mounts the
+  `generals-ai.parsed-replays` Volume RO, opens the bundled manifest,
+  resolves the first training sample, and loads its `.npz` + `.meta.npz`.
+- `smoke_outputs` — outputs-Volume write smoke. Mounts the
+  `generals-ai.training-runs` Volume RW, creates a fresh run dir under
+  `/runs/<run_id>/`, and writes a stub `run_metadata.json` + `metrics.jsonl`.
+  Pull artifacts back with `modal volume get generals-ai.training-runs ...`.
 
-Real training runs (GPU + outputs Volume) land in subsequent commits.
+Real training runs (GPU + actual `bc_run`) land in subsequent commits.
 
 Run:
-    uv run modal run training/scripts/run_bc_modal.py                  # smoke
-    uv run modal run training/scripts/run_bc_modal.py::smoke_volume    # volume
+    uv run modal run training/scripts/run_bc_modal.py                   # smoke
+    uv run modal run training/scripts/run_bc_modal.py::smoke_volume     # inputs
+    uv run modal run training/scripts/run_bc_modal.py::smoke_outputs    # outputs
 """
 
 from __future__ import annotations
@@ -42,6 +46,7 @@ image = (
 app = modal.App("bc-train", image=image)
 
 parsed_replays_vol = modal.Volume.from_name("generals-ai.parsed-replays")
+training_runs_vol = modal.Volume.from_name("generals-ai.training-runs")
 
 
 @app.function()
@@ -54,8 +59,9 @@ def smoke() -> dict:
 
     # The actual import-chain check — resolves bc + shared (from training)
     # and the workspace cross-dep utils.
-    from bc.train import TrainConfig, bc_run  # noqa: F401
+    from bc.train import bc_run  # noqa: F401
     from bc.train_cli import build_arg_parser, config_from_args  # noqa: F401
+    from bc.train_config import TrainConfig, make_run_id  # noqa: F401
 
     return {
         "python": sys.version.split()[0],
@@ -93,6 +99,61 @@ def smoke_volume() -> dict:
         "meta_arrays": meta_keys,
     }
     print("smoke_volume result:")
+    for key, val in result.items():
+        print(f"  {key}: {val}")
+    return result
+
+
+@app.function(volumes={"/runs": training_runs_vol})
+def smoke_outputs() -> dict:
+    """Step-3 smoke: create a fresh run dir on the outputs Volume + write stubs.
+
+    Writes are auto-committed to the Volume on clean function exit, so
+    `modal volume get generals-ai.training-runs /<run_id>/ <local-dest>`
+    will see them once this returns.
+    """
+    import json
+    import platform
+    import socket
+    from datetime import datetime, timezone
+
+    from bc.train_config import make_run_id
+
+    run_id = make_run_id()
+    run_dir = Path("/runs") / run_id
+    run_dir.mkdir(parents=True, exist_ok=False)
+
+    metadata = {
+        "run_id": run_id,
+        "smoke": True,
+        "written_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "python": platform.python_version(),
+        "hostname": socket.gethostname(),
+    }
+    metadata_path = run_dir / "run_metadata.json"
+    with metadata_path.open("w") as fp:
+        json.dump(metadata, fp, indent=2)
+
+    metrics_path = run_dir / "metrics.jsonl"
+    with metrics_path.open("w") as fp:
+        fp.write(json.dumps({"epoch": 1, "loss": 1.234, "smoke": True}) + "\n")
+
+    # The pull-back target directory must exist beforehand and the remote
+    # path must NOT have a trailing slash; otherwise `modal volume get`
+    # collapses recursive contents into a single output file (the last
+    # write wins). See `docs/working-with-modal-cloud-gpu.md`.
+    result = {
+        "run_id": run_id,
+        "run_dir": str(run_dir),
+        "metadata": metadata,
+        "files_written": [str(metadata_path), str(metrics_path)],
+        "pull_back_cmd": (
+            "mkdir -p tmp/cloud-smoke-outputs && "
+            f"modal volume get generals-ai.training-runs /{run_id} "
+            "tmp/cloud-smoke-outputs"
+        ),
+    }
+    print("smoke_outputs result:")
     for key, val in result.items():
         print(f"  {key}: {val}")
     return result

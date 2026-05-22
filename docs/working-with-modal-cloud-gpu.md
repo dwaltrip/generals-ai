@@ -192,6 +192,17 @@ If you mix `.run_commands(...)` between `add_local_*` calls, the order is preser
 
 You don't need to `add_local_file` your entrypoint script — Modal mounts it automatically. (Functions defined in other modules do need to be reachable in the image, of course.)
 
+### `modal volume get` collapses contents when the local destination doesn't exist
+
+The CLI's behavior for `modal volume get <vol> <remote-folder> <local-dest>` differs depending on whether `<local-dest>` already exists as a directory. With a *non-existent* destination — or with trailing slashes on either path — Modal walks the remote folder but writes each file to the destination *name* in turn, silently overwriting; you end up with a single file containing the last write. With an *existing directory* as destination, contents are written under it as expected.
+
+**Always pre-`mkdir -p` the local destination, and skip trailing slashes:**
+```bash
+mkdir -p tmp/runs-pulled
+modal volume get generals-ai.training-runs /<run_id> tmp/runs-pulled
+# → tmp/runs-pulled/<run_id>/...
+```
+
 ### Failed image builds cost essentially nothing
 
 Modal only bills for successful image builds and function runs. If you're iterating on an image definition and hitting errors, you're not burning money. Iterate freely.
