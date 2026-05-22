@@ -5,6 +5,7 @@ description = "generals-ai monorepo workspace root"
 requires-python = ">=3.14"
 dependencies = [
     "modal>=1.4.3",
+    "cloud-train-poc",
     "replay-collector",
     "replay-parser",
     "sim-core",
@@ -16,9 +17,10 @@ dependencies = [
 package = false
 
 [tool.uv.workspace]
-members = ["replay-collector", "replay-parser", "sim-core", "training", "utils"]
+members = ["cloud-poc", "replay-collector", "replay-parser", "sim-core", "training", "utils"]
 
 [tool.uv.sources]
+cloud-train-poc = { workspace = true }
 replay-collector = { workspace = true }
 replay-parser = { workspace = true }
 sim-core = { workspace = true }

@@ -4,6 +4,7 @@ requires-python = ">=3.14"
 
 [manifest]
 members = [
+    "cloud-train-poc",
     "generals-ai-workspace",
     "replay-collector",
     "replay-parser",
@@ -182,6 +183,11 @@ sdist = { url = "https://files.pythonhosted.org/packages/23/e4/796662cd90cf80e3a
 wheels = [
     { url = "https://files.pythonhosted.org/packages/ee/ae/8e92f8058baf87f6c7d86ee7e457668690195cc77efedb8d3797a06e3940/click-8.4.0-py3-none-any.whl", hash = "sha256:40c50b7c6c6adac2823d411041ec84f3f103f1b280d5e9ce0d7f998995832f81", size = 116147, upload-time = "2026-05-17T00:47:56.842Z" },
 ]
+
+[[package]]
+name = "cloud-train-poc"
+version = "0.0.1"
+source = { editable = "cloud-poc" }
 
 [[package]]
 name = "colorama"
@@ -427,6 +433,7 @@ name = "generals-ai-workspace"
 version = "0.0.0"
 source = { virtual = "." }
 dependencies = [
+    { name = "cloud-train-poc" },
     { name = "modal" },
     { name = "replay-collector" },
     { name = "replay-parser" },
@@ -445,6 +452,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "cloud-train-poc", editable = "cloud-poc" },
     { name = "modal", specifier = ">=1.4.3" },
     { name = "replay-collector", editable = "replay-collector" },
     { name = "replay-parser", editable = "replay-parser" },
