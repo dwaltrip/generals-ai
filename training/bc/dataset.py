@@ -146,15 +146,17 @@ def encode_frame(
 
 class IterableDataset(TorchIterableDataset):
     """
-    Single-worker iterable over a manifest of `(sim_path, perspective_k)` pairs.
+    Iterable over a manifest of `(sim_path, perspective_k)` pairs.
 
     `shuffle_buffer_size` enables a reservoir shuffle over yielded samples;
     values ≤ 1 disable it (raw per-perspective walk for diagnostics).
 
-    Multi-worker semantics (per-worker split + per-worker seed offset)
-    are not implemented — running with `num_workers > 1` will yield each
-    sample `num_workers` times. Add worker-aware splitting when the
-    training loop starts using DataLoader workers.
+    Multi-worker safe: when consumed by `DataLoader(num_workers > 1)`,
+    each worker takes a disjoint shard of groups via `get_worker_info()`,
+    and worker_id is mixed into the per-epoch shuffle seed so workers
+    shuffle independently. Caller advances epochs via `set_epoch(epoch)`
+    before each iteration — modeled on `DistributedSampler.set_epoch`.
+    Without it, every iteration reproduces the same shuffle (epoch 0).
     """
 
     def __init__(
@@ -171,7 +173,37 @@ class IterableDataset(TorchIterableDataset):
         self._groups = _group_by_path(samples)
         self._seed = seed
         self._shuffle_buffer_size = shuffle_buffer_size
-        self._epoch_counter = 0
+        self._epoch = 0
+
+    def set_epoch(self, epoch: int) -> None:
+        """Set the epoch index used to seed the per-epoch shuffle. Call
+        before each iteration of the dataset; otherwise every iteration
+        reproduces the epoch-0 shuffle. Mirrors `DistributedSampler.set_epoch`.
+
+        Necessary because `__iter__` runs inside the DataLoader worker
+        subprocess when `num_workers > 0`; mutating an internal counter
+        from inside `__iter__` wouldn't survive the worker fork.
+        """
+        self._epoch = epoch
+
+    def _iter_groups(
+        self,
+        rng: random.Random,
+        worker_id: int = 0,
+        num_workers: int = 1,
+    ) -> list[tuple[Path, tuple[int, ...]]]:
+        """Per-worker ordered list of groups to walk.
+
+        Shards `self._groups` by `i % num_workers == worker_id` so each
+        worker gets a disjoint subset, then shuffles with the caller-owned
+        `rng`. Caller controls the seed (and thereby cross-worker /
+        cross-epoch independence).
+        """
+        groups = [
+            g for i, g in enumerate(self._groups) if i % num_workers == worker_id
+        ]
+        rng.shuffle(groups)
+        return groups
 
     def __iter__(self) -> Iterator[dict[str, torch.Tensor]]:
         """
@@ -183,15 +215,20 @@ class IterableDataset(TorchIterableDataset):
         all-pass and carry no training signal (would just teach the model to
         pass when dead).
 
-        One per-epoch RNG drives both the group shuffle and the buffer's
-        replacement/drain choices — keeps reproducibility tied to
-        `seed + epoch_counter` alone.
+        Multi-worker behavior is driven by `torch.utils.data.get_worker_info()`;
+        single-process iteration falls back to `worker_id=0, num_workers=1`.
+        The per-epoch RNG mixes `worker_id * 1009` into the seed so each
+        worker shuffles its shard independently — preserves the original
+        single-RNG-drives-both-shuffle-and-buffer behavior on `num_workers=0`.
         """
-        rng = random.Random(self._seed + self._epoch_counter)
-        self._epoch_counter += 1
+        worker_info = torch.utils.data.get_worker_info()
+        if worker_info is None:
+            worker_id, num_workers = 0, 1
+        else:
+            worker_id, num_workers = worker_info.id, worker_info.num_workers
 
-        groups = list(self._groups)
-        rng.shuffle(groups)
+        rng = random.Random(self._seed + self._epoch + worker_id * 1009)
+        groups = self._iter_groups(rng, worker_id=worker_id, num_workers=num_workers)
 
         walk = self._walk(groups)
         if self._shuffle_buffer_size > 1:

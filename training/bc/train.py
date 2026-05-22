@@ -96,6 +96,12 @@ def train_one_epoch(
     # the previous epoch left the model.
     model.train()
 
+    # Advance the dataset's per-epoch shuffle. Mutating an internal
+    # counter from `IterableDataset.__iter__` wouldn't survive the
+    # DataLoader worker fork on `num_workers > 0`; the caller-side
+    # `set_epoch` is the supported entry point.
+    loader.dataset.set_epoch(epoch)
+
     acc = LossAccumulator()
     epoch_start = time.perf_counter()
     n_batches_seen = 0
