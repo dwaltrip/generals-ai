@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from bc.train import bc_run
+from bc.train import bc_run, initialize_run_dir
 from bc.train_cli import build_arg_parser, config_from_args
 
 
@@ -30,7 +30,9 @@ def main() -> None:
         device="mps",
     )
     args = parser.parse_args()
-    bc_run(config_from_args(args))
+    config = config_from_args(args)
+    initialize_run_dir(config)
+    bc_run(config)
 
 
 if __name__ == "__main__":

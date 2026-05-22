@@ -12,7 +12,12 @@ checkpoint. Prints per-batch component losses + rolling samples/sec every
 `log_every` batches; end-of-epoch summary collects the sample-weighted
 means via `LossAccumulator`.
 
-Writes into `config.run_dir` (created by `bc_run` with `exist_ok=False`):
+Writes into `config.run_dir`, which must already exist — callers
+initialize it via `initialize_run_dir(config)` before invoking `bc_run`.
+This lets cloud entry points drop sibling provenance files (e.g.
+`args_cloud.json`) into the run dir *before* training starts.
+
+Files produced:
   - `args.json`         — full config as JSON, for provenance.
   - `batches.jsonl`     — one record per batch.
   - `epochs.jsonl`      — one record per epoch (train + val summary, ckpt name).
@@ -153,13 +158,30 @@ def train_one_epoch(
     }
 
 
+def initialize_run_dir(config: TrainConfig) -> None:
+    """Create `config.run_dir` and persist run provenance.
+
+    Mkdirs the run dir with `exist_ok=False` so two runs landing in the
+    same wall-clock second collide explicitly. Writes `args.json` (full
+    `TrainConfig` as JSON) and announces the path. Call before `bc_run`.
+
+    Split out from `bc_run` so cloud callers can drop sibling provenance
+    files (e.g. `args_cloud.json`) into the run dir *before* training
+    starts, instead of relying on a try/finally cleanup hook.
+    """
+    config.run_dir.mkdir(parents=True, exist_ok=False)
+    print(f"run dir: {config.run_dir}")
+    with (config.run_dir / "args.json").open("w") as fp:
+        json.dump(asdict(config), fp, default=json_default, indent=2)
+
+
 def bc_run(config: TrainConfig) -> None:
     """Drive a BC training run end-to-end from a validated config.
 
-    Sets up the run dir + provenance, loads the manifest and builds the
-    train dataset, then hands off to `run_loop` for model build + training.
-    Callable from a notebook or test by constructing a `TrainConfig`
-    directly.
+    Precondition: `config.run_dir` exists. Loads the manifest and builds
+    the train dataset, then hands off to `run_loop` for model build +
+    training. Callable from a notebook or test by constructing a
+    `TrainConfig` directly (after initializing the run dir).
     """
     disable_mps_fallback()
 
@@ -167,26 +189,20 @@ def bc_run(config: TrainConfig) -> None:
         raise SystemExit(f"manifest not found: {config.manifest}")
     if not config.intermediate.exists():
         raise SystemExit(f"intermediate corpus not found: {config.intermediate}")
+    if not config.run_dir.exists():
+        raise SystemExit(f"run_dir not found: {config.run_dir}")
 
     device = pick_device(config.device)
     torch.manual_seed(config.seed)
 
-    # --- Run dir + provenance ---
-    # `exist_ok=False` so two runs landing in the same wall-clock second
-    # collide explicitly rather than silently sharing a directory.
-    run_dir = config.run_dir
-    run_dir.mkdir(parents=True, exist_ok=False)
-    ckpt_dir = run_dir / "checkpoints"
+    ckpt_dir = config.run_dir / "checkpoints"
     ckpt_dir.mkdir()
-    print(f"run dir: {run_dir}")
-    with (run_dir / "args.json").open("w") as fp:
-        json.dump(asdict(config), fp, default=json_default, indent=2)
 
-    # Tee from here so everything past the run-dir announce — manifest
-    # load, dataset summary, model build, training — lands in console.log.
-    # The "run dir:" line above stays terminal-only; self-reference inside
-    # the log would just be noise.
-    with tee_stdio(run_dir / "console.log"):
+    # Tee from here so everything past the run-dir setup — manifest load,
+    # dataset summary, model build, training — lands in console.log. The
+    # "run dir:" line printed by `initialize_run_dir` stays terminal-only;
+    # self-reference inside the log would just be noise.
+    with tee_stdio(config.run_dir / "console.log"):
         # --- Manifest + dataset ---
         print(f"loading manifest: {config.manifest}")
         manifest = load_manifest(config.manifest)
@@ -212,7 +228,7 @@ def bc_run(config: TrainConfig) -> None:
             device=device,
             loader=loader,
             val_samples=val_samples,
-            run_dir=run_dir,
+            run_dir=config.run_dir,
             ckpt_dir=ckpt_dir,
         )
 

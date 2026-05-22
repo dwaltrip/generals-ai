@@ -50,25 +50,20 @@ training_runs_vol = modal.Volume.from_name("generals-ai.training-runs")
     timeout=60 * 60 * 6,
 )
 def train_remote(config: TrainConfig, modal_gpu: str) -> None:
-    """Run `bc_run` on a Modal GPU and drop `args_cloud.json` for provenance.
+    """Run `bc_run` on a Modal GPU.
 
-    The cloud-side provenance file sits next to bc's `args.json` and
-    captures everything the training contract doesn't know about: which
-    GPU class the operator requested, which device CUDA actually surfaced,
-    container hostname, etc. Modal's dashboard has most of this, but the
-    file is offline-readable from the pulled-back run dir.
+    Initializes the run dir, drops `args_cloud.json` *before* training
+    starts (so cloud-side provenance is captured even if training
+    raises), then hands off to `bc_run`. `args_cloud.json` sits next to
+    bc's `args.json` and captures what the training contract doesn't
+    know about: which GPU class the operator requested, which device
+    CUDA actually surfaced, container hostname.
     """
-    from bc.train import bc_run
+    from bc.train import bc_run, initialize_run_dir
 
-    try:
-        bc_run(config)
-    finally:
-        # `bc_run` mkdirs `run_dir` as its first I/O step, so the dir
-        # exists by the time anything past that raises. Only skip the
-        # write if a *very* early failure (e.g. missing Volume mount)
-        # killed bc_run before run_dir creation.
-        if config.run_dir.exists():
-            _write_args_cloud(config.run_dir, modal_gpu)
+    initialize_run_dir(config)
+    _write_args_cloud(config.run_dir, modal_gpu)
+    bc_run(config)
 
 
 def _write_args_cloud(run_dir: Path, modal_gpu: str) -> None:
