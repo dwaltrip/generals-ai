@@ -43,7 +43,7 @@ from pathlib import Path
 import torch
 from torch.utils.data import DataLoader
 
-from bc.dataset import IterableDataset
+from bc.dataset import IterableDataset, assert_safe_loader
 from bc.loss import LossAccumulator, bc_loss, flatten_policy_logits
 from shared.device import dataloader_kwargs, move_batch
 
@@ -86,6 +86,9 @@ def run_val(
     apples-to-apples throughput numbers. `pin_memory=None` resolves to
     auto (True iff device is CUDA).
     """
+    # Val shuffle is intentionally deterministic across epochs (we never
+    # call `set_epoch`), so the per-epoch val loss numbers are apples-to-
+    # apples — variation across epochs reflects model change, not reorder.
     val_ds = IterableDataset(samples=val_samples, seed=seed)
     val_loader = DataLoader(
         val_ds,
@@ -97,6 +100,7 @@ def run_val(
             device=device,
         ),
     )
+    assert_safe_loader(val_loader)
 
     val_start = time.perf_counter()
     acc = LossAccumulator()

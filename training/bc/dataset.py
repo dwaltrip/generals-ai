@@ -30,7 +30,7 @@ from typing import TypeVar
 
 import numpy as np
 import torch
-from torch.utils.data import IterableDataset as TorchIterableDataset
+from torch.utils.data import DataLoader, IterableDataset as TorchIterableDataset
 
 from bc import actions, bfs
 from bc.constants import W_PADDED
@@ -144,6 +144,28 @@ def encode_frame(
     }
 
 
+def assert_safe_loader(loader: DataLoader) -> None:
+    """Fail fast if a DataLoader over our `IterableDataset` is misconfigured.
+
+    Currently guards one thing: `persistent_workers=True` is incompatible
+    with `IterableDataset.set_epoch` — persistent workers fork the dataset
+    once and never see subsequent epoch mutations, so they keep shuffling
+    with the construction-time seed silently. See the WARNING in
+    `IterableDataset.set_epoch` for the full picture + fix shape.
+
+    Call this once, right after constructing the DataLoader, so the
+    failure surfaces at startup instead of in the middle of an epoch.
+    """
+    if loader.persistent_workers:
+        raise RuntimeError(
+            "DataLoader was constructed with persistent_workers=True, "
+            "which is NOT SAFE with our IterableDataset.set_epoch — "
+            "persistent workers fork the dataset once and never see "
+            "subsequent epoch mutations. See IterableDataset.set_epoch "
+            "for the full picture and the fix shape."
+        )
+
+
 class IterableDataset(TorchIterableDataset):
     """
     Iterable over a manifest of `(sim_path, perspective_k)` pairs.
@@ -183,6 +205,26 @@ class IterableDataset(TorchIterableDataset):
         Necessary because `__iter__` runs inside the DataLoader worker
         subprocess when `num_workers > 0`; mutating an internal counter
         from inside `__iter__` wouldn't survive the worker fork.
+
+        =====================================================================
+        WARNING — NOT SAFE WITH `persistent_workers=True`.
+        DO NOT ENABLE `persistent_workers` WITHOUT REWORKING EPOCH PROPAGATION.
+        =====================================================================
+
+        Persistent workers fork the dataset object once at DataLoader
+        construction and reuse those copies across epochs. Subsequent
+        `set_epoch` calls mutate `self._epoch` only in the MAIN process —
+        the worker copies never see the update and keep shuffling with the
+        construction-time seed for the entire run. The failure is silent:
+        no error, val loss just stops behaving like the data is being
+        re-shuffled each epoch.
+
+        Fixing this requires an out-of-band epoch channel: e.g. a shared
+        `multiprocessing.Value` the workers re-read at the top of every
+        `__iter__`, or a `worker_init_fn` that re-seeds. `DistributedSampler`
+        sidesteps this because it's a map-style sampler; `IterableDataset`
+        has no built-in equivalent. See the tracker's `persistent_workers`
+        backlog entry.
         """
         self._epoch = epoch
 

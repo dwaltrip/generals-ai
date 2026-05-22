@@ -35,7 +35,7 @@ from typing import TextIO
 import torch
 from torch.utils.data import DataLoader
 
-from bc.dataset import IterableDataset
+from bc.dataset import IterableDataset, assert_safe_loader
 from bc.eval import run_val
 from bc.loss import LossAccumulator, bc_loss
 from bc.model import BCModel
@@ -242,6 +242,7 @@ def bc_run(config: TrainConfig) -> None:
             device=device,
         )
         loader = DataLoader(ds, batch_size=config.batch_size, **dl_kwargs)
+        assert_safe_loader(loader)
         print(
             f"dataloader: batch_size={config.batch_size}  "
             f"num_workers={dl_kwargs['num_workers']}  "
