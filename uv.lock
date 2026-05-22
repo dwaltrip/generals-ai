@@ -1367,6 +1367,7 @@ dependencies = [
     { name = "matplotlib" },
     { name = "numpy" },
     { name = "torch" },
+    { name = "utils" },
 ]
 
 [package.metadata]
@@ -1374,6 +1375,7 @@ requires-dist = [
     { name = "matplotlib", specifier = ">=3.10.9" },
     { name = "numpy", specifier = ">=2.0" },
     { name = "torch", specifier = ">=2.12" },
+    { name = "utils", editable = "utils" },
 ]
 
 [[package]]
