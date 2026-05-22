@@ -1,26 +1,29 @@
 """Modal cloud entry point for BC training.
 
 Mirrors `run_bc_local.py` in shape — same `build_arg_parser` /
-`config_from_args` pipeline, just with cloud-specific path defaults
-(Volume mounts) and a `--modal-gpu` flag added by this wrapper.
-
-The shared training parser (`bc.train_cli.build_arg_parser`) stays the
-single source of truth for training flags. Cloud-only flags are
-`add_argument`'d to the *same* parser by this wrapper; collisions with
+`config_from_args` pipeline, plus a `--modal-gpu` cloud-only flag that
+selects the Modal GPU class. The shared training parser remains the
+single source of truth for training flags; cloud-only flags are
+`add_argument`'d to the same parser by this wrapper, so collisions with
 training flags raise `argparse.ArgumentError` at add-time.
 
 Run:
-    uv run modal run training/scripts/run_bc_modal.py::train \\
-        --modal-gpu T4 --max-batches 1 --epochs 1
+    uv run modal run training/scripts/run_bc_modal.py \\
+        --modal-gpu T4 --max-batches 5 --epochs 2
 """
 
 from __future__ import annotations
 
+import json
+import platform
+import socket
+from datetime import datetime, timezone
 from pathlib import Path
 
 import modal
 
 from bc.train_cli import build_arg_parser, config_from_args
+from bc.train_config import TrainConfig
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -38,20 +41,63 @@ parsed_replays_vol = modal.Volume.from_name("generals-ai.parsed-replays")
 training_runs_vol = modal.Volume.from_name("generals-ai.training-runs")
 
 
+@app.function(
+    gpu="T4",  # default; overridden via `with_options(gpu=...)` per-call
+    volumes={
+        "/data": parsed_replays_vol,
+        "/runs": training_runs_vol,
+    },
+    timeout=60 * 60 * 6,
+)
+def train_remote(config: TrainConfig, modal_gpu: str) -> None:
+    """Run `bc_run` on a Modal GPU and drop `args_cloud.json` for provenance.
+
+    The cloud-side provenance file sits next to bc's `args.json` and
+    captures everything the training contract doesn't know about: which
+    GPU class the operator requested, which device CUDA actually surfaced,
+    container hostname, etc. Modal's dashboard has most of this, but the
+    file is offline-readable from the pulled-back run dir.
+    """
+    from bc.train import bc_run
+
+    try:
+        bc_run(config)
+    finally:
+        # `bc_run` mkdirs `run_dir` as its first I/O step, so the dir
+        # exists by the time anything past that raises. Only skip the
+        # write if a *very* early failure (e.g. missing Volume mount)
+        # killed bc_run before run_dir creation.
+        if config.run_dir.exists():
+            _write_args_cloud(config.run_dir, modal_gpu)
+
+
+def _write_args_cloud(run_dir: Path, modal_gpu: str) -> None:
+    """Write a `args_cloud.json` sibling to bc's `args.json`."""
+    import torch
+
+    cuda_device_name: str | None = None
+    if torch.cuda.is_available():
+        cuda_device_name = torch.cuda.get_device_name(0)
+
+    args_cloud = {
+        "modal_gpu": modal_gpu,
+        "cuda_device_name": cuda_device_name,
+        "python": platform.python_version(),
+        "hostname": socket.gethostname(),
+        "written_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+    }
+    with (run_dir / "args_cloud.json").open("w") as fp:
+        json.dump(args_cloud, fp, indent=2)
+
+
 @app.local_entrypoint()
 def train(*arglist: str) -> None:
-    """Parse cloud + training args, build a config, print it.
-
-    Step-4 scaffold: validates the extended-parser pattern end-to-end
-    (cloud defaults, run-id generation, config construction). The
-    `@app.function` that actually runs `bc_run(config)` on a GPU is the
-    next piece — to be wired in once we agree on its shape.
-    """
+    """Parse cloud + training args, run `bc_run` on a Modal GPU."""
     parser = build_arg_parser()
     parser.add_argument(
         "--modal-gpu",
-        default="T4",
-        help="Modal GPU class (e.g. T4, A100, H100). Cloud-only.",
+        required=True,
+        help="Modal GPU class (e.g. T4, A100, A100-80GB, H100, L4, L40S). Cloud-only.",
     )
     parser.set_defaults(
         intermediate=Path("/data/intermediate"),
@@ -64,4 +110,13 @@ def train(*arglist: str) -> None:
 
     print(f"modal-gpu: {args.modal_gpu}")
     print(f"run_dir:   {config.run_dir}")
-    print(f"config:    {config}")
+    print()
+
+    train_remote.with_options(gpu=args.modal_gpu).remote(config, args.modal_gpu)
+
+    # Volume-relative path (no `/runs/` prefix — that's the container mount).
+    run_id = config.run_dir.name
+    print()
+    print("pull artifacts:")
+    print(f"  mkdir -p tmp/cloud-runs && \\")
+    print(f"    modal volume get generals-ai.training-runs /{run_id} tmp/cloud-runs")
