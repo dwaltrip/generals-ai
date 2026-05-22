@@ -43,6 +43,7 @@ image = (
 app = modal.App("cloud-train-poc", image=image)
 
 
+# CPU by default (cheap smoke). To re-test the GPU path, swap to gpu="T4".
 @app.function()
 def remote_hello() -> dict:
     from cloud_train_poc.work import hello
