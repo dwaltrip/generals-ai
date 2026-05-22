@@ -1,14 +1,20 @@
 """Modal cloud entry point for BC training.
 
-Step 1: CPU smoke. Builds the Modal image with the full training stack
-installed and verifies `bc.train` is importable inside the container.
-No GPU, no Volume, no actual training step — just confirms the
-install chain works for our real package layout.
+Two smoke functions, neither does training:
 
-Real training runs (Volume mounts + GPU) land in subsequent commits.
+- `smoke` — image smoke. Builds the Modal image with the full training stack
+  installed and verifies `bc.train` is importable inside the container.
+  No GPU, no Volume.
+- `smoke_volume` — Volume smoke. Mounts the `generals-ai.parsed-replays`
+  Volume RO, opens the bundled manifest, resolves the first training sample,
+  and loads its `.npz` + `.meta.npz` to confirm path translation works
+  end-to-end.
+
+Real training runs (GPU + outputs Volume) land in subsequent commits.
 
 Run:
-    uv run modal run training/scripts/run_bc_modal.py
+    uv run modal run training/scripts/run_bc_modal.py                  # smoke
+    uv run modal run training/scripts/run_bc_modal.py::smoke_volume    # volume
 """
 
 from __future__ import annotations
@@ -35,6 +41,8 @@ image = (
 
 app = modal.App("bc-train", image=image)
 
+parsed_replays_vol = modal.Volume.from_name("generals-ai.parsed-replays")
+
 
 @app.function()
 def smoke() -> dict:
@@ -56,6 +64,38 @@ def smoke() -> dict:
         "cuda_available": torch.cuda.is_available(),
         "imports_ok": True,
     }
+
+
+@app.function(volumes={"/data": parsed_replays_vol})
+def smoke_volume() -> dict:
+    """Step-2 smoke: open the manifest from the mounted Volume, load one sample."""
+    import numpy as np
+
+    from bc.splits import load_manifest, samples_for_split
+    from bc.utils import meta_path_for
+
+    manifest = load_manifest(Path("/data/probe_500.json"))
+    samples = samples_for_split(manifest, "train", Path("/data/intermediate"))
+    sim_path, k = samples[0]
+    meta_path = meta_path_for(sim_path)
+
+    with np.load(sim_path) as sim:
+        sim_keys = {name: (arr.shape, str(arr.dtype)) for name, arr in sim.items()}
+    with np.load(meta_path) as meta:
+        meta_keys = {name: (arr.shape, str(arr.dtype)) for name, arr in meta.items()}
+
+    result = {
+        "manifest_kept_pairs": manifest["kept_pairs"],
+        "n_samples_train": len(samples),
+        "first_sim_path": str(sim_path),
+        "first_perspective_k": k,
+        "sim_arrays": sim_keys,
+        "meta_arrays": meta_keys,
+    }
+    print("smoke_volume result:")
+    for key, val in result.items():
+        print(f"  {key}: {val}")
+    return result
 
 
 @app.local_entrypoint()
