@@ -26,6 +26,7 @@ regen() {
         --format requirements-txt \
         --no-dev \
         --no-emit-project \
+        --no-emit-workspace \
         -o "$out" \
         >> "$LOG"
 }
