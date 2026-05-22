@@ -188,6 +188,12 @@ wheels = [
 name = "cloud-train-poc"
 version = "0.0.1"
 source = { editable = "cloud-poc" }
+dependencies = [
+    { name = "torch" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "torch", specifier = ">=2.12" }]
 
 [[package]]
 name = "colorama"

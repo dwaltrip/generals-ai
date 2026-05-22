@@ -3,7 +3,9 @@ name = "cloud-train-poc"
 version = "0.0.1"
 description = "Throwaway package for validating Modal + uv-workspace integration"
 requires-python = ">=3.14"
-dependencies = []
+dependencies = [
+    "torch>=2.12",
+]
 
 [build-system]
 requires = ["hatchling"]
