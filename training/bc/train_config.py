@@ -69,6 +69,12 @@ class TrainConfig:
     # Cost: pinned memory is a limited system-wide resource. A handful
     # of training batches (~hundreds of MB) is fine; allocating GBs of
     # it can starve other processes / cause allocation failures.
+    #
+    # Note on provenance: `args.json` stores the operator's input (which
+    # may be `None` for "auto"); the booled-out value actually used by
+    # the DataLoader is logged to `console.log` at run start. Re-running
+    # the same config on a different device intentionally re-resolves —
+    # `args.json` is the canonical input, not the resolved state.
     pin_memory: bool | None = None
     # Number of batches each worker prefetches ahead of the consumer.
     # PyTorch's default is 2; ignored when num_workers == 0.

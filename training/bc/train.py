@@ -41,7 +41,12 @@ from bc.loss import LossAccumulator, bc_loss
 from bc.model import BCModel
 from bc.splits import load_manifest, samples_for_split
 from bc.train_config import TrainConfig, json_default
-from shared.device import disable_mps_fallback, move_batch, pick_device
+from shared.device import (
+    dataloader_kwargs,
+    disable_mps_fallback,
+    move_batch,
+    pick_device,
+)
 from shared.log import tee_stdio
 
 
@@ -74,6 +79,7 @@ def train_one_epoch(
     epoch: int,
     model: torch.nn.Module,
     optim: torch.optim.Optimizer,
+    dataset: IterableDataset,
     loader: DataLoader,
     device: torch.device,
     batches_fp: TextIO,
@@ -99,8 +105,10 @@ def train_one_epoch(
     # Advance the dataset's per-epoch shuffle. Mutating an internal
     # counter from `IterableDataset.__iter__` wouldn't survive the
     # DataLoader worker fork on `num_workers > 0`; the caller-side
-    # `set_epoch` is the supported entry point.
-    loader.dataset.set_epoch(epoch)
+    # `set_epoch` is the supported entry point. We hold a typed `dataset`
+    # reference rather than going through `loader.dataset` because the
+    # latter is typed as the base `Dataset` (no `set_epoch`).
+    dataset.set_epoch(epoch)
 
     acc = LossAccumulator()
     epoch_start = time.perf_counter()
@@ -227,34 +235,24 @@ def bc_run(config: TrainConfig) -> None:
             seed=config.seed,
             shuffle_buffer_size=config.shuffle_buffer_size,
         )
-        # Resolve pin_memory `None` (auto) to a concrete bool based on
-        # device; see `TrainConfig.pin_memory` for the full explanation.
-        pin_memory = (
-            config.pin_memory
-            if config.pin_memory is not None
-            else device.type == "cuda"
+        dl_kwargs = dataloader_kwargs(
+            num_workers=config.num_workers,
+            pin_memory=config.pin_memory,
+            prefetch_factor=config.prefetch_factor,
+            device=device,
         )
-        loader_kwargs: dict = {
-            "batch_size": config.batch_size,
-            "num_workers": config.num_workers,
-            "pin_memory": pin_memory,
-        }
-        # prefetch_factor only applies when there are workers to prefetch
-        # *with*; PyTorch raises if it's passed with num_workers == 0.
-        if config.num_workers > 0:
-            loader_kwargs["prefetch_factor"] = config.prefetch_factor
-        loader = DataLoader(ds, **loader_kwargs)
+        loader = DataLoader(ds, batch_size=config.batch_size, **dl_kwargs)
         print(
             f"dataloader: batch_size={config.batch_size}  "
-            f"num_workers={config.num_workers}  "
-            f"pin_memory={pin_memory} (config={config.pin_memory!r})  "
-            f"prefetch_factor="
-            f"{config.prefetch_factor if config.num_workers > 0 else 'n/a'}"
+            f"num_workers={dl_kwargs['num_workers']}  "
+            f"pin_memory={dl_kwargs['pin_memory']} (config={config.pin_memory!r})  "
+            f"prefetch_factor={dl_kwargs.get('prefetch_factor', 'n/a')}"
         )
 
         run_loop(
             config=config,
             device=device,
+            dataset=ds,
             loader=loader,
             val_samples=val_samples,
             run_dir=config.run_dir,
@@ -265,6 +263,7 @@ def bc_run(config: TrainConfig) -> None:
 def run_loop(
     config: TrainConfig,
     device: torch.device,
+    dataset: IterableDataset,
     loader: DataLoader,
     val_samples: list[tuple[Path, int]],
     run_dir: Path,
@@ -303,6 +302,7 @@ def run_loop(
                 epoch=epoch,
                 model=model,
                 optim=optim,
+                dataset=dataset,
                 loader=loader,
                 device=device,
                 batches_fp=batches_fp,

@@ -49,8 +49,48 @@ def move_batch(
     batch. On non-CUDA devices, or with unpinned source tensors, the flag
     is silently ignored, so it's safe to set unconditionally. See
     `TrainConfig.pin_memory` for the full picture on why this matters.
+
+    Caveat for future callers: with `non_blocking=True`, the returned
+    tensors are *not* guaranteed to be host-readable immediately. Any
+    code that does `.cpu()`, `.numpy()`, or `.item()` on a moved tensor
+    before a CUDA op consumes it on the same stream will race against
+    the in-flight copy and may read stale memory. The current call sites
+    (train + eval) feed the batch directly into `model(...)` on the
+    default stream, which CUDA orders correctly. Add `torch.cuda.synchronize()`
+    if you need a host-side read.
     """
     return {k: v.to(device, non_blocking=True) for k, v in batch.items()}
+
+
+def dataloader_kwargs(
+    *,
+    num_workers: int,
+    pin_memory: bool | None,
+    prefetch_factor: int,
+    device: torch.device,
+) -> dict:
+    """Resolve the device-dependent DataLoader kwargs for our training
+    loop. Returns a dict the caller `**`-unpacks into `DataLoader(...)`.
+
+    - `pin_memory=None` (auto) → `True` iff the target device is CUDA;
+      explicit True/False overrides. See `TrainConfig.pin_memory` for the
+      rationale behind the auto-default.
+    - `prefetch_factor` is omitted from the returned dict when
+      `num_workers == 0` because PyTorch rejects it in that mode.
+
+    Centralized so the train and val loaders apply the same resolution —
+    a tweak to either rule lands in one place instead of two. The caller
+    keeps control of the actual `DataLoader` construction and can read
+    the resolved `pin_memory` straight out of the returned dict for
+    logging/provenance.
+    """
+    kwargs: dict = {
+        "num_workers": num_workers,
+        "pin_memory": pin_memory if pin_memory is not None else device.type == "cuda",
+    }
+    if num_workers > 0:
+        kwargs["prefetch_factor"] = prefetch_factor
+    return kwargs
 
 
 def disable_mps_fallback() -> None:

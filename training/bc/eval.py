@@ -45,7 +45,7 @@ from torch.utils.data import DataLoader
 
 from bc.dataset import IterableDataset
 from bc.loss import LossAccumulator, bc_loss, flatten_policy_logits
-from shared.device import move_batch
+from shared.device import dataloader_kwargs, move_batch
 
 
 # 8-bucket action histogram keys. Index = `flat_action_idx % 8` =
@@ -87,17 +87,16 @@ def run_val(
     auto (True iff device is CUDA).
     """
     val_ds = IterableDataset(samples=val_samples, seed=seed)
-    pin_memory_resolved = (
-        pin_memory if pin_memory is not None else device.type == "cuda"
+    val_loader = DataLoader(
+        val_ds,
+        batch_size=batch_size,
+        **dataloader_kwargs(
+            num_workers=num_workers,
+            pin_memory=pin_memory,
+            prefetch_factor=prefetch_factor,
+            device=device,
+        ),
     )
-    val_loader_kwargs: dict = {
-        "batch_size": batch_size,
-        "num_workers": num_workers,
-        "pin_memory": pin_memory_resolved,
-    }
-    if num_workers > 0:
-        val_loader_kwargs["prefetch_factor"] = prefetch_factor
-    val_loader = DataLoader(val_ds, **val_loader_kwargs)
 
     val_start = time.perf_counter()
     acc = LossAccumulator()

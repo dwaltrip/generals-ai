@@ -62,7 +62,11 @@ def test_iter_groups_partitions_disjointly_and_completely(num_workers: int) -> N
     """Across all `worker_id`s, `_iter_groups` shards are pairwise disjoint
     and together cover every group exactly once, with near-equal sizes.
     Direct test of the sharding math — DataLoader's role is just wiring
-    `get_worker_info()` into our adapter, which is PyTorch's responsibility."""
+    `get_worker_info()` into our adapter, which is PyTorch's responsibility.
+
+    Not parametrized over `num_workers > num_groups` — empty shards yield
+    nothing by construction, so the case has no bug to catch.
+    """
     samples = [(Path(f"/synth/g{i:03d}.npz"), 0) for i in range(40)]
     ds = IterableDataset(samples=samples, seed=0)
 

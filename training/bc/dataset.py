@@ -197,7 +197,10 @@ class IterableDataset(TorchIterableDataset):
         Shards `self._groups` by `i % num_workers == worker_id` so each
         worker gets a disjoint subset, then shuffles with the caller-owned
         `rng`. Caller controls the seed (and thereby cross-worker /
-        cross-epoch independence).
+        cross-epoch independence). The `worker_id * 1009` multiplier in
+        the caller's seed formula is a prime — chosen so the per-worker
+        offsets don't alias against the additive epoch index and produce
+        identical shuffles modulo shard membership.
         """
         groups = [
             g for i, g in enumerate(self._groups) if i % num_workers == worker_id
