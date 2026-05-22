@@ -5,7 +5,7 @@ Two layout tiers: single files (one username per line, edges stripped,
 blanks skipped) and manifest files (one referenced filepath per line,
 resolved against a caller-supplied project root, union'd with insertion-
 order dedup). Validity-filtered and raw variants of the single-file
-loader both exist; validity uses `replay_collector.usernames.filter_valid`.
+loader both exist; validity uses `utils.usernames.filter_valid`.
 
 Missing referenced files in the manifest loader log to stderr but don't
 error, so the corpus pipeline keeps running on a partial manifest.
@@ -14,15 +14,7 @@ error, so the corpus pipeline keeps running on a partial manifest.
 from pathlib import Path
 import sys
 
-# ============================================================================
-# TODO(cross-package-dep): `filter_valid` lives in `replay_collector.usernames`,
-# which makes this import a backwards dependency — `utils` (a leaf utility
-# package) reaching into `replay_collector` (a domain package). This is a
-# deliberate compromise: moving `usernames.py` into `utils` is the right
-# long-term fix but a wider change. Revisit when `usernames.py` gets touched
-# for any other reason.
-# ============================================================================
-from replay_collector.usernames import filter_valid
+from utils.usernames import filter_valid
 
 
 def _read_lines(path: Path) -> list[str]:

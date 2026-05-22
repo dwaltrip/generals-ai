@@ -27,7 +27,7 @@ import sys
 
 from replay_collector.db import create_conn
 from replay_collector.sql_helpers import ffa_match_filter, from_player_games
-from replay_collector.usernames import display_name, filter_valid
+from utils.usernames import display_name, filter_valid
 from utils.docstring import doc_summary
 from utils.player_name_lists import load_players_raw
 

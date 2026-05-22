@@ -24,7 +24,7 @@ import json
 from pathlib import Path
 import statistics
 
-from replay_collector.usernames import display_name
+from utils.usernames import display_name
 
 
 EPS = 1e-9

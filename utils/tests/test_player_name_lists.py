@@ -29,7 +29,7 @@ def test_filters_invalid_and_warns(tmp_path, caplog):
     # Embedded tab survives strip (only edges are stripped) and isn't split
     # by splitlines — filter_valid drops it with a warning.
     p.write_text("alice\nbad\tname\nbob\n", encoding="utf-8")
-    with caplog.at_level(logging.WARNING, logger="replay_collector.usernames"):
+    with caplog.at_level(logging.WARNING, logger="utils.usernames"):
         result = load_players(p)
     assert result == ["alice", "bob"]
     assert len(caplog.records) == 1

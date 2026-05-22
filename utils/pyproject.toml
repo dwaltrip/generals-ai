@@ -3,10 +3,7 @@ name = "utils"
 version = "0.0.0"
 description = "Cross-package shared helpers for the generals-ai workspace"
 requires-python = ">=3.14"
-# replay-collector dep is a deliberate compromise — see the big TODO in
-# utils/player_name_lists.py. utils should be a leaf, but `filter_valid`
-# lives in the collector's `usernames.py` and moving it is out of scope today.
-dependencies = ["replay-collector"]
+dependencies = []
 
 [build-system]
 requires = ["hatchling"]

@@ -20,7 +20,7 @@ new candidate names not yet promoted.
 
 Each file is read via `utils.player_name_lists.load_players`: one
 username per line, edge-whitespace stripped, blank lines skipped, then
-filtered through `replay_collector.usernames.filter_valid` (drops
+filtered through `utils.usernames.filter_valid` (drops
 invalid names with a warning).
 
 ## Deduping

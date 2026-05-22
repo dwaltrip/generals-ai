@@ -17,7 +17,7 @@ import json
 from pathlib import Path
 import sys
 
-from replay_collector.usernames import filter_valid
+from utils.usernames import filter_valid
 from utils.docstring import doc_summary
 
 

@@ -9,6 +9,7 @@ dependencies = [
     "httpx>=0.28.1",
     "lzstring>=1.0.4",
     "python-dotenv>=1.2.2",
+    "utils",
 ]
 
 [build-system]

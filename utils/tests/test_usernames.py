@@ -2,7 +2,7 @@ import logging
 
 import pytest
 
-from replay_collector.usernames import display_name, filter_valid, is_valid_username
+from utils.usernames import display_name, filter_valid, is_valid_username
 
 
 # ---------- is_valid_username ----------
@@ -86,13 +86,13 @@ class TestFilterValid:
         assert filter_valid([]) == []
 
     def test_warns_on_every_invalid(self, caplog):
-        with caplog.at_level(logging.WARNING, logger="replay_collector.usernames"):
+        with caplog.at_level(logging.WARNING, logger="utils.usernames"):
             filter_valid(["bad\nfoo", "bad\nbar", "bad\nfoo"])
         assert len(caplog.records) == 3
 
     def test_warning_has_no_literal_control_chars(self, caplog):
         # The whole point of %r — control chars must be escaped, not literal.
-        with caplog.at_level(logging.WARNING, logger="replay_collector.usernames"):
+        with caplog.at_level(logging.WARNING, logger="utils.usernames"):
             filter_valid(["bc\n\n\n\r\n"])
         msg = caplog.records[0].getMessage()
         assert "\n" not in msg

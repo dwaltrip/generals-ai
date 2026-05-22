@@ -1189,6 +1189,7 @@ dependencies = [
     { name = "httpx" },
     { name = "lzstring" },
     { name = "python-dotenv" },
+    { name = "utils" },
 ]
 
 [package.dev-dependencies]
@@ -1202,6 +1203,7 @@ requires-dist = [
     { name = "httpx", specifier = ">=0.28.1" },
     { name = "lzstring", specifier = ">=1.0.4" },
     { name = "python-dotenv", specifier = ">=1.2.2" },
+    { name = "utils", editable = "utils" },
 ]
 
 [package.metadata.requires-dev]
@@ -1420,12 +1422,6 @@ wheels = [
 name = "utils"
 version = "0.0.0"
 source = { editable = "utils" }
-dependencies = [
-    { name = "replay-collector" },
-]
-
-[package.metadata]
-requires-dist = [{ name = "replay-collector", editable = "replay-collector" }]
 
 [[package]]
 name = "watchfiles"
