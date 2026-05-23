@@ -93,6 +93,27 @@ def dataloader_kwargs(
     return kwargs
 
 
+def resolve_precision(arg: str, device: torch.device) -> str:
+    """Resolve `"auto" | "fp32" | "fp16"` to a concrete precision string.
+
+    `"auto"` chooses `"fp16"` if CUDA is the device, else `"fp32"`. The
+    asymmetry is deliberate: CUDA tensor cores make FP16 a near-mandatory
+    win on real GPU training; MPS's autocast is less battle-tested and
+    we don't have evidence of a big win on our model, so we default
+    conservative and let the user opt in explicitly.
+
+    Explicit `"fp16"` on a non-CUDA device is allowed (autocast still
+    runs) but won't unlock the tensor-core ceiling that motivates AMP
+    in the first place.
+    """
+    valid = ("auto", "fp32", "fp16")
+    if arg not in valid:
+        raise ValueError(f"unknown precision: {arg!r}, expected one of {valid}")
+    if arg == "auto":
+        return "fp16" if device.type == "cuda" else "fp32"
+    return arg
+
+
 def disable_mps_fallback() -> None:
     """
     Unset `PYTORCH_ENABLE_MPS_FALLBACK` so unsupported MPS ops raise loudly.

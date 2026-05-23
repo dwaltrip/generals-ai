@@ -79,11 +79,20 @@ class TrainConfig:
     # Number of batches each worker prefetches ahead of the consumer.
     # PyTorch's default is 2; ignored when num_workers == 0.
     prefetch_factor: int = 2
+    # --- Mixed-precision knob ---
+    # "auto" picks fp16 on CUDA (engages tensor cores), fp32 elsewhere.
+    # Explicit "fp32" or "fp16" overrides. fp16 on a non-CUDA device is
+    # allowed but unlikely to win much — autocast still runs, but the
+    # tensor-core ceiling that motivates AMP is CUDA-only.
+    precision: str = "auto"
 
     def __post_init__(self) -> None:
         valid_devices = ("auto", "cuda", "mps", "cpu")
         if self.device not in valid_devices:
             raise ValueError(f"device must be one of {valid_devices}; got {self.device!r}")
+        valid_precisions = ("auto", "fp32", "fp16")
+        if self.precision not in valid_precisions:
+            raise ValueError(f"precision must be one of {valid_precisions}; got {self.precision!r}")
         if self.epochs < 1:
             raise ValueError(f"epochs must be >= 1; got {self.epochs}")
         if self.batch_size < 1:

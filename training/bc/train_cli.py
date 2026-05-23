@@ -73,6 +73,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
         default=2,
         help="Batches each worker prefetches ahead. Ignored when num-workers=0.",
     )
+    parser.add_argument(
+        "--precision",
+        choices=("auto", "fp32", "fp16"),
+        default="auto",
+        help="Mixed-precision mode. 'auto' = fp16 on CUDA, fp32 elsewhere.",
+    )
     return parser
 
 
@@ -105,4 +111,5 @@ def config_from_args(args: argparse.Namespace) -> TrainConfig:
         num_workers=args.num_workers,
         pin_memory=_PIN_MEMORY_MAP[args.pin_memory],
         prefetch_factor=args.prefetch_factor,
+        precision=args.precision,
     )

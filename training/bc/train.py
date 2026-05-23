@@ -48,6 +48,7 @@ from shared.device import (
     disable_mps_fallback,
     move_batch,
     pick_device,
+    resolve_precision,
 )
 from shared.gpu_sidecar import gpu_util_sidecar
 from shared.log import tee_stdio
@@ -126,6 +127,8 @@ def train_one_epoch(
     run_start: float,
     max_batches: int | None,
     log_every: int,
+    scaler: torch.amp.GradScaler,
+    amp_dtype: torch.dtype | None,
 ) -> dict:
     """Run one epoch of BC training.
 
@@ -166,10 +169,22 @@ def train_one_epoch(
 
         batch = move_batch(batch, device)
         optim.zero_grad()
-        out = model(batch["obs"])
-        losses = bc_loss(out, batch)
-        losses["total"].backward()
-        optim.step()
+        # AMP path: autocast promotes the matmul/conv-heavy forward to
+        # fp16 (tensor-core eligible on CUDA); numerically-sensitive
+        # ops like GroupNorm + softmax stay in fp32 per autocast's
+        # built-in op-routing rules. `scaler` is a GradScaler that is
+        # disabled when `amp_dtype is None` — `scale()`/`step()`/`update()`
+        # become near-no-ops, so the fp32 path stays unchanged.
+        with torch.amp.autocast(
+            device.type,
+            dtype=amp_dtype or torch.float32,
+            enabled=amp_dtype is not None,
+        ):
+            out = model(batch["obs"])
+            losses = bc_loss(out, batch)
+        scaler.scale(losses["total"]).backward()
+        scaler.step(optim)
+        scaler.update()
 
         B = batch["obs"].shape[0]
         acc.update(losses, batch_size=B)
@@ -329,6 +344,14 @@ def run_loop(
     n_params = sum(p.numel() for p in model.parameters())
     print(f"  params: {n_params:,}")
 
+    # Mixed precision resolution. `amp_dtype is None` is the canonical
+    # "AMP off" sentinel — autocast/scaler are wired through both code
+    # paths so the fp32 case is a no-op rather than a separate branch.
+    resolved_precision = resolve_precision(config.precision, device)
+    amp_dtype = torch.float16 if resolved_precision == "fp16" else None
+    scaler = torch.amp.GradScaler(device.type, enabled=amp_dtype is not None)
+    print(f"  precision: {resolved_precision} (config={config.precision!r})")
+
     # FLOPs/sample + device peak: drives MFU per-epoch. FLOPs are measured
     # once on a synthetic batch; peak comes from a hardcoded device table
     # (`shared.perf`) and is `None` on unknown hardware — in which case
@@ -363,6 +386,8 @@ def run_loop(
                 run_start=run_start,
                 max_batches=config.max_batches,
                 log_every=config.log_every,
+                scaler=scaler,
+                amp_dtype=amp_dtype,
             )
             val_summary = run_val(
                 model=model,
@@ -373,6 +398,7 @@ def run_loop(
                 pin_memory=config.pin_memory,
                 prefetch_factor=config.prefetch_factor,
                 seed=config.seed,
+                amp_dtype=amp_dtype,
             )
 
             # Augment the epoch summary with MFU (None when peak is unknown) and the

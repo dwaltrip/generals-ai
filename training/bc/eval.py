@@ -74,6 +74,7 @@ def run_val(
     pin_memory: bool | None,
     prefetch_factor: int,
     seed: int = 0,
+    amp_dtype: torch.dtype | None = None,
 ) -> dict:
     """Run one full validation pass and return the summary metrics.
 
@@ -115,8 +116,16 @@ def run_val(
     with torch.no_grad():
         for batch in val_loader:
             batch = move_batch(batch, device)
-            out = model(batch["obs"])
-            losses = bc_loss(out, batch)
+            # Same autocast logic as the train loop, minus the GradScaler
+            # (no backward in val). `amp_dtype is None` → autocast is a
+            # no-op via `enabled=False`, so fp32 callers see no change.
+            with torch.amp.autocast(
+                device.type,
+                dtype=amp_dtype or torch.float32,
+                enabled=amp_dtype is not None,
+            ):
+                out = model(batch["obs"])
+                losses = bc_loss(out, batch)
             B = batch["obs"].shape[0]
             acc.update(losses, batch_size=B)
 

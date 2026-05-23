@@ -37,10 +37,13 @@ from bc.actions import _PASS_FLAT_IDX
 LAMBDA_VALUE = 0.5
 MU_PASS = 1.0
 
-# Mask logits set to this value before the softmax — large-negative
-# rather than -inf to stay numerically safe under mixed precision later.
-# After softmax, masked positions have prob ≈ 0 (e^{-1e9} underflows).
-MASK_NEG = -1e9
+# Mask logits set to this value before the softmax. Large-negative
+# rather than `-inf` to avoid NaN propagation if a downstream op
+# touches a masked position. Magnitude is bounded by FP16's representable
+# range (max abs ~65504); -1e4 is comfortably inside that and still
+# underflows to ~0 after softmax (`e^{-1e4} ≈ 0` in any precision).
+# Earlier versions used -1e9 which silently overflowed under AMP.
+MASK_NEG = -1e4
 
 
 def flatten_policy_logits(
