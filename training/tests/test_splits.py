@@ -83,3 +83,38 @@ def test_load_and_resolve_roundtrip(
     for sim_path, k in train_samples[:5] + val_samples[:5]:
         assert sim_path.exists(), f"resolved path doesn't exist: {sim_path}"
         assert isinstance(k, int)
+
+
+def test_samples_for_split_case_insensitive_shard_lookup(tmp_path: Path) -> None:
+    """Shard-dir lookup must tolerate macOS-vs-Linux case mismatch.
+
+    Setup: only `JC/` exists on disk. Manifest references one rid expecting
+    the `JC` prefix and another expecting `jC`. Both must resolve to a path
+    whose parent dir is the actual on-disk name (`JC`).
+    """
+    intermediate = tmp_path / "intermediate"
+    (intermediate / "JC").mkdir(parents=True)
+    (intermediate / "JC" / "JCyyyyy.npz").touch()
+    (intermediate / "JC" / "jCxxxxx.npz").touch()
+
+    manifest = {
+        "version": MANIFEST_VERSION,
+        "seed": 0,
+        "filter_version": "v2",
+        "kept_pairs": 2,
+        "val_frac": 0.5,
+        "train": [["JCyyyyy", 0]],
+        "val": [["jCxxxxx", 1]],
+    }
+
+    train_samples = samples_for_split(manifest, "train", intermediate)
+    val_samples = samples_for_split(manifest, "val", intermediate)
+
+    # Both should land in JC/ (the actual on-disk dir), regardless of rid case.
+    assert train_samples[0][0].parent.name == "JC"
+    assert val_samples[0][0].parent.name == "JC"
+    assert train_samples[0][0].name == "JCyyyyy.npz"
+    assert val_samples[0][0].name == "jCxxxxx.npz"
+    # Sanity: resolved paths exist
+    assert train_samples[0][0].exists()
+    assert val_samples[0][0].exists()

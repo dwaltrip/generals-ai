@@ -26,9 +26,10 @@ Manifest JSON schema (v1):
     effect when this manifest was built."
   - `val_frac` (float): requested validation fraction (actual ratio may
     differ by one pair due to rounding).
-  - `scan_limit` (int | null): if set, caps the corpus scan to the first N
-    sim files — used to build smoke manifests cheaply. `null` means a
-    full-corpus scan.
+  - `scan_limit` (int | null): if set, scans a seeded random sample of N
+    sim files instead of the full corpus. `null` means a full-corpus scan.
+    With the same `seed`, smaller scan_limits are prefixes of larger ones
+    (subset property holds across runs).
   - `train` (list[[str, int]]): list of `[replay_id, perspective_index]`.
   - `val` (list[[str, int]]): same shape.
 
@@ -46,7 +47,7 @@ import subprocess
 from pathlib import Path
 
 from bc.filters import DROP_REASONS, FILTER_VERSION, eligible_perspectives
-from bc.utils import list_sim_paths, meta_path_for, sim_path_for
+from bc.utils import list_sim_paths, meta_path_for
 from utils.json_io import write_json
 from utils.player_name_lists import load_union
 
@@ -120,14 +121,11 @@ def build_manifest(
 
     paths = list(sim_paths) if sim_paths is not None else list_sim_paths(intermediate_root)
     if scan_limit is not None:
-        # TODO: scan_limit slices the lexicographically-first N rids (list_sim_paths
-        # sorts by shard dir then filename), drawn from the earliest few `rid[:2]`
-        # shard dirs. Replay IDs *appear* to be random strings, so in practice the
-        # sample is probably not strongly biased — but we're relying on that
-        # assumption rather than enforcing it. Not robust: if rid generation ever
-        # had any structure (timestamp prefix, user-id prefix, etc.), this would
-        # silently produce a skewed slice. For a true "N random games" mode,
-        # shuffle `paths` with `seed` before slicing.
+        # Seeded shuffle so scan_limit yields a random sample — otherwise it
+        # would be the first N lexicographically sorted replays. Fresh RNG
+        # keeps this independent of the pair shuffle below; both reproducible
+        # from `seed`.
+        random.Random(seed).shuffle(paths)
         paths = paths[:scan_limit]
     n_total = len(paths)
 
@@ -225,9 +223,26 @@ def samples_for_split(
 
     The caller supplies `intermediate_root` (not the manifest's recorded path)
     so the manifest stays portable across machines / checkout locations.
+
+    Shard directories are resolved case-insensitively. macOS APFS is
+    case-insensitive ("first-writer-wins" on dir name), so a slice built on
+    macOS can have shard dirs whose case doesn't match the rid's prefix —
+    e.g., rid `jCxxx` expects `jC/` but the dir on disk is `JC/` because an
+    uppercase-prefix rid created it first. On Linux readers (our Modal
+    Volume mounts) the rid-derived path would 404. We build a one-shot
+    `lower(prefix) → actual_prefix` map from the on-disk shard dirs and
+    route lookups through it.
     """
     assert split in ("train", "val"), f"unknown split: {split}"
-    return [(sim_path_for(rid, intermediate_root), int(k)) for rid, k in manifest[split]]
+    shard_case_map = {
+        p.name.lower(): p.name for p in intermediate_root.iterdir() if p.is_dir()
+    }
+    out: list[tuple[Path, int]] = []
+    for rid, k in manifest[split]:
+        actual_prefix = shard_case_map.get(rid[:2].lower(), rid[:2])
+        sim_path = intermediate_root / actual_prefix / f"{rid}.npz"
+        out.append((sim_path, int(k)))
+    return out
 
 
 def _cmd_build(args: argparse.Namespace) -> None:
@@ -285,8 +300,8 @@ def main() -> None:
         type=int,
         default=None,
         help=(
-            "Cap the corpus scan to the first N sim files. Used to build smoke "
-            "manifests cheaply (seconds instead of minutes). Omit for full scan."
+            "Scan a seeded random sample of N sim files instead of the full corpus. "
+            "Used to build smoke or random-subset manifests cheaply. Omit for full scan."
         ),
     )
     build.add_argument(
