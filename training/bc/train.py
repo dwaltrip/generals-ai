@@ -26,6 +26,7 @@ Files produced:
 
 from __future__ import annotations
 
+import contextlib
 import json
 import time
 from dataclasses import asdict
@@ -35,6 +36,7 @@ from typing import TextIO
 import torch
 from torch.utils.data import DataLoader
 
+from bc.constants import H_PADDED, OBS_CHANNELS, W_PADDED
 from bc.dataset import IterableDataset, assert_safe_loader
 from bc.eval import run_val
 from bc.loss import LossAccumulator, bc_loss
@@ -47,7 +49,9 @@ from shared.device import (
     move_batch,
     pick_device,
 )
+from shared.gpu_sidecar import gpu_util_sidecar
 from shared.log import tee_stdio
+from shared.perf import compute_mfu, measure_total_flops, peak_tflops_fp32
 
 
 def _write_jsonl(fp: TextIO, record: dict) -> None:
@@ -62,6 +66,15 @@ def _fmt_metric(x: float | None, prec: int = 4) -> str:
     return f"{x:.{prec}f}" if x is not None else "n/a"
 
 
+def _ckpt_name(epoch: int) -> str:
+    """Deterministic checkpoint filename for an epoch. Split from
+    `_save_checkpoint` so callers can refer to the planned name in logs
+    or `epochs.jsonl` records *before* the save actually executes —
+    used to preserve epoch metrics if the save itself raises.
+    """
+    return f"epoch_{epoch:03d}.pt"
+
+
 def _save_checkpoint(model: torch.nn.Module, ckpt_dir: Path, epoch: int) -> str:
     """Save the model's `state_dict` to `<ckpt_dir>/epoch_NNN.pt`. Returns
     the filename (sans dir) for logging.
@@ -70,9 +83,36 @@ def _save_checkpoint(model: torch.nn.Module, ckpt_dir: Path, epoch: int) -> str:
     isn't on the spike's path; reloading for eval or inference needs only
     the weights. Epoch number lives in the filename + `epochs.jsonl`.
     """
-    name = f"epoch_{epoch:03d}.pt"
+    name = _ckpt_name(epoch)
     torch.save(model.state_dict(), ckpt_dir / name)
     return name
+
+
+def _measure_model_flops_per_sample(model: BCModel, device: torch.device) -> int:
+    """Run one synthetic forward+backward at B=1, return total counted FLOPs.
+
+    Used at training start to derive a per-run FLOPs/sample constant for
+    MFU reporting. Cost is one extra fwd+bwd at startup — negligible
+    relative to a real epoch.
+
+    Zeros grads afterward so the measurement doesn't contaminate the
+    first real optimizer step. Restores the model's train/eval flag.
+    """
+    was_training = model.training
+    model.train()
+
+    def fwd_bwd() -> torch.Tensor:
+        x = torch.zeros(1, OBS_CHANNELS, H_PADDED, W_PADDED, device=device)
+        out = model(x)
+        # Sum across all three heads so the backward graph touches every
+        # path — matches the structure (not the value) of `bc_loss`.
+        return out["policy_logits"].sum() + out["pass_logit"].sum() + out["value_logits"].sum()
+
+    flops = measure_total_flops(fwd_bwd)
+    model.zero_grad()
+    if not was_training:
+        model.eval()
+    return flops
 
 
 def train_one_epoch(
@@ -288,16 +328,29 @@ def run_loop(
     )
     n_params = sum(p.numel() for p in model.parameters())
     print(f"  params: {n_params:,}")
+
+    # FLOPs/sample + device peak: drives MFU per-epoch. FLOPs are measured
+    # once on a synthetic batch; peak comes from a hardcoded device table
+    # (`shared.perf`) and is `None` on unknown hardware — in which case
+    # MFU is omitted rather than computed against a wrong denominator.
+    flops_per_sample = _measure_model_flops_per_sample(model, device)
+    peak_tflops = peak_tflops_fp32(device)
+    print(f"  fwd+bwd FLOPs/sample: {flops_per_sample / 1e9:.2f} GFLOPs")
+    if peak_tflops is not None:
+        print(f"  device peak FP32:     {peak_tflops:.1f} TFLOPS")
+    else:
+        print("  device peak FP32:     unknown (MFU will be omitted)")
     print()
 
     # --- Train loop ---
-    # JSONL writers are line-buffered (buffering=1) so `tail -f` sees each
-    # record as soon as it's written. The try/finally ensures the file
-    # handles flush + close even if training raises mid-epoch.
-    batches_fp = (run_dir / "batches.jsonl").open("w", buffering=1)
-    epochs_fp = (run_dir / "epochs.jsonl").open("w", buffering=1)
     run_start = time.perf_counter()
-    try:
+    # `ExitStack` cleanly enables multiple context-manager-like helpers w/o deep nesting.
+    with contextlib.ExitStack() as xs:
+        # JSONL writers are line-buffered: `tail -f` sees each record as it's written
+        batches_fp = xs.enter_context((run_dir / "batches.jsonl").open("w", buffering=1))
+        epochs_fp = xs.enter_context((run_dir / "epochs.jsonl").open("w", buffering=1))
+        xs.enter_context(gpu_util_sidecar(run_dir, device))
+
         for epoch in range(1, config.epochs + 1):
             summary = train_one_epoch(
                 epoch=epoch,
@@ -321,7 +374,16 @@ def run_loop(
                 prefetch_factor=config.prefetch_factor,
                 seed=config.seed,
             )
-            ckpt_name = _save_checkpoint(model, ckpt_dir, epoch)
+
+            # Augment the epoch summary with MFU (None when peak is unknown) and the
+            # FLOPs constant used to compute it, so the jsonl row is self-describing.
+            mfu = compute_mfu(summary["samples_per_sec"], flops_per_sample, peak_tflops)
+            summary["mfu"] = round(mfu, 4) if mfu is not None else None
+            summary["flops_per_sample"] = flops_per_sample
+
+            # Write the epoch row + print the summary BEFORE saving the checkpoint.
+            # A checkpoint-save failure shouldn't lose the epoch's computed metrics.
+            ckpt_name = _ckpt_name(epoch)
             _write_jsonl(epochs_fp, {
                 "epoch": epoch,
                 **summary,
@@ -329,11 +391,16 @@ def run_loop(
                 "ckpt": ckpt_name,
             })
             print()
+            mfu_str = (
+                f" | MFU {summary['mfu'] * 100:.1f}%"
+                if summary["mfu"] is not None else ""
+            )
             print(
                 f"[epoch {epoch}] complete | "
                 f"{summary['n_samples']:,} frames ({summary['n_non_pass']:,} non-pass) "
                 f"in {summary['duration_sec']:.1f}s | "
-                f"{summary['samples_per_sec']:.0f} samples/sec ({summary['n_batches']} batches)"
+                f"{summary['samples_per_sec']:.0f} samples/sec"
+                f"{mfu_str} ({summary['n_batches']} batches)"
             )
             print(
                 f"[epoch {epoch}] mean: "
@@ -359,8 +426,9 @@ def run_loop(
                 f"pass_acc {_fmt_metric(val_summary['pass_acc'])}  "
                 f"pass_frac {_fmt_metric(val_summary['pass_frac'])}"
             )
+
+            # Now the actual save. Failure here raises out of the loop
+            # with metrics + summary already persisted above.
+            _save_checkpoint(model, ckpt_dir, epoch)
             print(f"[epoch {epoch}] saved checkpoint: checkpoints/{ckpt_name}")
             print()
-    finally:
-        batches_fp.close()
-        epochs_fp.close()

@@ -151,7 +151,11 @@ def run_val(
             # Move to CPU before bincount — keeps the tiny per-batch
             # bookkeeping device-agnostic.
             if non_pass.any():
-                pred_subs = (topk[non_pass, 0] % 8).cpu()
+                # MPS workaround: `topk[non_pass, 0]` (bool mask + int
+                # column in one bracket) returns garbage indices on MPS.
+                # Split into two ops to dodge. Unclear when this regressed.
+                # POC run on 2026-05-21 with similar code completed val cleanly.
+                pred_subs = (topk[:, 0][non_pass] % 8).cpu()
                 target_subs = (action_target[non_pass] % 8).cpu()
                 pred_counts += torch.bincount(pred_subs, minlength=8)
                 target_counts += torch.bincount(target_subs, minlength=8)
