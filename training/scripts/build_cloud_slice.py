@@ -21,6 +21,7 @@ from pathlib import Path
 
 from bc.splits import load_manifest
 from bc.utils import meta_path_for, sim_path_for
+from utils.docstring import doc_summary
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -39,7 +40,9 @@ def build_slice(manifest_path: Path, intermediate_root: Path, out_dir: Path) -> 
 
     total_bytes = 0
     n_files = 0
-    for rid in sorted(replay_ids):
+    n_games = len(replay_ids)
+    log_every = max(1, n_games // 10)  # ~10 progress lines per run, any size
+    for i, rid in enumerate(sorted(replay_ids)):
         sim_src = sim_path_for(rid, intermediate_root)
         meta_src = meta_path_for(sim_src)
         sim_dst = sim_path_for(rid, out_intermediate)
@@ -49,6 +52,8 @@ def build_slice(manifest_path: Path, intermediate_root: Path, out_dir: Path) -> 
             shutil.copy2(src, dst)
             total_bytes += dst.stat().st_size
             n_files += 1
+        if (i + 1) % log_every == 0 or (i + 1) == n_games:
+            print(f"  copied {i + 1:,} / {n_games:,} games  ({total_bytes / 1e6:.1f} MB)")
 
     manifest_dst = out_dir / manifest_path.name
     shutil.copy2(manifest_path, manifest_dst)
@@ -61,7 +66,7 @@ def build_slice(manifest_path: Path, intermediate_root: Path, out_dir: Path) -> 
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser = argparse.ArgumentParser(description=doc_summary(__doc__))
     parser.add_argument("--manifest", type=Path, required=True, help="path to manifest JSON")
     parser.add_argument(
         "--intermediate",
