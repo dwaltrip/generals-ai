@@ -4,35 +4,35 @@ Per-epoch validation pass for BC training.
 `run_val` walks a val sample list once and reports the diagnostics we
 want on the loss curve:
 
-  - **Losses** (policy / value / pass / total): same definitions as
-    train, sample-weighted via the shared `LossAccumulator`. Comparable
-    epoch-over-epoch and apples-to-apples with train numbers.
+    - **Losses** (policy / value / pass / total): same definitions as
+      train, sample-weighted via the shared `LossAccumulator`. Comparable
+      epoch-over-epoch and apples-to-apples with train numbers.
 
-  - **Top-1 / top-3 accuracy**: did the model's highest-probability
-    legal action(s) match the demonstrated action? Restricted to non-pass
-    frames — the policy head's supervision domain. Pass frames have no
-    action target (`action_target == -1`) and contribute zero weight.
+    - **Top-1 / top-3 accuracy**: did the model's highest-probability
+      legal action(s) match the demonstrated action? Restricted to non-pass
+      frames — the policy head's supervision domain. Pass frames have no
+      action target (`action_target == -1`) and contribute zero weight.
 
-  - **`pass_acc`**: did the pass head's sign agree with the demonstrated
-    pass/act decision? Denominator = all frames (pass head's domain).
+    - **`pass_acc`**: did the pass head's sign agree with the demonstrated
+      pass/act decision? Denominator = all frames (pass head's domain).
 
-  - **`pass_frac`**: observed rate of pass frames in val. A drift signal
-    against the pass head's predicted rate (sigmoid(`pass_logit`)) and
-    a sanity check on whether the pass head is collapsing.
+    - **`pass_frac`**: observed rate of pass frames in val. A drift signal
+      against the pass head's predicted rate (sigmoid(`pass_logit`)) and
+      a sanity check on whether the pass head is collapsing.
 
-  - **`action_dist` / `action_target_dist`**: 8-bucket histograms over
-    `(direction, split)` sub-actions — directional bias / mode collapse
-    alarm. `action_target_dist` is constant across epochs (it's a
-    property of the val set) but echoed in every row for grep-ability
-    when comparing the two.
+    - **`action_dist` / `action_target_dist`**: 8-bucket histograms over
+      `(direction, split)` sub-actions — directional bias / mode collapse
+      alarm. `action_target_dist` is constant across epochs (it's a
+      property of the val set) but echoed in every row for grep-ability
+      when comparing the two.
 
 Architectural notes:
-  - Top-k uses the same flat masked layout as `bc_loss` (via
-    `flatten_policy_logits`) — one `torch.topk(k=3)` call per batch.
-  - Accuracies are `None` (→ JSON `null`) when their denominator is 0.
-    Realistically never fires on a meaningful val set, but consistent
-    guarding keeps downstream consumers from silently averaging zeros.
-  - Sets `model.eval()` for the pass; caller restores `train()` mode.
+    - Top-k uses the same flat masked layout as `bc_loss` (via
+      `flatten_policy_logits`) — one `torch.topk(k=3)` call per batch.
+    - Accuracies are `None` (→ JSON `null`) when their denominator is 0.
+      Realistically never fires on a meaningful val set, but consistent
+      guarding keeps downstream consumers from silently averaging zeros.
+    - Sets `model.eval()` for the pass; caller restores `train()` mode.
 """
 
 from __future__ import annotations
