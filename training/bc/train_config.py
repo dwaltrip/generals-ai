@@ -85,6 +85,11 @@ class TrainConfig:
     # allowed but unlikely to win much — autocast still runs, but the
     # tensor-core ceiling that motivates AMP is CUDA-only.
     precision: str = "auto"
+    # Skip the per-epoch val pass entirely. For perf-testing runs where
+    # val cost dominates wall time (val sweeps the full val split and
+    # can be ~10x slower than a short train segment) and we don't care
+    # about val metrics. Off by default — val is wanted for real runs.
+    skip_val: bool = False
 
     def __post_init__(self) -> None:
         valid_devices = ("auto", "cuda", "mps", "cpu")

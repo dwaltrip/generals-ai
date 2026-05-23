@@ -389,17 +389,20 @@ def run_loop(
                 scaler=scaler,
                 amp_dtype=amp_dtype,
             )
-            val_summary = run_val(
-                model=model,
-                val_samples=val_samples,
-                device=device,
-                batch_size=config.batch_size,
-                num_workers=config.num_workers,
-                pin_memory=config.pin_memory,
-                prefetch_factor=config.prefetch_factor,
-                seed=config.seed,
-                amp_dtype=amp_dtype,
-            )
+            if config.skip_val:
+                val_summary = None
+            else:
+                val_summary = run_val(
+                    model=model,
+                    val_samples=val_samples,
+                    device=device,
+                    batch_size=config.batch_size,
+                    num_workers=config.num_workers,
+                    pin_memory=config.pin_memory,
+                    prefetch_factor=config.prefetch_factor,
+                    seed=config.seed,
+                    amp_dtype=amp_dtype,
+                )
 
             # Augment the epoch summary with MFU (None when peak is unknown) and the
             # FLOPs constant used to compute it, so the jsonl row is self-describing.
@@ -435,23 +438,26 @@ def run_loop(
                 f"pass {summary['pass']:.4f}  |  "
                 f"total {summary['total']:.4f}"
             )
-            print(
-                f"[epoch {epoch}] val | "
-                f"{val_summary['n_samples']:,} frames ({val_summary['n_non_pass']:,} non-pass) "
-                f"in {val_summary['duration_sec']:.1f}s | "
-                f"{val_summary['samples_per_sec']:.0f} samples/sec | "
-                f"policy {val_summary['policy']:.4f}  "
-                f"value {val_summary['value']:.4f}  "
-                f"pass {val_summary['pass']:.4f}  |  "
-                f"total {val_summary['total']:.4f}"
-            )
-            print(
-                f"[epoch {epoch}] val | "
-                f"top1 {_fmt_metric(val_summary['top1'])}  "
-                f"top3 {_fmt_metric(val_summary['top3'])}  "
-                f"pass_acc {_fmt_metric(val_summary['pass_acc'])}  "
-                f"pass_frac {_fmt_metric(val_summary['pass_frac'])}"
-            )
+            if val_summary is not None:
+                print(
+                    f"[epoch {epoch}] val | "
+                    f"{val_summary['n_samples']:,} frames ({val_summary['n_non_pass']:,} non-pass) "
+                    f"in {val_summary['duration_sec']:.1f}s | "
+                    f"{val_summary['samples_per_sec']:.0f} samples/sec | "
+                    f"policy {val_summary['policy']:.4f}  "
+                    f"value {val_summary['value']:.4f}  "
+                    f"pass {val_summary['pass']:.4f}  |  "
+                    f"total {val_summary['total']:.4f}"
+                )
+                print(
+                    f"[epoch {epoch}] val | "
+                    f"top1 {_fmt_metric(val_summary['top1'])}  "
+                    f"top3 {_fmt_metric(val_summary['top3'])}  "
+                    f"pass_acc {_fmt_metric(val_summary['pass_acc'])}  "
+                    f"pass_frac {_fmt_metric(val_summary['pass_frac'])}"
+                )
+            else:
+                print(f"[epoch {epoch}] val skipped (--skip-val)")
 
             # Now the actual save. Failure here raises out of the loop
             # with metrics + summary already persisted above.

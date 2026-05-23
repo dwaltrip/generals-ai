@@ -79,6 +79,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
         default="auto",
         help="Mixed-precision mode. 'auto' = fp16 on CUDA, fp32 elsewhere.",
     )
+    parser.add_argument(
+        "--skip-val",
+        action="store_true",
+        help="Skip the per-epoch val pass. For perf-testing runs where val cost dominates wall time.",
+    )
     return parser
 
 
@@ -112,4 +117,5 @@ def config_from_args(args: argparse.Namespace) -> TrainConfig:
         pin_memory=_PIN_MEMORY_MAP[args.pin_memory],
         prefetch_factor=args.prefetch_factor,
         precision=args.precision,
+        skip_val=args.skip_val,
     )
