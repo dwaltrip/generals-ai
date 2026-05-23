@@ -107,11 +107,14 @@ def train(*arglist: str) -> None:
     print(f"run_dir:   {config.run_dir}")
     print()
 
-    train_remote.with_options(gpu=args.modal_gpu).remote(config, args.modal_gpu)
-
     # Volume-relative path (no `/runs/` prefix — that's the container mount).
     run_id = config.run_dir.name
     print()
-    print("pull artifacts:")
+    print("Once the run is done, pull artifacts:")
     print(f"  mkdir -p tmp/cloud-runs && \\")
-    print(f"    modal volume get generals-ai.training-runs /{run_id} tmp/cloud-runs")
+    print(f"    uv run modal volume get generals-ai.training-runs /{run_id} tmp/cloud-runs")
+
+    train_remote.with_options(gpu=args.modal_gpu).remote(config, args.modal_gpu)
+
+    print()
+    print("Run finished successfully.")
