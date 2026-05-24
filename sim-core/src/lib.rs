@@ -4,13 +4,13 @@ mod state;
 
 use state::{army_overflow_pyerr, CaptureEvent, DeathEvent, NeutralizeEvent, State};
 
-/// Run the full simulator on a Python `ReplayData`. Returns a finished
-/// Rust State after running to game-over.
-#[pyfunction]
-fn simulate(py: Python<'_>, replay: &Bound<'_, PyAny>) -> PyResult<State> {
-    use numpy::PyReadonlyArray1;
-
-    let static_data = replay.getattr("static")?;
+/// Build a fresh `State` from a duck-typed static-map record.
+///
+/// Reads the same `static.*` attributes that `simulate` does, calls
+/// `State::build_initial`, and writes the initial pre-loop snapshot so
+/// snapshot indexing is consistent across `simulate` and `step_tick`
+/// driven loops.
+fn build_state_from_static(py: Python<'_>, static_data: &Bound<'_, PyAny>) -> PyResult<State> {
     let map_w: usize = static_data.getattr("map_width")?.extract()?;
     let map_h: usize = static_data.getattr("map_height")?.extract()?;
     let map_size = map_w * map_h;
@@ -23,6 +23,37 @@ fn simulate(py: Python<'_>, replay: &Bound<'_, PyAny>) -> PyResult<State> {
     let initial_neutrals: Vec<i32> = static_data.getattr("initial_neutrals")?.extract()?;
     let initial_neutral_armies: Vec<i32> =
         static_data.getattr("initial_neutral_armies")?.extract()?;
+
+    let mut state = State::build_initial(
+        map_size,
+        num_players,
+        &mountains,
+        &initial_cities,
+        &initial_city_armies,
+        &initial_generals,
+        &initial_neutrals,
+        &initial_neutral_armies,
+    );
+    // Initial snapshot — mirrors the pre-loop append in the old Python parser.
+    state.snapshot().map_err(|e| army_overflow_pyerr(py, e))?;
+    Ok(state)
+}
+
+/// Build a fresh `State` ready for stepwise driving via `State.step_tick`.
+/// Companion to `simulate`: same construction, just no moves array.
+#[pyfunction]
+fn new_state(py: Python<'_>, static_data: &Bound<'_, PyAny>) -> PyResult<State> {
+    build_state_from_static(py, static_data)
+}
+
+/// Run the full simulator on a Python `ReplayData`. Returns a finished
+/// Rust State after running to game-over.
+#[pyfunction]
+fn simulate(py: Python<'_>, replay: &Bound<'_, PyAny>) -> PyResult<State> {
+    use numpy::PyReadonlyArray1;
+
+    let static_data = replay.getattr("static")?;
+    let mut state = build_state_from_static(py, &static_data)?;
 
     let moves = replay.getattr("moves")?;
     let m_timestep: PyReadonlyArray1<i32> = moves.getattr("timestep")?.extract()?;
@@ -43,19 +74,6 @@ fn simulate(py: Python<'_>, replay: &Bound<'_, PyAny>) -> PyResult<State> {
     let a_ts = a_timestep.as_slice()?;
     let a_idx = a_index.as_slice()?;
 
-    let mut state = State::build_initial(
-        map_size,
-        num_players,
-        &mountains,
-        &initial_cities,
-        &initial_city_armies,
-        &initial_generals,
-        &initial_neutrals,
-        &initial_neutral_armies,
-    );
-    // Initial snapshot — mirrors the pre-loop append in the old Python parser.
-    state.snapshot().map_err(|e| army_overflow_pyerr(py, e))?;
-
     let result = py.detach(|| -> Result<(), state::ArmyOverflow> {
         loop {
             if !state.step(m_ts, m_idx, m_src, m_dst, m_i5, a_ts, a_idx)? {
@@ -72,6 +90,7 @@ fn simulate(py: Python<'_>, replay: &Bound<'_, PyAny>) -> PyResult<State> {
 #[pymodule]
 fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(simulate, m)?)?;
+    m.add_function(wrap_pyfunction!(new_state, m)?)?;
     m.add_class::<State>()?;
     m.add_class::<DeathEvent>()?;
     m.add_class::<CaptureEvent>()?;

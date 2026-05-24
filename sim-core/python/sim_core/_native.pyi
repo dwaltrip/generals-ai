@@ -3,6 +3,7 @@ from typing import Any
 import numpy as np
 
 def simulate(replay: Any) -> State: ...
+def new_state(static: Any) -> State: ...
 
 class DeathEvent:
     timestep: int
@@ -65,3 +66,9 @@ class State:
     def actions_dest(self) -> np.ndarray: ...
     @property
     def actions_is50(self) -> np.ndarray: ...
+
+    def step_tick(
+        self,
+        moves: list[tuple[int, int, int, int]],
+        afks: list[int] = ...,
+    ) -> bool: ...

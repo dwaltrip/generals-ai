@@ -233,6 +233,53 @@ impl State {
     fn actions_is50<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray2<i8>>> {
         stack_per_player_i8(py, &self.actions_is50, self.num_players)
     }
+
+    /// Stepwise driver for callers (self-play, eval, RL rollout) that
+    /// don't have a pre-recorded moves table. Accepts only the moves +
+    /// AFKs that apply at the current `self.timestep`, packs them into
+    /// the per-tick array shape the internal `step` consumes, and
+    /// advances one tick. Returns `True` if the step ran; `False` if
+    /// the game was already over (`alive_count <= 1`).
+    ///
+    /// `moves` is `(player_idx, source, dest, is50)`. Order within the
+    /// list is irrelevant — the sim's own `priority_sort` /
+    /// `dependency_loop` decide application order.
+    ///
+    /// The `simulate` path uses persistent `moves_cursor` / `afks_cursor`
+    /// to walk a global moves array across many step() calls. For
+    /// step_tick callers, each call has a fresh small array, so we
+    /// reset the cursors here. `simulate` never calls step_tick, so its
+    /// path is unaffected.
+    #[pyo3(signature = (moves, afks=Vec::new()))]
+    fn step_tick(
+        &mut self,
+        py: Python<'_>,
+        moves: Vec<(i8, i16, i16, u8)>,
+        afks: Vec<i8>,
+    ) -> PyResult<bool> {
+        let t = self.timestep;
+        let m_timestep: Vec<i32> = vec![t; moves.len()];
+        let m_index: Vec<i8> = moves.iter().map(|m| m.0).collect();
+        let m_source: Vec<i16> = moves.iter().map(|m| m.1).collect();
+        let m_dest: Vec<i16> = moves.iter().map(|m| m.2).collect();
+        let m_is50: Vec<u8> = moves.iter().map(|m| m.3).collect();
+        let a_timestep: Vec<i32> = vec![t; afks.len()];
+        let a_index: Vec<i8> = afks;
+
+        self.moves_cursor = 0;
+        self.afks_cursor = 0;
+
+        self.step(
+            &m_timestep,
+            &m_index,
+            &m_source,
+            &m_dest,
+            &m_is50,
+            &a_timestep,
+            &a_index,
+        )
+        .map_err(|e| army_overflow_pyerr(py, e))
+    }
 }
 
 // ============================================================================
