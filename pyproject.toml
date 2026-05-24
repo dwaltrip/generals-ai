@@ -28,7 +28,7 @@ members = [
     "cloud-poc",
     "replay-collector",
     "replay-parser",
-    "self-play",
+    "packages/self-play",
     "sim-core",
     "training",
     "packages/utils",
@@ -57,7 +57,7 @@ pythonpath = ["replay-parser/tests"]
 testpaths = [
     "replay-collector/tests",
     "replay-parser/tests",
-    "self-play/tests",
+    "packages/self-play/tests",
     "training/tests",
     "packages/utils/tests",
 ]

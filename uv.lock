@@ -464,7 +464,7 @@ requires-dist = [
     { name = "modal", specifier = ">=1.4.3" },
     { name = "replay-collector", editable = "replay-collector" },
     { name = "replay-parser", editable = "replay-parser" },
-    { name = "self-play", editable = "self-play" },
+    { name = "self-play", editable = "packages/self-play" },
     { name = "sim-core", editable = "sim-core" },
     { name = "training", editable = "training" },
     { name = "utils", editable = "packages/utils" },
@@ -1270,7 +1270,7 @@ wheels = [
 [[package]]
 name = "self-play"
 version = "0.0.1"
-source = { editable = "self-play" }
+source = { editable = "packages/self-play" }
 dependencies = [
     { name = "numpy" },
     { name = "replay-collector" },
