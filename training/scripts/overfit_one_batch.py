@@ -29,6 +29,7 @@ from bc.dataset import IterableDataset
 from bc.filters import eligible_perspectives
 from bc.loss import bc_loss
 from bc.model import BCModel
+from bc.splits import load_curated_names
 from bc.utils import list_sim_paths, meta_path_for
 from shared.device import disable_mps_fallback, move_batch, pick_device
 
@@ -87,10 +88,11 @@ def main() -> None:
 
     # --- Pull one fixed batch ---
     print(f"building dataset (intermediate={args.intermediate})...")
+    curated_names = load_curated_names()
     sim_paths = list_sim_paths(args.intermediate)[: args.subset_size]
     samples: list[tuple[Path, int]] = []
     for sim_path in sim_paths:
-        for k in eligible_perspectives(sim_path, meta_path_for(sim_path)):
+        for k in eligible_perspectives(sim_path, meta_path_for(sim_path), curated_names):
             samples.append((sim_path, k))
     print(f"scanned {len(sim_paths):,} games -> {len(samples):,} eligible (game, k) pairs")
     ds = IterableDataset(samples=samples, seed=args.seed)
