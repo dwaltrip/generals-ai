@@ -8,6 +8,7 @@ dependencies = [
     "cloud-train-poc",
     "replay-collector",
     "replay-parser",
+    "self-play",
     "sim-core",
     "training",
     "utils",
@@ -27,6 +28,7 @@ members = [
     "cloud-poc",
     "replay-collector",
     "replay-parser",
+    "self-play",
     "sim-core",
     "training",
     "packages/utils",
@@ -36,6 +38,7 @@ members = [
 cloud-train-poc = { workspace = true }
 replay-collector = { workspace = true }
 replay-parser = { workspace = true }
+self-play = { workspace = true }
 sim-core = { workspace = true }
 training = { workspace = true }
 utils = { workspace = true }
@@ -54,6 +57,7 @@ pythonpath = ["replay-parser/tests"]
 testpaths = [
     "replay-collector/tests",
     "replay-parser/tests",
+    "self-play/tests",
     "training/tests",
     "packages/utils/tests",
 ]

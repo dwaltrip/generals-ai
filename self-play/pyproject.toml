@@ -1,0 +1,23 @@
+[project]
+name = "self-play"
+version = "0.0.1"
+description = "Self-play prototype: two model instances play a generals.io game through sim_core, renderable in the timestep viewer"
+requires-python = ">=3.14"
+dependencies = [
+    "numpy>=2.0",
+    "replay-collector",
+    "replay-parser",
+    "sim-core",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["self_play"]
+
+[tool.uv.sources]
+replay-collector = { workspace = true }
+replay-parser = { workspace = true }
+sim-core = { workspace = true }
