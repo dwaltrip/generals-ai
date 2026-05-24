@@ -37,11 +37,17 @@ def play_game(
     force_move: bool = False,
     sample: bool = False,
     temperature: float = 1.0,
+    progress_interval: int = 50,
 ) -> tuple[sim_core.State, list[ModelAgent]]:
     """Play one 2-player self-play game to termination. Returns the final
     State (with full snapshot history, event lists, etc. ready for the
     viewer) and the list of agents (for per-perspective diagnostics:
     n_passed / n_moved / n_no_legal counters).
+
+    `progress_interval`: prints a one-line status update every N ticks
+    (set to 0 to disable). Line shape:
+        [t= 100] alive=[T,T] p0: land= 12 army= 28 pass= 18 move= 80
+                             p1: land= 14 army= 31 pass= 12 move= 86
     """
     state = sim_core.new_state(static)
     if state.num_players != 2:
@@ -70,4 +76,26 @@ def play_game(
             moves.append((p, src, dst, is50))
         state.step_tick(moves=moves, afks=[])
 
+        if progress_interval > 0 and state.timestep % progress_interval == 0:
+            _print_progress(state, agents)
+
     return state, agents
+
+
+def _print_progress(state: sim_core.State, agents: list[ModelAgent]) -> None:
+    """One progress line per tick interval. Pulls per-player land+army
+    from the sim's god-view ownership/armies (cheap; no fog applied)."""
+    own = state.ownership
+    arm = state.armies
+    alive_chr = "".join("T" if a else "F" for a in state.alive)
+    rows = []
+    for p, ag in enumerate(agents):
+        mask = own == p
+        land = int(mask.sum())
+        army = int((arm * mask).sum())
+        rows.append(
+            f"p{p}: land={land:4d} army={army:5d} "
+            f"pass={ag.n_passed:4d} move={ag.n_moved:4d}"
+        )
+    print(f"[t={state.timestep:4d}] alive=[{alive_chr}] {rows[0]}")
+    print(f"                       {rows[1]}")
