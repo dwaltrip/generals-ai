@@ -84,6 +84,16 @@ def build_arg_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Skip the per-epoch val pass. For perf-testing runs where val cost dominates wall time.",
     )
+    parser.add_argument(
+        "--value-head",
+        choices=("direct", "pyramid"),
+        default="direct",
+        help=(
+            "Value-head architecture variant. 'direct' = thin Conv+Linear "
+            "(~9k params); 'pyramid' = adds a PyramidModule before projection "
+            "for multi-scale receptive field (~+0.82M params)."
+        ),
+    )
     return parser
 
 
@@ -118,4 +128,5 @@ def config_from_args(args: argparse.Namespace) -> TrainConfig:
         prefetch_factor=args.prefetch_factor,
         precision=args.precision,
         skip_val=args.skip_val,
+        value_head_variant=args.value_head,
     )

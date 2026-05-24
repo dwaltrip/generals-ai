@@ -445,45 +445,67 @@ class PassHead(nn.Module):
         return self.linear(pooled).squeeze(-1)          # [B]
 
 
+VALUE_HEAD_VARIANTS = ("direct", "pyramid")
+
+
 class ValueHead(nn.Module):
     """
     Categorical placement value head (8-way: 1st through 8th).
 
-    v1 (option B from 5.20-2 session note):
+    Two architectural variants, selected by `variant`:
 
-        x ─→ Conv2d(C → 1, kernel=3) → ReLU → mask → flatten → Linear(H·W, 8)
+      "direct" (v1 spike choice — formerly "option B" in 5.20-2 / 5.20-3):
 
-    This preserves the per-cell spatial info via flatten (vs. an inline
-    global-pool, which would collapse all 32·32 positions into a single
-    C-dim summary). Placement is a global question — armies differential,
-    board control — and the trunk has already encoded that spatially; we
-    don't want to throw it away right before the only learnable layer in
-    the head.
+          x ─→ Conv2d(C → 1, k=3) → ReLU → mask → flatten → Linear(H·W, 8)
 
-    The mask multiply zeroes padded positions before flatten. Without it,
-    the Linear layer sees per-game-varying junk at padded positions and
-    has to learn a compromise across board sizes (the padding pattern is
-    per-sample, so it can't cleanly zero out those weights).
+        Thin head — the Linear does all spatial integration. 3×3 receptive
+        field per cell before flatten; ~9k params. Anomalously small relative
+        to the policy head's ~1.1M.
 
-    EXTENSION TO OPTION C (full DeepNash spec): insert an N=0/M=0
-    PyramidModule between the trunk and `self.proj_conv` below. The PM
-    is shape-preserving (`[B, C, H, W]` → `[B, C, H, W]`), so the rest
-    of this module's wiring doesn't change. Two TODO markers below mark
-    the only required changes.
+      "pyramid" (full DeepNash spec — formerly "option C" in 5.20-2 / 5.20-3):
+
+          x ─→ PyramidModule(N=0/M=0/M=0, uniform width=C)
+            ─→ Conv2d(C → 1, k=3) → ReLU → mask → flatten → Linear(H·W, 8)
+
+        Adds a shape-preserving U-Net-style head before proj_conv: 32→16→8
+        encoder + symmetric decoder with skip connections. Each cell in the
+        pre-flatten map encodes global board context via the 8×8 bottleneck,
+        which is the right shape for a placement-prediction (global) task.
+        ~+0.82M params; brings the value head into the same size class as
+        the policy head.
+
+    Common to both: the mask multiply between ReLU and flatten zeroes
+    padded-cell contributions, so the Linear layer doesn't see per-game-
+    varying junk at padded positions.
     """
 
-    def __init__(self, in_ch: int, H: int, W: int, n_classes: int = 8):
+    def __init__(
+        self,
+        in_ch: int,
+        H: int,
+        W: int,
+        n_classes: int = 8,
+        variant: str = "direct",
+    ):
         super().__init__()
-        # TODO(option C extension): self.head_pm = PyramidModule(
-        #     in_ch=in_ch, n_outer=0, m_middle=0, m_inner=0,
-        #     widths=(in_ch, in_ch, in_ch),
-        # )
+        if variant not in VALUE_HEAD_VARIANTS:
+            raise ValueError(
+                f"variant must be one of {VALUE_HEAD_VARIANTS}; got {variant!r}"
+            )
+        self.variant = variant
+        if variant == "pyramid":
+            self.pre = PyramidModule(
+                in_ch=in_ch, n_outer=0, m_middle=0, m_inner=0,
+                widths=(in_ch, in_ch, in_ch),
+            )
+        else:
+            self.pre = nn.Identity()
         self.proj_conv = nn.Conv2d(in_ch, 1, kernel_size=3, padding=1)
         self.linear = nn.Linear(H * W, n_classes)
 
     def forward(self, x: torch.Tensor, valid_mask: torch.Tensor) -> torch.Tensor:
         """x: [B, C, H, W], valid_mask: [B, 1, H, W] bool → [B, n_classes]."""
-        # TODO(option C extension): x = self.head_pm(x)
+        x = self.pre(x)                     # [B, C, H, W] (PM or Identity)
         x = self.proj_conv(x)               # [B, 1, H, W]
         x = F.relu(x)
         x = x * valid_mask.to(x.dtype)      # zero padded contributions
@@ -511,6 +533,7 @@ class BCModel(nn.Module):
         in_ch: int = OBS_CHANNELS,
         H: int = H_PADDED,
         W: int = W_PADDED,
+        value_head_variant: str = "direct",
     ):
         super().__init__()
         self.trunk = PyramidModule(
@@ -522,7 +545,9 @@ class BCModel(nn.Module):
         )
         self.policy_head = PolicyHead(in_ch=OUTER_WIDTH)
         self.pass_head = PassHead(in_ch=OUTER_WIDTH)
-        self.value_head = ValueHead(in_ch=OUTER_WIDTH, H=H, W=W)
+        self.value_head = ValueHead(
+            in_ch=OUTER_WIDTH, H=H, W=W, variant=value_head_variant,
+        )
 
     def forward(
         self, obs: torch.Tensor, valid_mask: torch.Tensor

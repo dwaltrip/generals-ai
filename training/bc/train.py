@@ -336,8 +336,8 @@ def run_loop(
     `tail -f` works and a mid-epoch raise still flushes records to disk.
     """
     # --- Model + optimizer ---
-    print(f"building model on {device}")
-    model = BCModel().to(device)
+    print(f"building model on {device} (value_head={config.value_head_variant})")
+    model = BCModel(value_head_variant=config.value_head_variant).to(device)
     optim = torch.optim.AdamW(
         model.parameters(),
         lr=config.lr,

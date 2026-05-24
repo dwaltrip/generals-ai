@@ -75,6 +75,12 @@ def main() -> None:
             "than building a full-corpus manifest just to pull a single batch."
         ),
     )
+    parser.add_argument(
+        "--value-head",
+        choices=("direct", "pyramid"),
+        default="direct",
+        help="Value-head variant to construct.",
+    )
     args = parser.parse_args()
 
     # Unset MPS fallback so unsupported ops fail loudly (see module docstring).
@@ -126,7 +132,7 @@ def main() -> None:
 
     # --- Model + optimizer ---
     print(f"building model on {device}...")
-    model = BCModel().to(device)
+    model = BCModel(value_head_variant=args.value_head).to(device)
     optim = torch.optim.AdamW(
         model.parameters(),
         lr=args.lr,

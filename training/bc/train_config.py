@@ -90,6 +90,12 @@ class TrainConfig:
     # can be ~10x slower than a short train segment) and we don't care
     # about val metrics. Off by default — val is wanted for real runs.
     skip_val: bool = False
+    # Value-head architecture variant. "direct" is the thin v1 spike head
+    # (Conv→ReLU→flatten→Linear); "pyramid" inserts a shape-preserving
+    # PyramidModule before the projection, adding ~+0.82M params and
+    # multi-scale receptive field via a strided down/up structure.
+    # See `bc.model.ValueHead` for the full architectural framing.
+    value_head_variant: str = "direct"
 
     def __post_init__(self) -> None:
         valid_devices = ("auto", "cuda", "mps", "cpu")
@@ -116,6 +122,12 @@ class TrainConfig:
             raise ValueError(f"num_workers must be >= 0; got {self.num_workers}")
         if self.prefetch_factor < 1:
             raise ValueError(f"prefetch_factor must be >= 1; got {self.prefetch_factor}")
+        from bc.model import VALUE_HEAD_VARIANTS
+        if self.value_head_variant not in VALUE_HEAD_VARIANTS:
+            raise ValueError(
+                f"value_head_variant must be one of {VALUE_HEAD_VARIANTS}; "
+                f"got {self.value_head_variant!r}"
+            )
 
 
 def make_run_id() -> str:

@@ -18,6 +18,8 @@ Sample output:
     per-sample at B=8:   10.571 GFLOPs/sample
 """
 
+import argparse
+
 import torch
 
 from bc.constants import H_PADDED, OBS_CHANNELS, W_PADDED
@@ -26,7 +28,15 @@ from shared.perf import measure_total_flops
 
 
 def main() -> None:
-    model = BCModel()
+    parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    parser.add_argument(
+        "--value-head", choices=("direct", "pyramid"), default="direct",
+        help="Value-head variant to probe.",
+    )
+    args = parser.parse_args()
+
+    model = BCModel(value_head_variant=args.value_head)
+    print(f"value_head variant: {args.value_head}")
     n_params = sum(p.numel() for p in model.parameters())
     print(f"params: {n_params:,} ({n_params / 1e6:.2f}M)")
     print(f"input shape per sample: [C={OBS_CHANNELS}, H={H_PADDED}, W={W_PADDED}]")

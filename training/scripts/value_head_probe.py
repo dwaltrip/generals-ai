@@ -184,16 +184,22 @@ def build_head(variant: str, in_ch: int, H: int, W: int) -> nn.Module:
 # ---------------------------------------------------------------------------
 
 
-def load_frozen_trunk(ckpt_path: Path, device: torch.device) -> nn.Module:
+def load_frozen_trunk(
+    ckpt_path: Path,
+    device: torch.device,
+    value_head_variant: str = "direct",
+) -> nn.Module:
     """Load BCModel state_dict, return the trunk in frozen eval mode.
 
     Constructs a full BCModel so the state_dict load is strict — catches
     checkpoint/architecture drift loudly. We then extract just the trunk
     and discard the heads; the probe instantiates fresh heads anyway.
+    `value_head_variant` must match the variant the checkpoint was trained
+    with so the strict load succeeds.
     """
     print(f"loading checkpoint: {ckpt_path}")
     state = torch.load(ckpt_path, map_location=device, weights_only=True)
-    model = BCModel().to(device)
+    model = BCModel(value_head_variant=value_head_variant).to(device)
     model.load_state_dict(state)
     trunk = model.trunk
     for p in trunk.parameters():
@@ -820,6 +826,12 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--device", choices=("auto", "mps", "cpu"), default="auto")
     parser.add_argument("--out-root", type=Path, default=DEFAULT_OUT_ROOT)
+    parser.add_argument(
+        "--value-head",
+        choices=("direct", "pyramid"),
+        default="direct",
+        help="Variant the checkpoint was trained with (for strict state_dict load).",
+    )
 
     # --- Mode B (probe) knobs ---
     parser.add_argument(
@@ -881,7 +893,7 @@ def main() -> None:
     val_samples = samples_for_split(manifest, "val", args.intermediate)
     print(f"manifest: {args.manifest}  ({len(val_samples):,} val perspectives)")
 
-    trunk = load_frozen_trunk(args.checkpoint, device)
+    trunk = load_frozen_trunk(args.checkpoint, device, value_head_variant=args.value_head)
 
     variants = args.variants if args.variants else list(VARIANTS.keys())
     print(f"variants: {variants}")

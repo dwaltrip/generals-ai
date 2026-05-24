@@ -15,10 +15,11 @@ These tests pin:
 
 from __future__ import annotations
 
+import pytest
 import torch
 
-from bc.constants import H_PADDED, W_PADDED
-from bc.model import PassHead, ValueHead
+from bc.constants import H_PADDED, OBS_CHANNELS, W_PADDED
+from bc.model import BCModel, PassHead, ValueHead
 
 
 def test_pass_head_full_board_matches_plain_global_pool() -> None:
@@ -66,6 +67,48 @@ def test_pass_head_partial_board_ignores_padded_cells() -> None:
     out_dirty = head(x_dirty, valid_mask)
 
     assert torch.allclose(out_clean, out_dirty, atol=1e-5)
+
+
+def test_value_head_variant_direct_is_default_and_baseline() -> None:
+    """Default variant 'direct' constructs without the pre-projection PM
+    and matches the historical param count."""
+    m = BCModel()
+    assert m.value_head.variant == "direct"
+    # The 'direct' variant's pre-projection stage is an Identity (no params).
+    assert sum(p.numel() for p in m.value_head.pre.parameters()) == 0
+    # Param count matches the post-mask-fix baseline from `flops_probe.py`.
+    assert sum(p.numel() for p in m.parameters()) == 4_185_442
+
+
+def test_value_head_variant_pyramid_adds_expected_capacity() -> None:
+    """'pyramid' variant constructs, runs forward, and adds ~0.82M params."""
+    m_direct = BCModel(value_head_variant="direct")
+    m_pyr = BCModel(value_head_variant="pyramid")
+    assert m_pyr.value_head.variant == "pyramid"
+
+    n_direct = sum(p.numel() for p in m_direct.parameters())
+    n_pyr = sum(p.numel() for p in m_pyr.parameters())
+    delta = n_pyr - n_direct
+    # Tight bound — head_pm at uniform 128 has a known param count.
+    assert 800_000 < delta < 850_000, (
+        f"expected pyramid to add ~822k params; got {delta:,}"
+    )
+
+    # Forward pass shape is identical to direct (the variant only changes
+    # internal capacity, not the output contract).
+    m_pyr.eval()
+    obs = torch.zeros(2, OBS_CHANNELS, H_PADDED, W_PADDED)
+    vm = torch.ones(2, 1, H_PADDED, W_PADDED, dtype=torch.bool)
+    with torch.no_grad():
+        out = m_pyr(obs, vm)
+    assert out["value_logits"].shape == (2, 8)
+    assert out["policy_logits"].shape == (2, 8, H_PADDED, W_PADDED)
+    assert out["pass_logit"].shape == (2,)
+
+
+def test_value_head_invalid_variant_raises() -> None:
+    with pytest.raises(ValueError, match="variant must be one of"):
+        ValueHead(in_ch=128, H=H_PADDED, W=W_PADDED, variant="nope")
 
 
 def test_value_head_zeros_padded_before_flatten() -> None:

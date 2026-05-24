@@ -41,9 +41,17 @@ from self_play import sim_adapter
 P = 8  # fixed slot count the model + obs encoder were trained on
 
 
-def load_checkpoint(path: str | Path, device: torch.device) -> BCModel:
-    """Construct a BCModel and load weights from a `.pt` state-dict file."""
-    model = BCModel()
+def load_checkpoint(
+    path: str | Path,
+    device: torch.device,
+    value_head_variant: str = "direct",
+) -> BCModel:
+    """Construct a BCModel and load weights from a `.pt` state-dict file.
+
+    `value_head_variant` must match the variant the checkpoint was trained
+    with — otherwise `load_state_dict(strict=True)` raises on mismatched keys.
+    """
+    model = BCModel(value_head_variant=value_head_variant)
     state_dict = torch.load(path, map_location=device, weights_only=True)
     model.load_state_dict(state_dict)
     model.to(device)
