@@ -8,6 +8,7 @@ dependencies = [
     "replay-collector",
     "replay-parser",
     "sim-core",
+    "training",
 ]
 
 [build-system]
@@ -21,3 +22,4 @@ packages = ["self_play"]
 replay-collector = { workspace = true }
 replay-parser = { workspace = true }
 sim-core = { workspace = true }
+training = { workspace = true }

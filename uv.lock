@@ -1276,6 +1276,7 @@ dependencies = [
     { name = "replay-collector" },
     { name = "replay-parser" },
     { name = "sim-core" },
+    { name = "training" },
 ]
 
 [package.metadata]
@@ -1284,6 +1285,7 @@ requires-dist = [
     { name = "replay-collector", editable = "replay-collector" },
     { name = "replay-parser", editable = "replay-parser" },
     { name = "sim-core", editable = "sim-core" },
+    { name = "training", editable = "training" },
 ]
 
 [[package]]
