@@ -17,6 +17,7 @@ its dir to `sys.path` so `extract` and `constants` import.
 
 from __future__ import annotations
 
+import dataclasses
 import json
 from pathlib import Path
 import re
@@ -76,7 +77,10 @@ def build_html_from_state(
     and initial generals off it, so any divergence would render a board
     that doesn't match the snapshots.
     """
-    fake_replay = SimpleNamespace(static=static)
+    fake_replay = SimpleNamespace(static=dataclasses.replace(
+        static,
+        usernames=[f"Player {i+1}" for i, _ in enumerate(static.usernames)],
+    ))
     payload = _build_payload(replay_id, state, fake_replay)
 
     template = _TEMPLATE_PATH.read_text()
