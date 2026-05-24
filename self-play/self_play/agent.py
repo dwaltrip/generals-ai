@@ -71,12 +71,27 @@ class ModelAgent:
         perspective_slot: int,
         device: torch.device,
         max_turns_hint: int = 1000,
+        force_move: bool = False,
+        sample: bool = False,
+        temperature: float = 1.0,
     ):
+        """
+        force_move: ignore the pass head when at least one move is legal
+            under the mask. Useful when the BC pass head is biased toward
+            "do nothing" (training data is dominated by pass frames) and
+            we want to see the model actually play.
+        sample: draw the move from softmax(masked policy logits) instead
+            of taking the argmax. Adds variety; useful when argmax
+            fixates on one cell. `temperature` scales the softmax.
+        """
         self.model = model
         self.device = device
         self.perspective_slot = perspective_slot
         self.opp_slots = bc_obs.canonical_slot_order(perspective_slot, P)[1:]
         self.max_turns_hint = max_turns_hint
+        self.force_move = force_move
+        self.sample = sample
+        self.temperature = temperature
 
         # Filled by init_for_game
         self._H: int = 0
@@ -86,6 +101,12 @@ class ModelAgent:
         self._sim: dict[str, Any] | None = None
         self._memory: bc_obs.MemoryState | None = None
         self._bfs_cache: bc_bfs.BFSCache | None = None
+
+        # Per-game diagnostics: counts of pass / sampled-or-argmax-move /
+        # forced-skip (no legal moves available). Reset by init_for_game.
+        self.n_passed = 0
+        self.n_moved = 0
+        self.n_no_legal = 0
 
     def init_for_game(self, state: sim_core.State, static: Any) -> None:
         H, W = static.map_height, static.map_width
@@ -103,18 +124,42 @@ class ModelAgent:
         self._ownership_buf[0] = state.snapshots_ownership[0]
         self._armies_buf[0] = state.snapshots_armies[0]
 
+        # initial_generals is length num_players in the static, but the BC
+        # encoder was trained on 8-player FFA only (ELIGIBLE_PLAYER_COUNT=8)
+        # and unconditionally indexes slots 0..P-1. For <8-player games we
+        # pad the unused slots with the perspective's own general cell —
+        # idempotent under fancy indexing (`general_cells_flat[ig] = True`
+        # sets the own-general bit which is already set) and safe in the
+        # `for p in range(P)` loop in step_memory (the `new_general` mask
+        # excludes the own general because it's known from t=0, so the
+        # padded slots never falsely claim a sighting).
+        ig_padded = self._pad_initial_generals(static.initial_generals)
+
         self._sim = {
             "ownership": self._ownership_buf,
             "armies": self._armies_buf,
             "mountains": np.asarray(static.mountains, dtype=np.int32),
             "initial_cities": np.asarray(static.initial_cities, dtype=np.int32),
-            "initial_generals": np.asarray(static.initial_generals, dtype=np.int32),
+            "initial_generals": ig_padded,
             "cities": np.asarray(state.cities, dtype=np.int32),
             "cities_present_at": np.asarray(state.cities_present_at, dtype=np.int32),
             "capture_events": sim_adapter._capture_events_to_array(state.capture_events),
         }
         self._memory = bc_obs.init_memory(self._sim, self.perspective_slot, H, W, P)
         self._bfs_cache = bc_bfs.init_bfs_cache(P)
+
+        self.n_passed = 0
+        self.n_moved = 0
+        self.n_no_legal = 0
+
+    def _pad_initial_generals(self, initial_generals) -> np.ndarray:
+        ig = np.asarray(initial_generals, dtype=np.int32)
+        if len(ig) >= P:
+            return ig
+        own = int(ig[self.perspective_slot])
+        padded = np.full(P, own, dtype=np.int32)
+        padded[: len(ig)] = ig
+        return padded
 
     def act(self, state: sim_core.State, static: Any) -> tuple[int, int, int]:
         """Run inference for the current tick and return a wire move
@@ -171,20 +216,42 @@ class ModelAgent:
         )
         mask_np = bc_mask.build_mask(self._sim, t, self.perspective_slot, H, W)
 
-        # 7. Forward + masked argmax
+        # 7. Forward + select action
         obs_tensor = torch.from_numpy(obs_np).unsqueeze(0).to(self.device)
         mask_tensor = torch.from_numpy(mask_np).unsqueeze(0).to(self.device)
         with torch.no_grad():
             out = self.model(obs_tensor)
         masked_logits = flatten_policy_logits(out["policy_logits"], mask_tensor)
 
-        is_pass = bool((out["pass_logit"] > 0).item())
-        if is_pass or not mask_tensor.any():
-            # `not mask.any()` handles the degenerate "no legal moves" case
-            # (e.g., very early ticks where armies are still <2). Even if
-            # the pass head said act, the model has nothing legal to pick.
+        has_legal = bool(mask_tensor.any())
+        if not has_legal:
+            # Degenerate case — no legal moves (e.g. very early game when
+            # all owned tiles still have army<2). Pass is the only option.
+            self.n_no_legal += 1
             return -1, -1, -1
 
-        flat_idx = int(masked_logits.argmax(dim=1).item())
+        # Pass decision: sample from bernoulli(sigmoid(pass_logit)) under
+        # `sample`, else hard threshold pass_logit > 0 (argmax-equivalent).
+        # `force_move` overrides both.
+        if not self.force_move:
+            if self.sample:
+                p_pass = torch.sigmoid(out["pass_logit"])
+                pass_head_says_pass = bool(torch.bernoulli(p_pass).item())
+            else:
+                pass_head_says_pass = bool((out["pass_logit"] > 0).item())
+            if pass_head_says_pass:
+                self.n_passed += 1
+                return -1, -1, -1
+
+        if self.sample:
+            # Temperature-scaled softmax sample over the legal action set.
+            # masked_logits already has illegal slots set to MASK_NEG, so
+            # softmax → ~0 probability on those.
+            probs = torch.softmax(masked_logits / self.temperature, dim=1)
+            flat_idx = int(torch.multinomial(probs, num_samples=1).item())
+        else:
+            flat_idx = int(masked_logits.argmax(dim=1).item())
+
+        self.n_moved += 1
         return actions.decode(is_pass=False, flat_idx=flat_idx,
                               W_unpadded=W, W_padded=W_PADDED)

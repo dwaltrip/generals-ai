@@ -34,10 +34,14 @@ def play_game(
     device: torch.device,
     max_turns: int = 2000,
     max_turns_hint: int = 1000,
-) -> sim_core.State:
+    force_move: bool = False,
+    sample: bool = False,
+    temperature: float = 1.0,
+) -> tuple[sim_core.State, list[ModelAgent]]:
     """Play one 2-player self-play game to termination. Returns the final
     State (with full snapshot history, event lists, etc. ready for the
-    viewer).
+    viewer) and the list of agents (for per-perspective diagnostics:
+    n_passed / n_moved / n_no_legal counters).
     """
     state = sim_core.new_state(static)
     if state.num_players != 2:
@@ -47,7 +51,9 @@ def play_game(
 
     agents = [
         ModelAgent(model, perspective_slot=p, device=device,
-                   max_turns_hint=max_turns_hint)
+                   max_turns_hint=max_turns_hint,
+                   force_move=force_move, sample=sample,
+                   temperature=temperature)
         for p in (0, 1)
     ]
     for ag in agents:
@@ -64,4 +70,4 @@ def play_game(
             moves.append((p, src, dst, is50))
         state.step_tick(moves=moves, afks=[])
 
-    return state
+    return state, agents

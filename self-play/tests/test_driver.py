@@ -43,7 +43,9 @@ def test_play_game_terminates_and_renders(loaded_model):
         pytest.skip("no 2-player replays with wire_data in corpus")
     static = seed_map.load_static_from_db(ids[0])
 
-    state = driver.play_game(model, static, device=device, max_turns=200)
+    state, agents = driver.play_game(
+        model, static, device=device, max_turns=200, force_move=True,
+    )
 
     # Termination: either one player won or we hit max_turns.
     assert state.alive_count <= 2
@@ -51,6 +53,9 @@ def test_play_game_terminates_and_renders(loaded_model):
     assert state.timestep <= 200
     # snapshots_len = initial snapshot + one per step_tick call
     assert state.snapshots_len == state.timestep + 1
+    # force_move=True means each agent should have actually moved.
+    for ag in agents:
+        assert ag.n_moved > 0, "force_move agent should have produced moves"
 
     # Renderable: build_html_from_state shouldn't raise, output well-formed.
     html = viewer.build_html_from_state("selfplay-smoke-driver", state, static)
