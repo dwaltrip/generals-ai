@@ -104,7 +104,10 @@ def _measure_model_flops_per_sample(model: BCModel, device: torch.device) -> int
 
     def fwd_bwd() -> torch.Tensor:
         x = torch.zeros(1, OBS_CHANNELS, H_PADDED, W_PADDED, device=device)
-        out = model(x)
+        # All-True mask: synthetic-throughput measurement assumes a fully-used
+        # grid (worst-case FLOPs through the heads).
+        valid_mask = torch.ones(1, 1, H_PADDED, W_PADDED, dtype=torch.bool, device=device)
+        out = model(x, valid_mask)
         # Sum across all three heads so the backward graph touches every
         # path — matches the structure (not the value) of `bc_loss`.
         return out["policy_logits"].sum() + out["pass_logit"].sum() + out["value_logits"].sum()
@@ -180,7 +183,7 @@ def train_one_epoch(
             dtype=amp_dtype or torch.float32,
             enabled=amp_dtype is not None,
         ):
-            out = model(batch["obs"])
+            out = model(batch["obs"], batch["valid_mask"])
             losses = bc_loss(out, batch)
         scaler.scale(losses["total"]).backward()
         scaler.step(optim)

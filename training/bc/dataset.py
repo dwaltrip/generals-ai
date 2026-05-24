@@ -33,7 +33,7 @@ import torch
 from torch.utils.data import DataLoader, IterableDataset as TorchIterableDataset
 
 from bc import actions, bfs
-from bc.constants import W_PADDED
+from bc.constants import H_PADDED, W_PADDED
 from bc.mask import build_mask
 from bc.obs import (
     MemoryState,
@@ -126,6 +126,13 @@ def encode_frame(
     obs_np = build_obs(sim, t, perspective_slot, opp_slots, vis, state, bfs_cache, H, W)
     mask_np = build_mask(sim, t, perspective_slot, H, W)
 
+    # Per-sample [1, H_PADDED, W_PADDED] bool, True over the unpadded board
+    # region. Consumed by PassHead (masked global pool) and ValueHead (zero
+    # padded contributions before flatten) so per-game board-size variance
+    # doesn't leak into the head outputs as a magnitude effect.
+    valid_mask_np = np.zeros((1, H_PADDED, W_PADDED), dtype=np.bool_)
+    valid_mask_np[0, :H, :W] = True
+
     src = int(sim["actions_source"][perspective_slot, t])
     dst = int(sim["actions_dest"][perspective_slot, t])
     is50 = int(sim["actions_is50"][perspective_slot, t])
@@ -138,6 +145,7 @@ def encode_frame(
     return {
         "obs": torch.from_numpy(obs_np),
         "mask": torch.from_numpy(mask_np),
+        "valid_mask": torch.from_numpy(valid_mask_np),
         "action_target": torch.tensor(flat_idx, dtype=torch.int64),
         "is_pass": torch.tensor(is_pass, dtype=torch.bool),
         "value_target": torch.tensor(value_target, dtype=torch.int64),

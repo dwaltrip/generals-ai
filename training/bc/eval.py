@@ -124,7 +124,7 @@ def run_val(
                 dtype=amp_dtype or torch.float32,
                 enabled=amp_dtype is not None,
             ):
-                out = model(batch["obs"])
+                out = model(batch["obs"], batch["valid_mask"])
                 losses = bc_loss(out, batch)
             B = batch["obs"].shape[0]
             acc.update(losses, batch_size=B)

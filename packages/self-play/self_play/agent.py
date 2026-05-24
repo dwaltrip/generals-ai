@@ -31,7 +31,7 @@ import torch
 import sim_core
 
 from bc import actions, bfs as bc_bfs, mask as bc_mask, obs as bc_obs, visibility
-from bc.constants import W_PADDED
+from bc.constants import H_PADDED, W_PADDED
 from bc.loss import flatten_policy_logits
 from bc.model import BCModel
 
@@ -219,8 +219,10 @@ class ModelAgent:
         # 7. Forward + select action
         obs_tensor = torch.from_numpy(obs_np).unsqueeze(0).to(self.device)
         mask_tensor = torch.from_numpy(mask_np).unsqueeze(0).to(self.device)
+        valid_mask = torch.zeros(1, 1, H_PADDED, W_PADDED, dtype=torch.bool, device=self.device)
+        valid_mask[0, 0, :H, :W] = True
         with torch.no_grad():
-            out = self.model(obs_tensor)
+            out = self.model(obs_tensor, valid_mask)
         masked_logits = flatten_policy_logits(out["policy_logits"], mask_tensor)
 
         has_legal = bool(mask_tensor.any())

@@ -421,29 +421,28 @@ class PassHead(nn.Module):
     """
     Scalar pass logit pooled from the trunk embedding.
 
-    Structure: global avg pool over the [B, C, H, W] trunk output →
-    Linear(C, 1) → [B] scalar logit per sample. Loss code applies
-    `binary_cross_entropy_with_logits` against the `is_pass` target.
+    Structure: masked global avg pool over the unpadded region of the
+    [B, C, H, W] trunk output → Linear(C, 1) → [B] scalar logit per sample.
+    Loss code applies `binary_cross_entropy_with_logits` against `is_pass`.
 
-    TODO(v1 spike accepts this; revisit post-spike):
-      The global pool averages over the full 32×32 padded grid, which
-      includes ~40% padded cells. Padded activations are non-zero after
-      conv layers (the conv has seen the padded region and produced
-      output for it). Cleaner: masked pool that averages only over
-      the unpadded region (requires plumbing H_unpadded/W_unpadded
-      into the model).
+    The mask is required because trunk activations at padded positions are
+    non-zero (convs see the zero-padded input and produce output for the
+    padded region). A plain AdaptiveAvgPool2d would average those into the
+    pool and the per-sample dilution would scale with how much of the 32×32
+    grid is real board — a board-size leak into the pass signal.
     """
 
     def __init__(self, in_ch: int):
         super().__init__()
-        self.pool = nn.AdaptiveAvgPool2d(1)
         self.linear = nn.Linear(in_ch, 1)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """x: [B, C, H, W] → [B] (pre-sigmoid pass logit)."""
-        x = self.pool(x).flatten(1)  # [B, C]
-        x = self.linear(x).squeeze(-1)  # [B]
-        return x
+    def forward(self, x: torch.Tensor, valid_mask: torch.Tensor) -> torch.Tensor:
+        """x: [B, C, H, W], valid_mask: [B, 1, H, W] bool → [B] pre-sigmoid logit."""
+        m = valid_mask.to(x.dtype)
+        summed = (x * m).sum(dim=(2, 3))                # [B, C]
+        count = m.sum(dim=(2, 3)).clamp(min=1.0)        # [B, 1]
+        pooled = summed / count                         # [B, C]
+        return self.linear(pooled).squeeze(-1)          # [B]
 
 
 class ValueHead(nn.Module):
@@ -452,7 +451,7 @@ class ValueHead(nn.Module):
 
     v1 (option B from 5.20-2 session note):
 
-        x ─→ Conv2d(C → 1, kernel=3) → ReLU → flatten → Linear(H·W, 8)
+        x ─→ Conv2d(C → 1, kernel=3) → ReLU → mask → flatten → Linear(H·W, 8)
 
     This preserves the per-cell spatial info via flatten (vs. an inline
     global-pool, which would collapse all 32·32 positions into a single
@@ -460,6 +459,11 @@ class ValueHead(nn.Module):
     board control — and the trunk has already encoded that spatially; we
     don't want to throw it away right before the only learnable layer in
     the head.
+
+    The mask multiply zeroes padded positions before flatten. Without it,
+    the Linear layer sees per-game-varying junk at padded positions and
+    has to learn a compromise across board sizes (the padding pattern is
+    per-sample, so it can't cleanly zero out those weights).
 
     EXTENSION TO OPTION C (full DeepNash spec): insert an N=0/M=0
     PyramidModule between the trunk and `self.proj_conv` below. The PM
@@ -477,13 +481,14 @@ class ValueHead(nn.Module):
         self.proj_conv = nn.Conv2d(in_ch, 1, kernel_size=3, padding=1)
         self.linear = nn.Linear(H * W, n_classes)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """x: [B, C, H, W] → [B, n_classes] (placement logits)."""
+    def forward(self, x: torch.Tensor, valid_mask: torch.Tensor) -> torch.Tensor:
+        """x: [B, C, H, W], valid_mask: [B, 1, H, W] bool → [B, n_classes]."""
         # TODO(option C extension): x = self.head_pm(x)
-        x = self.proj_conv(x)  # [B, 1, H, W]
+        x = self.proj_conv(x)               # [B, 1, H, W]
         x = F.relu(x)
-        x = x.flatten(1)  # [B, H·W]
-        x = self.linear(x)  # [B, n_classes]
+        x = x * valid_mask.to(x.dtype)      # zero padded contributions
+        x = x.flatten(1)                    # [B, H·W]
+        x = self.linear(x)                  # [B, n_classes]
         return x
 
 
@@ -519,19 +524,23 @@ class BCModel(nn.Module):
         self.pass_head = PassHead(in_ch=OUTER_WIDTH)
         self.value_head = ValueHead(in_ch=OUTER_WIDTH, H=H, W=W)
 
-    def forward(self, obs: torch.Tensor) -> dict[str, torch.Tensor]:
+    def forward(
+        self, obs: torch.Tensor, valid_mask: torch.Tensor
+    ) -> dict[str, torch.Tensor]:
         """
-        obs: `[B, in_ch, H, W]`
+        obs:        `[B, in_ch, H, W]`
+        valid_mask: `[B, 1, H, W]` bool — True over the unpadded board region.
 
         Returns:
           - `policy_logits`: `[B, 8, H, W]`  (NCHW; loss code does the
-            permute to cell-major flat layout)
-          - `pass_logit`: `[B]`
-          - `value_logits`: `[B, 8]`
+            permute to cell-major flat layout and applies the per-cell
+            legality mask)
+          - `pass_logit`: `[B]`              (pre-sigmoid; masked pool)
+          - `value_logits`: `[B, 8]`          (padded cells masked before flatten)
         """
         trunk_out = self.trunk(obs)
         return {
             "policy_logits": self.policy_head(trunk_out),
-            "pass_logit": self.pass_head(trunk_out),
-            "value_logits": self.value_head(trunk_out),
+            "pass_logit": self.pass_head(trunk_out, valid_mask),
+            "value_logits": self.value_head(trunk_out, valid_mask),
         }

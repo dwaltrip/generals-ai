@@ -35,10 +35,12 @@ def main() -> None:
     # for inference-cost framing, and for the bwd/fwd ratio sanity check.
     model.eval()
     x = torch.zeros(1, OBS_CHANNELS, H_PADDED, W_PADDED)
+    # Worst-case fully-used grid for FLOPs counting.
+    vm1 = torch.ones(1, 1, H_PADDED, W_PADDED, dtype=torch.bool)
     with torch.no_grad():
         from torch.utils.flop_counter import FlopCounterMode
         with FlopCounterMode(display=False) as fc:
-            _ = model(x)
+            _ = model(x, vm1)
         fwd_flops = fc.get_total_flops()
     print(f"\nforward FLOPs (B=1): {fwd_flops:,} ({fwd_flops / 1e9:.3f} GFLOPs)")
 
@@ -47,7 +49,8 @@ def main() -> None:
     model.train()
     def fwd_bwd_b1() -> torch.Tensor:
         x = torch.zeros(1, OBS_CHANNELS, H_PADDED, W_PADDED)
-        out = model(x)
+        vm = torch.ones(1, 1, H_PADDED, W_PADDED, dtype=torch.bool)
+        out = model(x, vm)
         return out["policy_logits"].sum() + out["pass_logit"].sum() + out["value_logits"].sum()
 
     fb_flops = measure_total_flops(fwd_bwd_b1)
@@ -58,7 +61,8 @@ def main() -> None:
     model.zero_grad()
     def fwd_bwd_b8() -> torch.Tensor:
         x = torch.zeros(8, OBS_CHANNELS, H_PADDED, W_PADDED)
-        out = model(x)
+        vm = torch.ones(8, 1, H_PADDED, W_PADDED, dtype=torch.bool)
+        out = model(x, vm)
         return out["policy_logits"].sum() + out["pass_logit"].sum() + out["value_logits"].sum()
 
     b8_flops = measure_total_flops(fwd_bwd_b8)

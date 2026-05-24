@@ -55,8 +55,9 @@ def test_load_checkpoint_smoke(loaded_model):
     # the expected output shapes (size of the policy/pass/value heads).
     from bc.constants import OBS_CHANNELS, H_PADDED, W_PADDED
     obs = torch.zeros((1, OBS_CHANNELS, H_PADDED, W_PADDED), device=device)
+    valid_mask = torch.ones((1, 1, H_PADDED, W_PADDED), dtype=torch.bool, device=device)
     with torch.no_grad():
-        out = model(obs)
+        out = model(obs, valid_mask)
     assert out["policy_logits"].shape == (1, 8, H_PADDED, W_PADDED)
     assert out["pass_logit"].shape == (1,)
     assert out["value_logits"].shape == (1, 8)

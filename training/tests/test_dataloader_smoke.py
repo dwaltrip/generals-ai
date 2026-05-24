@@ -18,6 +18,7 @@ from torch.utils.data import DataLoader
 
 from bc.constants import H_PADDED, OBS_CHANNELS, W_PADDED
 from bc.dataset import IterableDataset
+from bc.model import BCModel
 
 
 BATCH_SIZE = 64
@@ -45,6 +46,7 @@ def test_dataloader_pipeline_smoke(
     for batch in islice(loader, NUM_BATCHES):
         obs = batch["obs"]
         mask = batch["mask"]
+        valid_mask = batch["valid_mask"]
         action_target = batch["action_target"]
         is_pass = batch["is_pass"]
         value_target = batch["value_target"]
@@ -52,6 +54,7 @@ def test_dataloader_pipeline_smoke(
         # --- Shapes ---
         assert obs.shape == (BATCH_SIZE, OBS_CHANNELS, H_PADDED, W_PADDED)
         assert mask.shape == (BATCH_SIZE, H_PADDED, W_PADDED, 8)
+        assert valid_mask.shape == (BATCH_SIZE, 1, H_PADDED, W_PADDED)
         assert action_target.shape == (BATCH_SIZE,)
         assert is_pass.shape == (BATCH_SIZE,)
         assert value_target.shape == (BATCH_SIZE,)
@@ -59,6 +62,7 @@ def test_dataloader_pipeline_smoke(
         # --- Dtypes ---
         assert obs.dtype == torch.float32
         assert mask.dtype == torch.bool
+        assert valid_mask.dtype == torch.bool
         assert action_target.dtype == torch.int64
         assert is_pass.dtype == torch.bool
         assert value_target.dtype == torch.int64
@@ -94,3 +98,14 @@ def test_dataloader_pipeline_smoke(
         # The two split sub-channels are constructed from the same per-direction
         # legality. A mismatch here would mean the np.repeat went wrong.
         assert torch.equal(mask[..., 0::2], mask[..., 1::2])
+
+    # --- End-to-end: feed one real batch through the model ---
+    # Catches any signature/contract drift between dataset and model heads
+    # (e.g. valid_mask shape/dtype mismatch). Cheap; runs once after the loop.
+    model = BCModel()
+    model.eval()
+    with torch.no_grad():
+        out = model(obs, valid_mask)
+    assert out["policy_logits"].shape == (BATCH_SIZE, 8, H_PADDED, W_PADDED)
+    assert out["pass_logit"].shape == (BATCH_SIZE,)
+    assert out["value_logits"].shape == (BATCH_SIZE, 8)

@@ -146,7 +146,7 @@ def main() -> None:
     last_loss = None
     for step in range(args.steps + 1):
         optim.zero_grad()
-        out = model(batch["obs"])
+        out = model(batch["obs"], batch["valid_mask"])
         losses = bc_loss(out, batch)
         losses["total"].backward()
         optim.step()
