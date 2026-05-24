@@ -111,10 +111,9 @@ def train(*arglist: str) -> None:
     run_id = config.run_dir.name
     print()
     print("Once the run is done, pull artifacts:")
-    print(f"  mkdir -p tmp/cloud-runs && \\")
-    print(f"    uv run modal volume get generals-ai.training-runs /{run_id} tmp/cloud-runs")
+    print(f"  uv run modal volume get generals-ai.training-runs /{run_id} training/data/runs-cloud")
 
-    train_remote.with_options(gpu=args.modal_gpu).remote(config, args.modal_gpu)
+    train_remote.with_options(gpu=args.modal_gpu).spawn(config, args.modal_gpu)
 
     print()
-    print("Run finished successfully.")
+    print("Run spawned.")
