@@ -5,6 +5,7 @@ requires-python = ">=3.14"
 [manifest]
 members = [
     "cloud-train-poc",
+    "eval-bot",
     "generals-ai-workspace",
     "replay-collector",
     "replay-parser",
@@ -343,6 +344,25 @@ wheels = [
 ]
 
 [[package]]
+name = "eval-bot"
+version = "0.0.1"
+source = { editable = "packages/eval-bot" }
+dependencies = [
+    { name = "numpy" },
+    { name = "self-play" },
+    { name = "sim-core" },
+    { name = "training" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "numpy", specifier = ">=2.0" },
+    { name = "self-play", editable = "packages/self-play" },
+    { name = "sim-core", editable = "sim-core" },
+    { name = "training", editable = "training" },
+]
+
+[[package]]
 name = "filelock"
 version = "3.29.0"
 source = { registry = "https://pypi.org/simple" }
@@ -441,6 +461,7 @@ version = "0.0.0"
 source = { virtual = "." }
 dependencies = [
     { name = "cloud-train-poc" },
+    { name = "eval-bot" },
     { name = "modal" },
     { name = "replay-collector" },
     { name = "replay-parser" },
@@ -461,6 +482,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "cloud-train-poc", editable = "cloud-poc" },
+    { name = "eval-bot", editable = "packages/eval-bot" },
     { name = "modal", specifier = ">=1.4.3" },
     { name = "replay-collector", editable = "replay-collector" },
     { name = "replay-parser", editable = "replay-parser" },

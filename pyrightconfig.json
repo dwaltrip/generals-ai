@@ -6,6 +6,8 @@
     "tools",
     "training",
     "packages/utils",
+    "packages/self-play",
+    "packages/eval-bot",
 ],
   "exclude": ["**/tmp/**", "**/__pycache__/**"],
   "typeCheckingMode": "basic",

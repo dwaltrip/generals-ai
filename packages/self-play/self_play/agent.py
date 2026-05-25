@@ -41,6 +41,26 @@ from self_play import sim_adapter
 P = 8  # fixed slot count the model + obs encoder were trained on
 
 
+def pad_initial_generals(
+    initial_generals, perspective_slot: int, num_slots: int = P,
+) -> np.ndarray:
+    """Pad initial_generals to `num_slots` length for the obs encoder.
+
+    The BC encoder indexes slots 0..P-1 unconditionally. For <P-player
+    games, unused slots are filled with the perspective's own general cell
+    — idempotent under fancy indexing and safe in step_memory's per-player
+    loop (own general is already known, so padded slots never trigger
+    false sightings).
+    """
+    ig = np.asarray(initial_generals, dtype=np.int32)
+    if len(ig) >= num_slots:
+        return ig
+    own = int(ig[perspective_slot])
+    padded = np.full(num_slots, own, dtype=np.int32)
+    padded[: len(ig)] = ig
+    return padded
+
+
 def load_checkpoint(
     path: str | Path,
     device: torch.device,
@@ -161,13 +181,7 @@ class ModelAgent:
         self.n_no_legal = 0
 
     def _pad_initial_generals(self, initial_generals) -> np.ndarray:
-        ig = np.asarray(initial_generals, dtype=np.int32)
-        if len(ig) >= P:
-            return ig
-        own = int(ig[self.perspective_slot])
-        padded = np.full(P, own, dtype=np.int32)
-        padded[: len(ig)] = ig
-        return padded
+        return pad_initial_generals(initial_generals, self.perspective_slot)
 
     def act(self, state: sim_core.State, static: Any) -> tuple[int, int, int]:
         """Run inference for the current tick and return a wire move

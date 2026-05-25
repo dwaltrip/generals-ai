@@ -6,6 +6,7 @@ requires-python = ">=3.14"
 dependencies = [
     "modal>=1.4.3",
     "cloud-train-poc",
+    "eval-bot",
     "replay-collector",
     "replay-parser",
     "self-play",
@@ -26,6 +27,7 @@ package = false
 [tool.uv.workspace]
 members = [
     "cloud-poc",
+    "packages/eval-bot",
     "replay-collector",
     "replay-parser",
     "packages/self-play",
@@ -36,6 +38,7 @@ members = [
 
 [tool.uv.sources]
 cloud-train-poc = { workspace = true }
+eval-bot = { workspace = true }
 replay-collector = { workspace = true }
 replay-parser = { workspace = true }
 self-play = { workspace = true }
@@ -55,6 +58,7 @@ dev = [
 addopts = "--import-mode=importlib"
 pythonpath = ["replay-parser/tests"]
 testpaths = [
+    "packages/eval-bot/tests",
     "replay-collector/tests",
     "replay-parser/tests",
     "packages/self-play/tests",
