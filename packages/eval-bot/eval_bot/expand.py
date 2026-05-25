@@ -112,15 +112,15 @@ def _pick_explore_move(
     the highest-army owned tile one step toward a fog target."""
     gen_r, gen_c = divmod(gen_flat, W)
 
-    # score each sector by count of passable fog tiles
-    fog_passable = ~mem.is_structure & ~mem.historically_seen
+    # score each sector by count of passable non-owned tiles
+    passable_2d = passable.reshape(H, W)
+    not_mine = own != my_slot
     sector_scores = [0, 0, 0, 0]
     fog_tiles_by_sector: list[list[int]] = [[], [], [], []]
 
-    passable_2d = passable.reshape(H, W)
     for r in range(H):
         for c in range(W):
-            if fog_passable[r, c] and passable_2d[r, c]:
+            if passable_2d[r, c] and not_mine[r, c]:
                 s = _sector_of(r - gen_r, c - gen_c)
                 sector_scores[s] += 1
                 fog_tiles_by_sector[s].append(r * W + c)

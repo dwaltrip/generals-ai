@@ -29,5 +29,7 @@ def known_passable_mask(
         & ~mem.known_city
         & ~mem.known_general
     )
-    impassable = mem.known_mountain | structures_in_fog
+    known_neutral_city = mem.known_city & (mem.last_seen_owner == -1)
+    # v1: bot never captures neutral cities, so they're impassable like mountains.
+    impassable = mem.known_mountain | structures_in_fog | known_neutral_city
     return (~impassable).reshape(H * W)
