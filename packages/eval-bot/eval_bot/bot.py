@@ -23,7 +23,7 @@ from bc import obs as bc_obs, visibility
 from self_play.agent import pad_initial_generals
 from self_play.sim_adapter import _capture_events_to_array
 
-from eval_bot.expand import pick_expand_or_explore
+from eval_bot.expand import MOVE_EXPAND, MOVE_EXPLORE, pick_expand_or_explore
 from eval_bot.world_model import known_passable_mask
 
 P = 8  # fixed slot count the obs encoder was trained on
@@ -48,6 +48,8 @@ class EvalBot:
 
         self.n_passed = 0
         self.n_moved = 0
+        self.n_expand = 0
+        self.n_explore = 0
         self.n_no_move = 0
 
     def init_for_game(self, state: sim_core.State, static: Any) -> None:
@@ -88,6 +90,8 @@ class EvalBot:
 
         self.n_passed = 0
         self.n_moved = 0
+        self.n_expand = 0
+        self.n_explore = 0
         self.n_no_move = 0
 
     def act(
@@ -145,14 +149,19 @@ class EvalBot:
         arm_2d = arm_flat.reshape(H, W)
         passable = known_passable_mask(self._memory, H, W)
 
-        move = pick_expand_or_explore(
+        result = pick_expand_or_explore(
             own_2d, arm_2d, self.perspective_slot, self._memory,
             passable, self._gen_flat, H, W,
         )
 
-        if move is None:
+        if result is None:
             self.n_no_move += 1
             return (-1, -1, -1)
 
+        src, dst, is50, mode = result
         self.n_moved += 1
-        return move
+        if mode == MOVE_EXPAND:
+            self.n_expand += 1
+        elif mode == MOVE_EXPLORE:
+            self.n_explore += 1
+        return (src, dst, is50)

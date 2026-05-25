@@ -109,7 +109,7 @@ def _pick_explore_move(
     W: int,
 ) -> tuple[int, int, int] | None:
     """Push toward the least-explored sector. No gather_tree — just move
-    the highest-army frontier tile one step toward a fog target."""
+    the highest-army owned tile one step toward a fog target."""
     gen_r, gen_c = divmod(gen_flat, W)
 
     # score each sector by count of passable fog tiles
@@ -133,26 +133,14 @@ def _pick_explore_move(
     if not fog_cells:
         return None
 
-    # BFS from all frontier tiles in this sector to find the nearest fog tile
-    mine = own == my_slot
-    frontier = _unoccupied_frontier(own, my_slot, H, W)
-    frontier_flat = frontier.reshape(-1)
-    frontier_in_sector = []
-    for idx in np.where(frontier_flat)[0]:
-        fr, fc = divmod(int(idx), W)
-        if _sector_of(fr - gen_r, fc - gen_c) == best_sector:
-            frontier_in_sector.append(int(idx))
-
-    if not frontier_in_sector:
-        # no frontier tiles in this sector — use any frontier tile
-        frontier_in_sector = list(np.where(frontier_flat)[0].astype(int))
-        if not frontier_in_sector:
-            return None
-
-    # pick the frontier tile in this sector with the highest army
-    best_src = max(frontier_in_sector, key=lambda idx: int(arm.flat[idx]))
-    if arm.flat[best_src] < 2:
+    # source = any owned tile with army >= 2, best = highest army
+    mine_flat = (own == my_slot).reshape(-1)
+    arm_flat = arm.reshape(-1)
+    candidates = np.where(mine_flat & (arm_flat >= 2))[0]
+    if len(candidates) == 0:
         return None
+
+    best_src = int(candidates[np.argmax(arm_flat[candidates])])
 
     # find the nearest fog tile in the winning sector via BFS from best_src
     dist_from_src = bfs_distances(best_src, passable, H, W)
@@ -190,6 +178,15 @@ def _pick_explore_move(
     return (best_src, best_nb, 0)
 
 
+EXPAND_EXPLORE_THRESHOLD = 0.4
+
+MOVE_EXPAND = "expand"
+MOVE_EXPLORE = "explore"
+
+# Return type: (src, dst, is50, mode) or None
+ExpandResult = tuple[int, int, int, str] | None
+
+
 def pick_expand_or_explore(
     own: np.ndarray,
     arm: np.ndarray,
@@ -199,18 +196,37 @@ def pick_expand_or_explore(
     gen_flat: int,
     H: int,
     W: int,
-) -> tuple[int, int, int] | None:
-    """Top-level ExpandOrExplore gate. Returns (src, dst, is50) or None."""
+    expand_explore_threshold: float = EXPAND_EXPLORE_THRESHOLD,
+) -> ExpandResult:
+    """Top-level ExpandOrExplore gate. Returns (src, dst, is50, mode) or None."""
     expandable = _expandable_tiles(own, arm, my_slot, H, W)
-    if expandable.any():
-        gen_dist = bfs_distances(gen_flat, passable, H, W)
-        return _pick_expand_move(expandable, own, arm, gen_dist, H, W)
-
     frontier = _unoccupied_frontier(own, my_slot, H, W)
-    if frontier.any():
-        return _pick_explore_move(
-            own, arm, my_slot, mem, passable, gen_flat, H, W,
-        )
 
-    # fully boxed in — nothing to expand or explore into
+    expandable_count = int(expandable.sum())
+    frontier_count = int(frontier.sum())
+
+    if frontier_count == 0:
+        return None
+
+    if expandable_count > 0 and expandable_count / frontier_count >= expand_explore_threshold:
+        gen_dist = bfs_distances(gen_flat, passable, H, W)
+        move = _pick_expand_move(expandable, own, arm, gen_dist, H, W)
+        if move is not None:
+            return (*move, MOVE_EXPAND)
+
+    # explore mode: low ratio of expandable-to-frontier, or no expandable tiles
+    move = _pick_explore_move(
+        own, arm, my_slot, mem, passable, gen_flat, H, W,
+    )
+    if move is not None:
+        return (*move, MOVE_EXPLORE)
+
+    # explore couldn't find a move (e.g. no army >= 2 on frontier) — fall
+    # back to expand if any expandable tiles exist
+    if expandable_count > 0:
+        gen_dist = bfs_distances(gen_flat, passable, H, W)
+        move = _pick_expand_move(expandable, own, arm, gen_dist, H, W)
+        if move is not None:
+            return (*move, MOVE_EXPAND)
+
     return None
