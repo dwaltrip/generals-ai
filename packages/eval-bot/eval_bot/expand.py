@@ -12,9 +12,8 @@ from __future__ import annotations
 
 import numpy as np
 
-from bc.obs import MemoryState
-
 from eval_bot.bfs import bfs_distances
+from eval_bot.world_model import PlayerView
 
 NEUTRAL = -1
 
@@ -102,7 +101,6 @@ def _pick_explore_move(
     own: np.ndarray,
     arm: np.ndarray,
     my_slot: int,
-    mem: MemoryState,
     passable: np.ndarray,
     gen_flat: int,
     H: int,
@@ -144,7 +142,6 @@ def _pick_explore_move(
 
     # find the nearest fog tile in the winning sector via BFS from best_src
     dist_from_src = bfs_distances(best_src, passable, H, W)
-    fog_set = set(fog_cells)
     nearest_fog = -1
     nearest_dist = H * W + 1
     for fc in fog_cells:
@@ -188,17 +185,18 @@ ExpandResult = tuple[int, int, int, str] | None
 
 
 def pick_expand_or_explore(
-    own: np.ndarray,
-    arm: np.ndarray,
-    my_slot: int,
-    mem: MemoryState,
-    passable: np.ndarray,
-    gen_flat: int,
-    H: int,
-    W: int,
+    view: PlayerView,
     expand_explore_threshold: float = EXPAND_EXPLORE_THRESHOLD,
 ) -> ExpandResult:
     """Top-level ExpandOrExplore gate. Returns (src, dst, is50, mode) or None."""
+    own = view.own
+    arm = view.arm
+    my_slot = view.my_slot
+    passable = view.passable
+    gen_flat = view.gen_flat
+    H = view.H
+    W = view.W
+
     expandable = _expandable_tiles(own, arm, my_slot, H, W)
     frontier = _unoccupied_frontier(own, my_slot, H, W)
 
@@ -216,7 +214,7 @@ def pick_expand_or_explore(
 
     # explore mode: low ratio of expandable-to-frontier, or no expandable tiles
     move = _pick_explore_move(
-        own, arm, my_slot, mem, passable, gen_flat, H, W,
+        own, arm, my_slot, passable, gen_flat, H, W,
     )
     if move is not None:
         return (*move, MOVE_EXPLORE)

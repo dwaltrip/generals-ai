@@ -37,7 +37,8 @@ def play_game(
         for p, bot in enumerate(bots):
             if not state.alive[p]:
                 continue
-            src, dst, is50 = bot.act(state, static)
+            view = bot.world.update(state, static)
+            src, dst, is50 = bot.act(view)
             if src == -1:
                 continue
             moves.append((p, src, dst, is50))
