@@ -49,7 +49,7 @@ def try_defend(view: PlayerView, cfg: BotConfig) -> DefendPlan | None:
         return None
 
     result = gather_path(
-        view, cfg, target, max_moves=max_moves, min_army=None, gate="defend",
+        view, cfg, target, max_moves=max_moves, min_army=None, bypass_reserve=True,
     )
     if result is None:
         return None

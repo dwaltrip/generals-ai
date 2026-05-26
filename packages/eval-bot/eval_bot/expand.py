@@ -162,7 +162,6 @@ def _pick_explore_plan(view: PlayerView, cfg: BotConfig) -> ExplorePlan | None:
         view, cfg, target,
         max_moves=cfg.EXPLORE_MAX_PLAN_TICKS,
         min_army=cfg.EXPLORE_MIN_ARMY,
-        gate="explore",
     )
     if result is None:
         return None

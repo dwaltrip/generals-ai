@@ -159,7 +159,7 @@ def gather_path(
     target: int,
     max_moves: int | None = None,
     min_army: int | None = None,
-    gate: str = "",
+    bypass_reserve: bool = False,
 ) -> GatherResult | None:
     own_flat = view.own.reshape(-1)
     arm_flat = view.arm.reshape(-1)
@@ -168,7 +168,6 @@ def gather_path(
     # 1. reserve
     total_army = int(view.army[view.my_slot])
     reserve_amount = int(cfg.RESERVE_FRACTION * total_army)
-    bypass_reserve = (gate == "defend")
 
     # 2. source selection
     result = _select_source(view, cfg, target, max_moves, reserve_amount, bypass_reserve)
