@@ -206,6 +206,10 @@ def gather_path(
     arriving = mobile_army(movers, arm_flat, own_flat, view.my_slot)
     if use_split and view.gen_flat in path[:-1]:
         arriving += int(arm_flat[view.gen_flat]) // 2
+    # target doesn't move — its army joins the stack if we own it
+    target_tile = path[-1]
+    if own_flat[target_tile] == view.my_slot:
+        arriving += int(arm_flat[target_tile])
 
     if min_army is not None and arriving < min_army:
         return None
