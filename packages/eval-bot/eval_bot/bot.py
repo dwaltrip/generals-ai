@@ -25,18 +25,23 @@ def _is_spent(view: PlayerView, plan: Plan) -> bool:
     if plan.cursor >= len(plan.moves):
         return True
 
-    src, dst, _is50 = plan.moves[plan.cursor]
+    src, dst, is50 = plan.moves[plan.cursor]
     src_r, src_c = divmod(src, view.W)
     dst_r, dst_c = divmod(dst, view.W)
+
+    if int(view.own[src_r, src_c]) != view.my_slot:
+        return True
 
     src_army = int(view.arm[src_r, src_c])
     if src_army <= 1:
         return True
 
+    sent = src_army // 2 if is50 else src_army - 1
+
     dst_owner = int(view.own[dst_r, dst_c])
     if dst_owner != view.my_slot and dst_owner >= 0:
         dst_army = int(view.arm[dst_r, dst_c])
-        if dst_army >= src_army:
+        if dst_army >= sent:
             return True
 
     return False
