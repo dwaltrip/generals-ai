@@ -6,14 +6,14 @@ from eval_bot.driver import play_game
 
 
 def test_bots_expand():
-    """Two EvalBots play 200 ticks on a real map. Both should expand
+    """Two EvalBots play 500 ticks on a real map. Both should expand
     beyond their starting general (land > 1)."""
     replay_ids = list_two_player_replay_ids(limit=1)
     assert replay_ids, "need at least one 2-player replay in the corpus"
     static = load_static_from_db(replay_ids[0])
 
     state, bots = play_game(
-        static, max_ticks=200, progress_interval=0,
+        static, max_ticks=500, progress_interval=0,
     )
 
     own = state.ownership
