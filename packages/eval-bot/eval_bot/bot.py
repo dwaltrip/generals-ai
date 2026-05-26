@@ -20,6 +20,28 @@ from eval_bot.plan import DefendPlan, GateResult, Plan, SingleMove
 from eval_bot.world_model import PlayerView, WorldModel
 
 
+def _is_spent(view: PlayerView, plan: Plan) -> bool:
+    """Check if the plan can't make progress."""
+    if plan.cursor >= len(plan.moves):
+        return True
+
+    src, dst, _is50 = plan.moves[plan.cursor]
+    src_r, src_c = divmod(src, view.W)
+    dst_r, dst_c = divmod(dst, view.W)
+
+    src_army = int(view.arm[src_r, src_c])
+    if src_army <= 1:
+        return True
+
+    dst_owner = int(view.own[dst_r, dst_c])
+    if dst_owner != view.my_slot and dst_owner >= 0:
+        dst_army = int(view.arm[dst_r, dst_c])
+        if dst_army >= src_army:
+            return True
+
+    return False
+
+
 class EvalBot:
     def __init__(
         self,
@@ -90,10 +112,9 @@ class EvalBot:
 
         plan = self._active_plan
 
-        # TODO (section 6): spent detection
-        # if is_spent(view, plan):
-        #     self._active_plan = None
-        #     return None
+        if _is_spent(view, plan):
+            self._active_plan = None
+            return None
 
         # gate-specific re-evaluation
         if isinstance(plan, DefendPlan):
