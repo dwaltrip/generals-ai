@@ -89,7 +89,10 @@ class WorldModel:
         self._sim: dict[str, Any] | None = None
         self._memory: MemoryState | None = None
 
+        # per-contact-player sliding buffer of the largest visible enemy stack
         self._threat_windows: dict[int, deque[ThreatEntry]] = {}
+        # player slot → bool [H, W] snapshot of (ownership == my_slot) taken when
+        # that player's threat window opens; used to detect tile ownership flips for IncursionThreat
         self._eating_baselines: dict[int, np.ndarray] = {}
 
     def init_for_game(self, state: sim_core.State, static: Any) -> None:
@@ -215,11 +218,11 @@ class WorldModel:
     def _compute_contact_set(self) -> set[int]:
         assert self._memory is not None
         mem = self._memory
-        result: set[int] = set()
+        contacted_players: set[int] = set()
         for p in range(P):
             if mem.opp_contacted[p] and mem.opp_captured_by[p] == -1:
-                result.add(p)
-        return result
+                contacted_players.add(p)
+        return contacted_players
 
     def _update_threat_windows(
         self,
@@ -276,11 +279,11 @@ class WorldModel:
         self, fog_own: np.ndarray,
     ) -> dict[int, bool]:
         H, W = self._H, self._W
-        result: dict[int, bool] = {}
+        is_threat_by_player: dict[int, bool] = {}
 
         for p, window in self._threat_windows.items():
             if len(window) < 2:
-                result[p] = False
+                is_threat_by_player[p] = False
                 continue
 
             # closing: moving average of distance deltas
@@ -295,7 +298,7 @@ class WorldModel:
             threat_r, threat_c = divmod(threat_pos, W)
             baseline = self._eating_baselines.get(p)
             if baseline is None:
-                result[p] = False
+                is_threat_by_player[p] = False
                 continue
 
             eaten = 0
@@ -311,9 +314,9 @@ class WorldModel:
                         eaten += 1
 
             eating = eaten >= EATING_MIN
-            result[p] = closing and eating
+            is_threat_by_player[p] = closing and eating
 
-        return result
+        return is_threat_by_player
 
 
 def known_passable_mask(

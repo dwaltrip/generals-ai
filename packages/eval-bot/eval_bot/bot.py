@@ -3,9 +3,6 @@
 Same duck-typed interface as ModelAgent in self_play.agent:
   - init_for_game(state, static) — called once per game
   - act(view) — called once per tick with the current PlayerView
-
-Milestone 1: ExpandOrExplore only. Future milestones add Defend,
-Kill-shot, Attack gates per the spec.
 """
 
 from __future__ import annotations
