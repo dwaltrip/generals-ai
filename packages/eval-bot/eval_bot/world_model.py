@@ -23,13 +23,9 @@ from self_play.agent import pad_initial_generals
 from self_play.sim_adapter import _capture_events_to_array
 
 from eval_bot.bfs import bfs_distances
+from eval_bot.bot_config import BotConfig
 
 P = 8  # fixed slot count the obs encoder was trained on
-
-THREAT_WINDOW_LEN = 8
-CLOSING_THRESHOLD = -0.3
-EATING_RADIUS = 3
-EATING_MIN = 3
 
 
 class ThreatEntry(NamedTuple):
@@ -76,9 +72,11 @@ class WorldModel:
     def __init__(
         self,
         perspective_slot: int,
+        cfg: BotConfig,
         max_ticks_hint: int = 2000,
     ):
         self.perspective_slot = perspective_slot
+        self.cfg = cfg
         self.max_ticks_hint = max_ticks_hint
 
         self._H: int = 0
@@ -263,7 +261,7 @@ class WorldModel:
 
             # snapshot eating baseline when window opens fresh
             if p not in self._threat_windows:
-                self._threat_windows[p] = deque(maxlen=THREAT_WINDOW_LEN)
+                self._threat_windows[p] = deque(maxlen=self.cfg.THREAT_WINDOW_LEN)
                 self._eating_baselines[p] = (
                     fog_own == self.perspective_slot
                 ).copy()
@@ -291,7 +289,7 @@ class WorldModel:
                 window[i].dist_to_general - window[i - 1].dist_to_general
                 for i in range(1, len(window))
             ]
-            closing = (sum(deltas) / len(deltas)) < CLOSING_THRESHOLD
+            closing = (sum(deltas) / len(deltas)) < self.cfg.CLOSING_THRESHOLD
 
             # eating: tile flips within manhattan radius of threat
             threat_pos = window[-1].pos
@@ -302,18 +300,19 @@ class WorldModel:
                 continue
 
             eaten = 0
-            r_lo = max(0, threat_r - EATING_RADIUS)
-            r_hi = min(H, threat_r + EATING_RADIUS + 1)
-            c_lo = max(0, threat_c - EATING_RADIUS)
-            c_hi = min(W, threat_c + EATING_RADIUS + 1)
+            eat_r = self.cfg.EATING_RADIUS
+            r_lo = max(0, threat_r - eat_r)
+            r_hi = min(H, threat_r + eat_r + 1)
+            c_lo = max(0, threat_c - eat_r)
+            c_hi = min(W, threat_c + eat_r + 1)
             for r in range(r_lo, r_hi):
                 for c in range(c_lo, c_hi):
-                    if abs(r - threat_r) + abs(c - threat_c) > EATING_RADIUS:
+                    if abs(r - threat_r) + abs(c - threat_c) > eat_r:
                         continue
                     if baseline[r, c] and fog_own[r, c] == p:
                         eaten += 1
 
-            eating = eaten >= EATING_MIN
+            eating = eaten >= self.cfg.EATING_MIN
             is_threat_by_player[p] = closing and eating
 
         return is_threat_by_player

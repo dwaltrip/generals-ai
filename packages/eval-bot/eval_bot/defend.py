@@ -7,11 +7,10 @@ or rally to the general.
 from __future__ import annotations
 
 from eval_bot.bfs import bfs_path
+from eval_bot.bot_config import BotConfig
 from eval_bot.gather import gather_path
 from eval_bot.plan import DefendPlan
 from eval_bot.world_model import PlayerView
-
-INTERCEPT_LOOKAHEAD = 3
 
 
 def _pick_most_severe(view: PlayerView) -> int | None:
@@ -25,7 +24,7 @@ def _pick_most_severe(view: PlayerView) -> int | None:
     ))
 
 
-def try_defend(view: PlayerView) -> DefendPlan | None:
+def try_defend(view: PlayerView, cfg: BotConfig) -> DefendPlan | None:
     most_severe = _pick_most_severe(view)
     if most_severe is None:
         return None
@@ -41,16 +40,16 @@ def try_defend(view: PlayerView) -> DefendPlan | None:
         path = bfs_path(tw.pos, view.gen_flat, view.passable, view.H, view.W)
         if not path:
             return None
-        idx = min(INTERCEPT_LOOKAHEAD, len(path) - 1)
+        idx = min(cfg.INTERCEPT_LOOKAHEAD, len(path) - 1)
         target = path[idx]
 
     # time budget
-    max_moves = tw.dist_to_general - INTERCEPT_LOOKAHEAD
+    max_moves = tw.dist_to_general - cfg.INTERCEPT_LOOKAHEAD
     if max_moves <= 0:
         return None
 
     result = gather_path(
-        view, target, max_moves=max_moves, min_army=None, gate="defend",
+        view, cfg, target, max_moves=max_moves, min_army=None, gate="defend",
     )
     if result is None:
         return None

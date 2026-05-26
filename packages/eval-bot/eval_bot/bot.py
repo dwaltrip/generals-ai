@@ -11,6 +11,7 @@ from typing import Any
 
 import sim_core
 
+from eval_bot.bot_config import BotConfig
 from eval_bot.defend import should_clear_defend, try_defend
 from eval_bot.expand import MOVE_EXPAND, MOVE_EXPLORE, pick_expand_or_explore
 from eval_bot.plan import DefendPlan, GateResult, Plan, SingleMove
@@ -48,10 +49,12 @@ class EvalBot:
     def __init__(
         self,
         perspective_slot: int,
+        cfg: BotConfig,
         max_ticks_hint: int = 2000,
     ):
         self.perspective_slot = perspective_slot
-        self.world = WorldModel(perspective_slot, max_ticks_hint)
+        self.cfg = cfg
+        self.world = WorldModel(perspective_slot, self.cfg, max_ticks_hint)
         self._active_plan: Plan | None = None
 
         self.n_passed = 0
@@ -141,14 +144,14 @@ class EvalBot:
     def _pick_new_plan(self, view: PlayerView) -> GateResult:
         """Walk the decision ladder. First gate to fire wins."""
         # defend
-        plan = try_defend(view)
+        plan = try_defend(view, self.cfg)
         if plan is not None:
             return plan
 
         # killshot — future
 
         # expand/explore
-        result = pick_expand_or_explore(view)
+        result = pick_expand_or_explore(view, self.cfg)
         if result is not None:
             return result
 

@@ -11,10 +11,12 @@ from typing import Any
 import sim_core
 
 from eval_bot.bot import EvalBot
+from eval_bot.bot_config import BotConfig
 
 
 def play_game(
     static: Any,
+    cfg: BotConfig | None = None,
     max_ticks: int = 2000,
     max_ticks_hint: int = 2000,
     progress_interval: int = 50,
@@ -25,8 +27,9 @@ def play_game(
     state = sim_core.new_state(static)
     num_players = state.num_players
 
+    bot_cfg = cfg or BotConfig()
     bots = [
-        EvalBot(perspective_slot=p, max_ticks_hint=max_ticks_hint)
+        EvalBot(perspective_slot=p, cfg=bot_cfg, max_ticks_hint=max_ticks_hint)
         for p in range(num_players)
     ]
     for bot in bots:

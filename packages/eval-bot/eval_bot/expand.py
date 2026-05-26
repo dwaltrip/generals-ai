@@ -12,16 +12,12 @@ from __future__ import annotations
 import numpy as np
 
 from eval_bot.bfs import bfs_distances, bfs_distances_multi
+from eval_bot.bot_config import BotConfig
 from eval_bot.gather import gather_path
 from eval_bot.plan import ExplorePlan, GateResult, SingleMove
 from eval_bot.world_model import PlayerView
 
 NEUTRAL = -1
-
-EXPAND_EXPLORE_THRESHOLD = 0.4
-EXPLORE_FOG_DEPTH = 3
-EXPLORE_MAX_PLAN_TICKS = 15
-EXPLORE_MIN_ARMY = 5
 
 MOVE_EXPAND = "expand"
 MOVE_EXPLORE = "explore"
@@ -106,7 +102,7 @@ def _sector_of(dr: int, dc: int) -> int:
     return 3  # SE
 
 
-def _pick_explore_plan(view: PlayerView) -> ExplorePlan | None:
+def _pick_explore_plan(view: PlayerView, cfg: BotConfig) -> ExplorePlan | None:
     """Gather toward the least-explored sector using gather_path."""
     own = view.own
     my_slot = view.my_slot
@@ -149,7 +145,7 @@ def _pick_explore_plan(view: PlayerView) -> ExplorePlan | None:
     candidates_by_depth: dict[int, list[int]] = {}
     for cell in range(H * W):
         d = int(dist_from_frontier[cell])
-        if d <= 0 or d > EXPLORE_FOG_DEPTH:
+        if d <= 0 or d > cfg.EXPLORE_FOG_DEPTH:
             continue
         if own_flat[cell] == my_slot:
             continue
@@ -163,9 +159,9 @@ def _pick_explore_plan(view: PlayerView) -> ExplorePlan | None:
     target = int(np.random.choice(targets))
 
     result = gather_path(
-        view, target,
-        max_moves=EXPLORE_MAX_PLAN_TICKS,
-        min_army=EXPLORE_MIN_ARMY,
+        view, cfg, target,
+        max_moves=cfg.EXPLORE_MAX_PLAN_TICKS,
+        min_army=cfg.EXPLORE_MIN_ARMY,
         gate="explore",
     )
     if result is None:
@@ -178,10 +174,7 @@ def _to_single(move: tuple[int, int, int], gate: str) -> SingleMove:
     return SingleMove(src=move[0], dst=move[1], is50=move[2], gate=gate)
 
 
-def pick_expand_or_explore(
-    view: PlayerView,
-    expand_explore_threshold: float = EXPAND_EXPLORE_THRESHOLD,
-) -> GateResult:
+def pick_expand_or_explore(view: PlayerView, cfg: BotConfig) -> GateResult:
     """Top-level ExpandOrExplore gate. Returns SingleMove, ExplorePlan, or None."""
     own = view.own
     arm = view.arm
@@ -200,14 +193,14 @@ def pick_expand_or_explore(
     if frontier_count == 0:
         return None
 
-    if expandable_count > 0 and expandable_count / frontier_count >= expand_explore_threshold:
+    if expandable_count > 0 and expandable_count / frontier_count >= cfg.EXPAND_EXPLORE_THRESHOLD:
         gen_dist = bfs_distances(gen_flat, passable, H, W)
         move = _pick_expand_move(expandable, own, arm, gen_dist, H, W)
         if move is not None:
             return _to_single(move, MOVE_EXPAND)
 
     # explore mode
-    plan = _pick_explore_plan(view)
+    plan = _pick_explore_plan(view, cfg)
     if plan is not None:
         return plan
 

@@ -11,12 +11,9 @@ import warnings
 import numpy as np
 
 from eval_bot.bfs import bfs_distances, bfs_path
+from eval_bot.bot_config import BotConfig
 from eval_bot.plan import GatherResult
 from eval_bot.world_model import PlayerView
-
-RESERVE_FRACTION = 0.25
-SOURCE_DIST_WEIGHT = 1.0
-SIDE_GATHER_FRACTION = 0.5
 
 
 def mobile_army(
@@ -50,6 +47,7 @@ def _effective_army_general(
 
 def _select_source(
     view: PlayerView,
+    cfg: BotConfig,
     target: int,
     max_moves: int | None,
     reserve_amount: int,
@@ -87,7 +85,7 @@ def _select_source(
         if eff <= 0:
             continue
 
-        score = eff - SOURCE_DIST_WEIGHT * d
+        score = eff - cfg.SOURCE_DIST_WEIGHT * d
         if score > best_score:
             best_score = score
             best_source = tile
@@ -157,6 +155,7 @@ def _build_move_sequence(
 
 def gather_path(
     view: PlayerView,
+    cfg: BotConfig,
     target: int,
     max_moves: int | None = None,
     min_army: int | None = None,
@@ -168,11 +167,11 @@ def gather_path(
 
     # 1. reserve
     total_army = int(view.army[view.my_slot])
-    reserve_amount = int(RESERVE_FRACTION * total_army)
+    reserve_amount = int(cfg.RESERVE_FRACTION * total_army)
     bypass_reserve = (gate == "defend")
 
     # 2. source selection
-    result = _select_source(view, target, max_moves, reserve_amount, bypass_reserve)
+    result = _select_source(view, cfg, target, max_moves, reserve_amount, bypass_reserve)
     if result is None:
         return None
     source, use_split = result
@@ -192,7 +191,7 @@ def gather_path(
         remaining = max_moves - sweep_cost
     else:
         remaining = len(path) * 10  # generous cap for kill-shot
-    max_side = min(remaining, int(SIDE_GATHER_FRACTION * len(path)))
+    max_side = min(remaining, int(cfg.SIDE_GATHER_FRACTION * len(path)))
     candidates = _find_side_gather_candidates(path, own_flat, arm_flat, view.my_slot, H, W)
     side_gathers = candidates[:max_side]
 
