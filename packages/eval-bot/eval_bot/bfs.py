@@ -48,6 +48,40 @@ def bfs_distances(
     return dist
 
 
+def bfs_distances_multi(
+    sources: list[int], passable: np.ndarray, H: int, W: int,
+) -> np.ndarray:
+    """BFS from multiple source cells simultaneously.
+
+    All sources start at distance 0. Returns the shortest distance
+    from any source to each cell.
+
+    Returns:
+        int32 [H*W]. Distance in hops. -1 for unreachable.
+    """
+    HW = H * W
+    dist = np.full(HW, -1, dtype=np.int32)
+    q: deque[int] = deque()
+
+    for s in sources:
+        if passable[s] and dist[s] == -1:
+            dist[s] = 0
+            q.append(s)
+
+    while q:
+        cell = q.popleft()
+        d = dist[cell] + 1
+        r, c = divmod(cell, W)
+        for nr, nc in ((r - 1, c), (r + 1, c), (r, c - 1), (r, c + 1)):
+            if 0 <= nr < H and 0 <= nc < W:
+                nb = nr * W + nc
+                if passable[nb] and dist[nb] == -1:
+                    dist[nb] = d
+                    q.append(nb)
+
+    return dist
+
+
 def bfs_path(
     source: int, target: int, passable: np.ndarray, H: int, W: int,
 ) -> list[int]:

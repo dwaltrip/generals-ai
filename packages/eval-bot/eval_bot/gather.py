@@ -196,9 +196,12 @@ def gather_path(
     candidates = _find_side_gather_candidates(path, own_flat, arm_flat, view.my_slot, H, W)
     side_gathers = candidates[:max_side]
 
-    # 5. army estimate
+    # 5. army estimate — only owned tiles contribute
     side_sources = [sg[0] for sg in side_gathers]
-    movers = [t for t in path[:-1] if t != view.gen_flat or not use_split]
+    movers = [
+        t for t in path[:-1]
+        if own_flat[t] == view.my_slot and (t != view.gen_flat or not use_split)
+    ]
     movers.extend(side_sources)
     arriving = mobile_army(movers, arm_flat, own_flat, view.my_slot)
     if use_split and view.gen_flat in path[:-1]:

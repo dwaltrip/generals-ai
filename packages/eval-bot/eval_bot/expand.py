@@ -2,21 +2,29 @@
 
 Two sub-modes switched by the ExpandableTiles / UnoccupiedFrontier ratio:
   - Expand: thin BFS crawl into adjacent empty tiles (cheap, no gather).
-  - Explore: push the highest-army frontier tile toward the least-explored
-    sector (needs BFS, no gather_tree yet in milestone 1).
+  - Explore: gather_path push toward the least-explored sector.
 
-Returns a (source, dest, is50) move tuple, or None when fully boxed in.
+Expand returns SingleMove. Explore returns ExplorePlan.
 """
 
 from __future__ import annotations
 
 import numpy as np
 
-from eval_bot.bfs import bfs_distances
-from eval_bot.plan import SingleMove
+from eval_bot.bfs import bfs_distances, bfs_distances_multi
+from eval_bot.gather import gather_path
+from eval_bot.plan import ExplorePlan, GateResult, SingleMove
 from eval_bot.world_model import PlayerView
 
 NEUTRAL = -1
+
+EXPAND_EXPLORE_THRESHOLD = 0.4
+EXPLORE_FOG_DEPTH = 3
+EXPLORE_MAX_PLAN_TICKS = 15
+EXPLORE_MIN_ARMY = 5
+
+MOVE_EXPAND = "expand"
+MOVE_EXPLORE = "explore"
 
 
 def _expandable_tiles(
@@ -98,88 +106,72 @@ def _sector_of(dr: int, dc: int) -> int:
     return 3  # SE
 
 
-def _pick_explore_move(
-    own: np.ndarray,
-    arm: np.ndarray,
-    my_slot: int,
-    passable: np.ndarray,
-    gen_flat: int,
-    H: int,
-    W: int,
-) -> tuple[int, int, int] | None:
-    """Push toward the least-explored sector. No gather_tree — just move
-    the highest-army owned tile one step toward a fog target."""
+def _pick_explore_plan(view: PlayerView) -> ExplorePlan | None:
+    """Gather toward the least-explored sector using gather_path."""
+    own = view.own
+    my_slot = view.my_slot
+    passable = view.passable
+    gen_flat = view.gen_flat
+    H, W = view.H, view.W
+
     gen_r, gen_c = divmod(gen_flat, W)
 
     # score each sector by count of passable non-owned tiles
     passable_2d = passable.reshape(H, W)
     not_mine = own != my_slot
     sector_scores = [0, 0, 0, 0]
-    fog_tiles_by_sector: list[list[int]] = [[], [], [], []]
 
     for r in range(H):
         for c in range(W):
             if passable_2d[r, c] and not_mine[r, c]:
-                s = _sector_of(r - gen_r, c - gen_c)
-                sector_scores[s] += 1
-                fog_tiles_by_sector[s].append(r * W + c)
+                sector_scores[_sector_of(r - gen_r, c - gen_c)] += 1
 
     if max(sector_scores) == 0:
         return None
 
     best_sector = int(np.argmax(sector_scores))
-    fog_cells = fog_tiles_by_sector[best_sector]
-    if not fog_cells:
+
+    # frontier tiles in the winning sector
+    frontier = _unoccupied_frontier(own, my_slot, H, W)
+    frontier_in_sector: list[int] = []
+    for r in range(H):
+        for c in range(W):
+            if frontier[r, c] and _sector_of(r - gen_r, c - gen_c) == best_sector:
+                frontier_in_sector.append(r * W + c)
+
+    if not frontier_in_sector:
         return None
 
-    # source = any owned tile with army >= 2, best = highest army
-    mine_flat = (own == my_slot).reshape(-1)
-    arm_flat = arm.reshape(-1)
-    candidates = np.where(mine_flat & (arm_flat >= 2))[0]
-    if len(candidates) == 0:
+    # multi-source BFS from frontier to find target at depth
+    dist_from_frontier = bfs_distances_multi(frontier_in_sector, passable, H, W)
+
+    own_flat = own.reshape(-1)
+    candidates_by_depth: dict[int, list[int]] = {}
+    for cell in range(H * W):
+        d = int(dist_from_frontier[cell])
+        if d <= 0 or d > EXPLORE_FOG_DEPTH:
+            continue
+        if own_flat[cell] == my_slot:
+            continue
+        candidates_by_depth.setdefault(d, []).append(cell)
+
+    if not candidates_by_depth:
         return None
 
-    best_src = int(candidates[np.argmax(arm_flat[candidates])])
+    best_depth = max(candidates_by_depth)
+    targets = candidates_by_depth[best_depth]
+    target = int(np.random.choice(targets))
 
-    # find the nearest fog tile in the winning sector via BFS from best_src
-    dist_from_src = bfs_distances(best_src, passable, H, W)
-    nearest_fog = -1
-    nearest_dist = H * W + 1
-    for fc in fog_cells:
-        d = dist_from_src[fc]
-        if d >= 0 and d < nearest_dist:
-            nearest_dist = d
-            nearest_fog = fc
-
-    if nearest_fog == -1:
+    result = gather_path(
+        view, target,
+        max_moves=EXPLORE_MAX_PLAN_TICKS,
+        min_army=EXPLORE_MIN_ARMY,
+        gate="explore",
+    )
+    if result is None:
         return None
 
-    # move one step toward that fog tile: BFS from fog target, step downhill
-    dist_from_target = bfs_distances(nearest_fog, passable, H, W)
-    if dist_from_target[best_src] < 0:
-        return None
-
-    r, c = divmod(best_src, W)
-    best_nb = -1
-    best_d = dist_from_target[best_src]
-    for nr, nc in ((r - 1, c), (r + 1, c), (r, c - 1), (r, c + 1)):
-        if 0 <= nr < H and 0 <= nc < W:
-            nb = nr * W + nc
-            d = dist_from_target[nb]
-            if d >= 0 and d < best_d:
-                best_d = d
-                best_nb = nb
-
-    if best_nb == -1:
-        return None
-
-    return (best_src, best_nb, 0)
-
-
-EXPAND_EXPLORE_THRESHOLD = 0.4
-
-MOVE_EXPAND = "expand"
-MOVE_EXPLORE = "explore"
+    return ExplorePlan(moves=result.moves)
 
 
 def _to_single(move: tuple[int, int, int], gate: str) -> SingleMove:
@@ -189,8 +181,8 @@ def _to_single(move: tuple[int, int, int], gate: str) -> SingleMove:
 def pick_expand_or_explore(
     view: PlayerView,
     expand_explore_threshold: float = EXPAND_EXPLORE_THRESHOLD,
-) -> SingleMove | None:
-    """Top-level ExpandOrExplore gate. Returns a SingleMove or None."""
+) -> GateResult:
+    """Top-level ExpandOrExplore gate. Returns SingleMove, ExplorePlan, or None."""
     own = view.own
     arm = view.arm
     my_slot = view.my_slot
@@ -214,15 +206,12 @@ def pick_expand_or_explore(
         if move is not None:
             return _to_single(move, MOVE_EXPAND)
 
-    # explore mode: low ratio of expandable-to-frontier, or no expandable tiles
-    move = _pick_explore_move(
-        own, arm, my_slot, passable, gen_flat, H, W,
-    )
-    if move is not None:
-        return _to_single(move, MOVE_EXPLORE)
+    # explore mode
+    plan = _pick_explore_plan(view)
+    if plan is not None:
+        return plan
 
-    # explore couldn't find a move (e.g. no army >= 2 on frontier) — fall
-    # back to expand if any expandable tiles exist
+    # explore couldn't build a plan — fall back to expand if any expandable tiles
     if expandable_count > 0:
         gen_dist = bfs_distances(gen_flat, passable, H, W)
         move = _pick_expand_move(expandable, own, arm, gen_dist, H, W)
