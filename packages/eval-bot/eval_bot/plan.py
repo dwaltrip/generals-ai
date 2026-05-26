@@ -36,6 +36,17 @@ class DefendPlan(Plan):
 
 
 @dataclass
+class KillshotPlan(Plan):
+    target_player: int = -1
+    target_general: int = -1
+
+
+@dataclass
+class AttackPlan(Plan):
+    target_player: int = -1
+
+
+@dataclass
 class ExplorePlan(Plan):
     pass
 

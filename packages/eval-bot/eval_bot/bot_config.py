@@ -21,6 +21,16 @@ class BotConfig:
     # -- defend --
     INTERCEPT_LOOKAHEAD: int = 3
 
+    # -- kill-shot --
+    KILLSHOT_MARGIN_BASE: int = 3
+    KILLSHOT_MARGIN_PER_STEP: float = 0.5
+    RACE_MARGIN: int = 2
+
+    # -- attack --
+    ATTACK_MAX_PLAN_TICKS: int = 20
+    ATTACK_SWITCH_THRESHOLD: float = 0.3
+    RISK_FRACTION: float = 0.5
+
     # -- expand / explore --
     EXPAND_EXPLORE_THRESHOLD: float = 0.4
     EXPLORE_FOG_DEPTH: int = 3

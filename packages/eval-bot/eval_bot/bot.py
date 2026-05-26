@@ -11,10 +11,12 @@ from typing import Any
 
 import sim_core
 
+from eval_bot.attack import should_clear_attack, try_attack
 from eval_bot.bot_config import BotConfig
 from eval_bot.defend import should_clear_defend, try_defend
 from eval_bot.expand import MOVE_EXPAND, MOVE_EXPLORE, pick_expand_or_explore
-from eval_bot.plan import DefendPlan, GateResult, Plan, SingleMove
+from eval_bot.killshot import try_killshot
+from eval_bot.plan import AttackPlan, DefendPlan, GateResult, KillshotPlan, Plan, SingleMove
 from eval_bot.world_model import PlayerView, WorldModel
 
 
@@ -40,6 +42,13 @@ def _is_spent(view: PlayerView, plan: Plan) -> bool:
     if dst_owner != view.my_slot and dst_owner >= 0:
         dst_army = int(view.arm[dst_r, dst_c])
         if dst_army >= sent:
+            return True
+
+    # killshot: infeasible if our attacking army < target general's army
+    if isinstance(plan, KillshotPlan):
+        gen_r, gen_c = divmod(plan.target_general, view.W)
+        gen_army = int(view.mem.last_seen_armies[gen_r, gen_c])
+        if gen_army > 0 and sent < gen_army:
             return True
 
     return False
@@ -126,9 +135,13 @@ class EvalBot:
             if should_clear_defend(view, plan):
                 self._active_plan = None
                 return None
+        elif isinstance(plan, AttackPlan):
+            if should_clear_attack(view, self.cfg, plan):
+                self._active_plan = None
+                return None
 
         # preemption: defend interrupts non-defend/killshot plans
-        if not isinstance(plan, DefendPlan):
+        if not isinstance(plan, (DefendPlan, KillshotPlan)):
             if any(view.incursion_threats.values()):
                 self._active_plan = None
                 return None
@@ -143,18 +156,32 @@ class EvalBot:
 
     def _pick_new_plan(self, view: PlayerView) -> GateResult:
         """Walk the decision ladder. First gate to fire wins."""
-        # defend
-        plan = try_defend(view, self.cfg)
-        if plan is not None:
-            return plan
+        defend_plan = try_defend(view, self.cfg)
+        killshot_plan = try_killshot(view, self.cfg)
 
-        # killshot — future
+        if defend_plan and killshot_plan:
+            # race condition: killshot wins if targeting the same player
+            # and our gather arrives before the invader reaches our general
+            if killshot_plan.target_player == defend_plan.target_player:
+                tw = view.threat_windows[defend_plan.target_player][-1]
+                my_travel = len(killshot_plan.moves)
+                their_travel = tw.dist_to_general
+                if my_travel < their_travel + self.cfg.RACE_MARGIN:
+                    return killshot_plan
+            return defend_plan
+        if defend_plan:
+            return defend_plan
+        if killshot_plan:
+            return killshot_plan
 
         # expand/explore
         result = pick_expand_or_explore(view, self.cfg)
         if result is not None:
             return result
 
-        # attack — future
+        # attack
+        attack_plan = try_attack(view, self.cfg)
+        if attack_plan is not None:
+            return attack_plan
 
         return None
