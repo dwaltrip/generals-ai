@@ -64,6 +64,8 @@ class PlayerView:
     contact_set: frozenset[int]
     threat_windows: dict[int, deque[ThreatEntry]]
     incursion_threats: dict[int, bool]
+    # TODO: not read yet — ThreatScore input, needed for de-escalation (spec §6c.3)
+    has_recent_attack: dict[int, bool]
 
 
 class WorldModel:
@@ -189,6 +191,7 @@ class WorldModel:
         contact_set = self._compute_contact_set()
         self._update_threat_windows(fog_own, fog_arm, passable, contact_set)
         incursion_threats = self._evaluate_incursion_threats(fog_own)
+        has_recent_attack = self._compute_has_recent_attack(fog_own)
 
         alive = np.zeros(P, dtype=bool)
         for p in range(state.num_players):
@@ -211,6 +214,7 @@ class WorldModel:
             contact_set=frozenset(contact_set),
             threat_windows=self._threat_windows,
             incursion_threats=incursion_threats,
+            has_recent_attack=has_recent_attack,
         )
 
     def _compute_contact_set(self) -> set[int]:
@@ -316,6 +320,16 @@ class WorldModel:
             is_threat_by_player[p] = closing and eating
 
         return is_threat_by_player
+
+    # TODO: not read yet — ThreatScore input, needed for de-escalation (spec §6c.3)
+    def _compute_has_recent_attack(
+        self, fog_own: np.ndarray,
+    ) -> dict[int, bool]:
+        """Has player p captured any of our tiles since their threat window opened?"""
+        result: dict[int, bool] = {}
+        for p, baseline in self._eating_baselines.items():
+            result[p] = bool((baseline & (fog_own == p)).any())
+        return result
 
 
 def known_passable_mask(
