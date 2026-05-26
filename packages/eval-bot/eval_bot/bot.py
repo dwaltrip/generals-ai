@@ -14,8 +14,9 @@ from typing import Any
 
 import sim_core
 
+from eval_bot.defend import should_clear_defend, try_defend
 from eval_bot.expand import MOVE_EXPAND, MOVE_EXPLORE, pick_expand_or_explore
-from eval_bot.plan import Plan
+from eval_bot.plan import DefendPlan, GateResult, Plan, SingleMove
 from eval_bot.world_model import PlayerView, WorldModel
 
 
@@ -50,16 +51,84 @@ class EvalBot:
 
         Returns (source, dest, is50) or (-1, -1, -1) for pass.
         """
-        result = pick_expand_or_explore(view)
+        move = self._tick_active_plan(view)
+        if move is not None:
+            self.n_moved += 1
+            return move
+
+        result = self._pick_new_plan(view)
 
         if result is None:
             self.n_no_move += 1
             return (-1, -1, -1)
 
-        src, dst, is50, mode = result
+        if isinstance(result, SingleMove):
+            self.n_moved += 1
+            if result.gate == MOVE_EXPAND:
+                self.n_expand += 1
+            elif result.gate == MOVE_EXPLORE:
+                self.n_explore += 1
+            return (result.src, result.dst, result.is50)
+
+        # Plan variant — store and emit first move
+        self._active_plan = result
+        move = result.next_move()
+        assert move is not None
         self.n_moved += 1
-        if mode == MOVE_EXPAND:
-            self.n_expand += 1
-        elif mode == MOVE_EXPLORE:
-            self.n_explore += 1
-        return (src, dst, is50)
+        return move
+
+    def _tick_active_plan(
+        self, view: PlayerView,
+    ) -> tuple[int, int, int] | None:
+        """Manage the active plan: re-evaluate, check preemption, emit.
+
+        Returns a move if the plan produced one, None if cleared.
+        Never creates new plans — that's _pick_new_plan's job.
+        """
+        if self._active_plan is None:
+            return None
+
+        plan = self._active_plan
+
+        # TODO (section 6): spent detection
+        # if is_spent(view, plan):
+        #     self._active_plan = None
+        #     return None
+
+        # gate-specific re-evaluation
+        if isinstance(plan, DefendPlan):
+            if should_clear_defend(view, plan):
+                self._active_plan = None
+                return None
+
+        # preemption: defend interrupts non-defend/killshot plans
+        if not isinstance(plan, DefendPlan):
+            if any(view.incursion_threats.values()):
+                self._active_plan = None
+                return None
+
+        # emit
+        move = plan.next_move()
+        if move is None:
+            self._active_plan = None
+            return None
+
+        return move
+
+    def _pick_new_plan(self, view: PlayerView) -> GateResult:
+        """Walk the decision ladder. First gate to fire wins."""
+        # defend
+        plan = try_defend(view)
+        if plan is not None:
+            return plan
+
+        # killshot — future
+
+        # expand/explore
+        result = pick_expand_or_explore(view)
+        if result is not None:
+            return result
+
+        # attack — future
+
+        return None

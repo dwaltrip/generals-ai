@@ -13,6 +13,7 @@ from __future__ import annotations
 import numpy as np
 
 from eval_bot.bfs import bfs_distances
+from eval_bot.plan import SingleMove
 from eval_bot.world_model import PlayerView
 
 NEUTRAL = -1
@@ -180,15 +181,16 @@ EXPAND_EXPLORE_THRESHOLD = 0.4
 MOVE_EXPAND = "expand"
 MOVE_EXPLORE = "explore"
 
-# Return type: (src, dst, is50, mode) or None
-ExpandResult = tuple[int, int, int, str] | None
+
+def _to_single(move: tuple[int, int, int], gate: str) -> SingleMove:
+    return SingleMove(src=move[0], dst=move[1], is50=move[2], gate=gate)
 
 
 def pick_expand_or_explore(
     view: PlayerView,
     expand_explore_threshold: float = EXPAND_EXPLORE_THRESHOLD,
-) -> ExpandResult:
-    """Top-level ExpandOrExplore gate. Returns (src, dst, is50, mode) or None."""
+) -> SingleMove | None:
+    """Top-level ExpandOrExplore gate. Returns a SingleMove or None."""
     own = view.own
     arm = view.arm
     my_slot = view.my_slot
@@ -210,14 +212,14 @@ def pick_expand_or_explore(
         gen_dist = bfs_distances(gen_flat, passable, H, W)
         move = _pick_expand_move(expandable, own, arm, gen_dist, H, W)
         if move is not None:
-            return (*move, MOVE_EXPAND)
+            return _to_single(move, MOVE_EXPAND)
 
     # explore mode: low ratio of expandable-to-frontier, or no expandable tiles
     move = _pick_explore_move(
         own, arm, my_slot, passable, gen_flat, H, W,
     )
     if move is not None:
-        return (*move, MOVE_EXPLORE)
+        return _to_single(move, MOVE_EXPLORE)
 
     # explore couldn't find a move (e.g. no army >= 2 on frontier) — fall
     # back to expand if any expandable tiles exist
@@ -225,6 +227,6 @@ def pick_expand_or_explore(
         gen_dist = bfs_distances(gen_flat, passable, H, W)
         move = _pick_expand_move(expandable, own, arm, gen_dist, H, W)
         if move is not None:
-            return (*move, MOVE_EXPAND)
+            return _to_single(move, MOVE_EXPAND)
 
     return None

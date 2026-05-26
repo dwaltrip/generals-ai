@@ -6,8 +6,9 @@ PlayerView is the fog-filtered perspective that decision logic receives.
 
 from __future__ import annotations
 
+from collections import deque
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, NamedTuple
 
 import numpy as np
 
@@ -21,7 +22,20 @@ from bc.obs import MemoryState
 from self_play.agent import pad_initial_generals
 from self_play.sim_adapter import _capture_events_to_array
 
+from eval_bot.bfs import bfs_distances
+
 P = 8  # fixed slot count the obs encoder was trained on
+
+THREAT_WINDOW_LEN = 8
+CLOSING_THRESHOLD = -0.3
+EATING_RADIUS = 3
+EATING_MIN = 3
+
+
+class ThreatEntry(NamedTuple):
+    pos: int
+    army: int
+    dist_to_general: int
 
 
 @dataclass(frozen=True)
@@ -51,6 +65,10 @@ class PlayerView:
     # v1 but should be tightened before the codebase grows.
     mem: MemoryState
 
+    contact_set: frozenset[int]
+    threat_windows: dict[int, deque[ThreatEntry]]
+    incursion_threats: dict[int, bool]
+
 
 class WorldModel:
     """Owns raw sim state, runs per-tick updates, produces PlayerView."""
@@ -70,6 +88,9 @@ class WorldModel:
         self._armies_buf: np.ndarray | None = None
         self._sim: dict[str, Any] | None = None
         self._memory: MemoryState | None = None
+
+        self._threat_windows: dict[int, deque[ThreatEntry]] = {}
+        self._eating_baselines: dict[int, np.ndarray] = {}
 
     def init_for_game(self, state: sim_core.State, static: Any) -> None:
         H, W = static.map_height, static.map_width
@@ -105,6 +126,9 @@ class WorldModel:
         self._memory = bc_obs.init_memory(
             self._sim, self.perspective_slot, H, W, P,
         )
+
+        self._threat_windows = {}
+        self._eating_baselines = {}
 
     def update(self, state: sim_core.State, static: Any) -> PlayerView:
         assert self._sim is not None, "call init_for_game first"
@@ -160,6 +184,11 @@ class WorldModel:
         # 7. passable mask
         passable = known_passable_mask(self._memory, H, W)
 
+        # 8-10. threat detection
+        contact_set = self._compute_contact_set()
+        self._update_threat_windows(fog_own, fog_arm, passable, contact_set)
+        incursion_threats = self._evaluate_incursion_threats(fog_own)
+
         alive = np.zeros(P, dtype=bool)
         for p in range(state.num_players):
             alive[p] = state.alive[p]
@@ -178,7 +207,113 @@ class WorldModel:
             army=army,
             alive=alive,
             mem=self._memory,
+            contact_set=frozenset(contact_set),
+            threat_windows=self._threat_windows,
+            incursion_threats=incursion_threats,
         )
+
+    def _compute_contact_set(self) -> set[int]:
+        assert self._memory is not None
+        mem = self._memory
+        result: set[int] = set()
+        for p in range(P):
+            if mem.opp_contacted[p] and mem.opp_captured_by[p] == -1:
+                result.add(p)
+        return result
+
+    def _update_threat_windows(
+        self,
+        fog_own: np.ndarray,
+        fog_arm: np.ndarray,
+        passable: np.ndarray,
+        contact_set: set[int],
+    ) -> None:
+        H, W = self._H, self._W
+
+        # clear windows for players no longer in contact
+        for p in list(self._threat_windows):
+            if p not in contact_set:
+                self._threat_windows.pop(p, None)
+                self._eating_baselines.pop(p, None)
+
+        for p in contact_set:
+            visible_p = fog_own == p
+            if not visible_p.any():
+                self._threat_windows.pop(p, None)
+                self._eating_baselines.pop(p, None)
+                continue
+
+            # largest visible stack for this player
+            p_armies = np.where(visible_p, fog_arm, np.int16(0))
+            best_flat = int(p_armies.argmax())
+            best_army = int(p_armies.flat[best_flat])
+            best_r, best_c = divmod(best_flat, W)
+
+            # identity check — stack moves at most 1 cardinal tile per tick
+            window = self._threat_windows.get(p)
+            if window is not None and len(window) > 0:
+                prev = window[-1]
+                prev_r, prev_c = divmod(prev.pos, W)
+                if abs(best_r - prev_r) + abs(best_c - prev_c) > 1:
+                    self._threat_windows.pop(p, None)
+                    self._eating_baselines.pop(p, None)
+
+            # snapshot eating baseline when window opens fresh
+            if p not in self._threat_windows:
+                self._threat_windows[p] = deque(maxlen=THREAT_WINDOW_LEN)
+                self._eating_baselines[p] = (
+                    fog_own == self.perspective_slot
+                ).copy()
+
+            dist = bfs_distances(best_flat, passable, H, W)
+            dist_to_gen = int(dist[self._gen_flat])
+
+            self._threat_windows[p].append(
+                ThreatEntry(pos=best_flat, army=best_army, dist_to_general=dist_to_gen),
+            )
+
+    def _evaluate_incursion_threats(
+        self, fog_own: np.ndarray,
+    ) -> dict[int, bool]:
+        H, W = self._H, self._W
+        result: dict[int, bool] = {}
+
+        for p, window in self._threat_windows.items():
+            if len(window) < 2:
+                result[p] = False
+                continue
+
+            # closing: moving average of distance deltas
+            deltas = [
+                window[i].dist_to_general - window[i - 1].dist_to_general
+                for i in range(1, len(window))
+            ]
+            closing = (sum(deltas) / len(deltas)) < CLOSING_THRESHOLD
+
+            # eating: tile flips within manhattan radius of threat
+            threat_pos = window[-1].pos
+            threat_r, threat_c = divmod(threat_pos, W)
+            baseline = self._eating_baselines.get(p)
+            if baseline is None:
+                result[p] = False
+                continue
+
+            eaten = 0
+            r_lo = max(0, threat_r - EATING_RADIUS)
+            r_hi = min(H, threat_r + EATING_RADIUS + 1)
+            c_lo = max(0, threat_c - EATING_RADIUS)
+            c_hi = min(W, threat_c + EATING_RADIUS + 1)
+            for r in range(r_lo, r_hi):
+                for c in range(c_lo, c_hi):
+                    if abs(r - threat_r) + abs(c - threat_c) > EATING_RADIUS:
+                        continue
+                    if baseline[r, c] and fog_own[r, c] == p:
+                        eaten += 1
+
+            eating = eaten >= EATING_MIN
+            result[p] = closing and eating
+
+        return result
 
 
 def known_passable_mask(
