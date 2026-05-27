@@ -159,7 +159,7 @@ class EvalBot:
                 tw = view.threat_windows[defend_plan.target_player][-1]
                 my_travel = len(killshot_plan.moves)
                 their_travel = tw.dist_to_general
-                if my_travel < their_travel + self.cfg.RACE_MARGIN:
+                if my_travel + self.cfg.RACE_MARGIN < their_travel:
                     return killshot_plan
             return defend_plan
         if defend_plan:

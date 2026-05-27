@@ -72,8 +72,10 @@ def _target_score(
     dist_from_gen: np.ndarray,
 ) -> float:
     """Score how attractive player p is as an attack target."""
-    # hard gate: don't initiate against stronger players
-    if rs.army > 1.0:
+    # hard gate: don't initiate against much stronger players
+    # here, set a bit arbitrarily to 50%
+    # TODO: this should be a much more sophisticed calculation.
+    if rs.army > 1.5:
         return 0.0
 
     # weakness: inverse of army ratio (weaker = higher score)
@@ -172,7 +174,7 @@ def try_attack(view: PlayerView, cfg: BotConfig) -> AttackPlan | None:
     # commit budget: fraction of mobile army (spec §5.1, §6c.4)
     total_army = int(view.army[view.my_slot])
     mobile = total_army - reserve_amount(view, cfg)
-    commit = int(cfg.RISK_FRACTION * mobile)
+    commit = int(cfg.ATTACK_COMMIT_FRACTION * mobile)
 
     candidate = gather_path(
         view, cfg, target_tile,
