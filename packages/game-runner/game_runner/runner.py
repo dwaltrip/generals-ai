@@ -15,17 +15,17 @@ of the per-tick moves list rather than submitting them to step_tick.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Any
 
 import numpy as np
 
-import sim_core
-
 from game_runner.policy import GameResult, PlayerStats, Policy
+import sim_core
 
 
 def run_game(
-    policies: list[Policy],
+    policies: Sequence[Policy],
     static: Any,
     max_turns: int = 2000,
     progress_interval: int = 0,
@@ -58,7 +58,7 @@ def run_game(
 
 
 def _build_result(
-    state: sim_core.State, policies: list[Policy],
+    state: sim_core.State, policies: Sequence[Policy],
 ) -> GameResult:
     own = np.asarray(state.ownership)
     arm = np.asarray(state.armies)
@@ -89,7 +89,7 @@ def _build_result(
     )
 
 
-def _print_progress(state: sim_core.State, policies: list[Policy]) -> None:
+def _print_progress(state: sim_core.State, policies: Sequence[Policy]) -> None:
     own = np.asarray(state.ownership)
     arm = np.asarray(state.armies)
     alive_chr = "".join("T" if a else "F" for a in state.alive)

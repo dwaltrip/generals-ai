@@ -4,14 +4,12 @@ from __future__ import annotations
 
 from typing import Any
 
+from bc.model import BCModel
 import torch
 
-import sim_core
-
-from bc.model import BCModel
-from game_runner.policy import GameResult
 from game_runner.runner import run_game
 from self_play.agent import ModelAgent
+import sim_core
 
 
 def play_game(
@@ -27,7 +25,7 @@ def play_game(
     """Play one 2-player self-play game. Returns (State, agents) for
     backward compatibility with the CLI and tests.
     """
-    agents = [
+    agents: list[ModelAgent] = [
         ModelAgent(
             model,
             perspective_slot=p,
@@ -43,4 +41,5 @@ def play_game(
         max_turns=max_turns,
         progress_interval=progress_interval,
     )
+    assert result.state is not None
     return result.state, agents

@@ -9,6 +9,7 @@
     "packages/game-runner",
     "packages/self-play",
     "packages/eval-bot",
+    "scripts",
 ],
   "exclude": ["**/tmp/**", "**/__pycache__/**"],
   "typeCheckingMode": "basic",

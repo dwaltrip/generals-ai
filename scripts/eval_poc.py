@@ -11,9 +11,9 @@ Usage (from repo root):
 from __future__ import annotations
 
 import argparse
+from pathlib import Path
 import random
 import time
-from pathlib import Path
 
 from eval_bot.bot_config import BotConfig
 from eval_bot.eval_bot_agent import EvalBotAgent

@@ -8,11 +8,10 @@ from __future__ import annotations
 
 from typing import Any
 
-import sim_core
-
 from eval_bot.bot import EvalBot
 from eval_bot.bot_config import BotConfig
 from eval_bot.world_model import WorldModel
+import sim_core
 
 
 class EvalBotAgent:
