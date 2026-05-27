@@ -16,6 +16,14 @@ from eval_bot.plan import GatherResult
 from eval_bot.world_model import PlayerView
 
 
+# TODO: very crude model of army budgeting — a single global fraction
+# doesn't account for board position, threat proximity, or how much
+# army is actually reachable from the gather source. Revisit when tuning.
+def reserve_amount(view: PlayerView, cfg: BotConfig) -> int:
+    total_army = int(view.army[view.my_slot])
+    return int(cfg.RESERVE_FRACTION * total_army)
+
+
 def mobile_army(
     tiles: list[int],
     arm_flat: np.ndarray,
@@ -166,11 +174,10 @@ def gather_path(
     H, W = view.H, view.W
 
     # 1. reserve
-    total_army = int(view.army[view.my_slot])
-    reserve_amount = int(cfg.RESERVE_FRACTION * total_army)
+    reserve = reserve_amount(view, cfg)
 
     # 2. source selection
-    result = _select_source(view, cfg, target, max_moves, reserve_amount, bypass_reserve)
+    result = _select_source(view, cfg, target, max_moves, reserve, bypass_reserve)
     if result is None:
         return None
     source, use_split = result

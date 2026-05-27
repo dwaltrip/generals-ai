@@ -60,6 +60,8 @@ def try_defend(view: PlayerView, cfg: BotConfig) -> DefendPlan | None:
 def should_clear_defend(view: PlayerView, plan: DefendPlan) -> bool:
     if not any(view.incursion_threats.values()):
         return True
+    # can return None if threats cleared between the any() check and here;
+    # None != plan.target_player evaluates True, which correctly clears
     new_most_severe = _pick_most_severe(view)
     if new_most_severe != plan.target_player:
         return True

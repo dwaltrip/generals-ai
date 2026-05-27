@@ -44,13 +44,6 @@ def _is_spent(view: PlayerView, plan: Plan) -> bool:
         if dst_army >= sent:
             return True
 
-    # killshot: infeasible if our attacking army < target general's army
-    if isinstance(plan, KillshotPlan):
-        gen_r, gen_c = divmod(plan.target_general, view.W)
-        gen_army = int(view.mem.last_seen_armies[gen_r, gen_c])
-        if gen_army > 0 and sent < gen_army:
-            return True
-
     return False
 
 
@@ -174,14 +167,18 @@ class EvalBot:
         if killshot_plan:
             return killshot_plan
 
+        # attack — spec puts expand/explore above attack, but
+        # UnoccupiedFrontier > 0 is true nearly the entire game, so
+        # expand/explore would almost always fire first and attack would
+        # rarely trigger. Flipped so the bot presses weaker contacts
+        # instead of passively expanding when an opportunity exists.
+        attack_plan = try_attack(view, self.cfg)
+        if attack_plan is not None:
+            return attack_plan
+
         # expand/explore
         result = pick_expand_or_explore(view, self.cfg)
         if result is not None:
             return result
-
-        # attack
-        attack_plan = try_attack(view, self.cfg)
-        if attack_plan is not None:
-            return attack_plan
 
         return None

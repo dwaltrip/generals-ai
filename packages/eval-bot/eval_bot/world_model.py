@@ -272,6 +272,8 @@ class WorldModel:
 
             dist = bfs_distances(best_flat, passable, H, W)
             dist_to_gen = int(dist[self._gen_flat])
+            if dist_to_gen < 0:
+                continue
 
             self._threat_windows[p].append(
                 ThreatEntry(pos=best_flat, army=best_army, dist_to_general=dist_to_gen),

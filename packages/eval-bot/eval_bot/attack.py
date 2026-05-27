@@ -13,7 +13,7 @@ import numpy as np
 
 from eval_bot.bfs import bfs_distances
 from eval_bot.bot_config import BotConfig
-from eval_bot.gather import gather_path, mobile_army
+from eval_bot.gather import gather_path, reserve_amount
 from eval_bot.plan import AttackPlan
 from eval_bot.world_model import PlayerView
 
@@ -169,14 +169,10 @@ def try_attack(view: PlayerView, cfg: BotConfig) -> AttackPlan | None:
     if target_tile is None:
         return None
 
-    # commit budget: fraction of mobile army
+    # commit budget: fraction of mobile army (spec §5.1, §6c.4)
     total_army = int(view.army[view.my_slot])
-    reserve_amount = int(cfg.RESERVE_FRACTION * total_army)
-    own_flat = view.own.reshape(-1)
-    arm_flat = view.arm.reshape(-1)
-    all_owned = [int(t) for t in np.where(own_flat == view.my_slot)[0]]
-    mob = mobile_army(all_owned, arm_flat, own_flat, view.my_slot)
-    commit = int(cfg.RISK_FRACTION * mob)
+    mobile = total_army - reserve_amount(view, cfg)
+    commit = int(cfg.RISK_FRACTION * mobile)
 
     candidate = gather_path(
         view, cfg, target_tile,
