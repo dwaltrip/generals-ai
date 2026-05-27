@@ -7,6 +7,7 @@ helpers: RelativeStrength, ConflictFlag, TargetScore.
 
 from __future__ import annotations
 
+import math
 from typing import NamedTuple
 
 import numpy as np
@@ -81,7 +82,7 @@ def _target_score(
     # weakness: inverse of army ratio (weaker = higher score)
     weakness = 1.0 / max(0.1, rs.army)
 
-    # proximity: inverse of BFS distance from p's nearest visible tile
+    # proximity: exponential decay of average BFS distance of K nearest visible tiles
     fog_own = view.own.reshape(-1)
     p_tiles = np.where(fog_own == p)[0]
     if len(p_tiles) == 0:
@@ -90,8 +91,9 @@ def _target_score(
     reachable = dists[dists >= 0]
     if len(reachable) == 0:
         return 0.0
-    min_dist = int(reachable.min())
-    proximity = 1.0 / max(1, min_dist)
+    nearest_k = np.sort(reachable)[:cfg.PROXIMITY_K]
+    avg_dist = float(nearest_k.mean())
+    proximity = math.exp(-avg_dist / cfg.PROXIMITY_HALF_DIST)
 
     # growing: land delta > 0 means closing window of opportunity
     t = view.timestep

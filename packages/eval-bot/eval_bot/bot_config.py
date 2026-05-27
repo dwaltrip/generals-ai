@@ -35,6 +35,8 @@ class BotConfig:
     # -- attack: target scoring --
     TARGET_SCORE_W_WEAKNESS: float = 1.0
     TARGET_SCORE_W_PROXIMITY: float = 0.8
+    PROXIMITY_HALF_DIST: float = 12
+    PROXIMITY_K: int = 10
     TARGET_SCORE_W_GROWING: float = 0
     TARGET_SCORE_W_CONFLICT: float = 0
 
