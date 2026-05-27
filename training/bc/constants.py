@@ -81,7 +81,7 @@ CHANNEL_ORDER = [
     "bfs_opp_4_general", "bfs_opp_5_general", "bfs_opp_6_general",
     "bfs_opp_7_general",
     # Self broadcast scalars (3)
-    "self_army_count", "self_land_count", "game_progress",
+    "self_army_count", "self_land_count", "timestep",
     # Per-opp broadcast scalars (14)
     "opp_1_army_count", "opp_2_army_count", "opp_3_army_count", "opp_4_army_count",
     "opp_5_army_count", "opp_6_army_count", "opp_7_army_count",

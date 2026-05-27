@@ -596,11 +596,12 @@ def _cat_bfs(
     return [bfs_self, *bfs_opp]
 
 
+_TIMESTEP_DIVISOR = 1000
+
 def _cat_self_broadcast(
     state: MemoryState,
     t: int,
     perspective_slot: int,
-    max_turns: int,
     H: int,
     W: int,
 ) -> list[np.ndarray]:
@@ -616,8 +617,8 @@ def _cat_self_broadcast(
         state.land_count_history[t, perspective_slot] / _LAND_DIVISOR,
         dtype=np.float32,
     )
-    game_progress = np.full((H, W), t / max(1, max_turns), dtype=np.float32)
-    return [self_army_count, self_land_count, game_progress]
+    timestep = np.full((H, W), t / _TIMESTEP_DIVISOR, dtype=np.float32)
+    return [self_army_count, self_land_count, timestep]
 
 
 def _cat_opp_broadcast(
@@ -847,7 +848,6 @@ def build_obs(
     """
     own = sim["ownership"][t].reshape(H, W)
     armies = sim["armies"][t].reshape(H, W)
-    max_turns = sim["ownership"].shape[0]
 
     # Cross-cat helper — bool form feeds both cat 3 (as a channel) and cat 5
     # (the BFS passability policy treats fog-structures as impassable).
@@ -872,7 +872,7 @@ def build_obs(
         *_cat_memory(state, perspective_slot, opp_slots),
         *_cat_bfs(state, t, perspective_slot, opp_slots, vis, own, armies,
                   structures_in_fog_mask, bfs_cache, H, W),
-        *_cat_self_broadcast(state, t, perspective_slot, max_turns, H, W),
+        *_cat_self_broadcast(state, t, perspective_slot, H, W),
         *_cat_opp_broadcast(state, t, opp_slots, H, W),
         *_cat_scoreboard(state, t, opp_slots, H, W),
         *_cat_contact_capture(state, perspective_slot, opp_slots, H, W),

@@ -1,10 +1,11 @@
-"""Smoke test: build the sim dict from a live State and confirm it satisfies
-bc.mask.build_mask's read surface.
+"""Smoke test: build a sim dict from a live State (using the same plain-numpy
+pattern as agent.init_for_game) and confirm it satisfies bc.mask.build_mask's
+read surface.
 
 `build_mask` shares the dict shape with `build_obs` but has a much
 narrower dependency footprint — no MemoryState, no BFSCache, no
-visibility. If `build_mask` runs cleanly on our adapter output and
-produces a sensible legality tensor, the dict shape is correct.
+visibility. If `build_mask` runs cleanly on our dict and produces a
+sensible legality tensor, the dict shape is correct.
 """
 
 import numpy as np
@@ -30,32 +31,28 @@ def state_static_pair():
     return state, static
 
 
-def test_dict_shape(state_static_pair):
-    state, static = state_static_pair
-    sim = sim_adapter.sim_dict_from_state(state, static, max_turns_hint=1000)
-
-    expected_keys = {
-        "ownership", "armies", "mountains", "initial_cities",
-        "initial_generals", "cities", "cities_present_at", "capture_events",
+def _build_sim_dict(state, static, T=1000):
+    H, W = static.map_height, static.map_width
+    HW = H * W
+    ownership = np.full((T, HW), -1, dtype=np.int8)
+    armies = np.zeros((T, HW), dtype=np.int16)
+    ownership[0] = state.snapshots_ownership[0]
+    armies[0] = state.snapshots_armies[0]
+    return {
+        "ownership": ownership,
+        "armies": armies,
+        "mountains": np.asarray(static.mountains, dtype=np.int32),
+        "initial_cities": np.asarray(static.initial_cities, dtype=np.int32),
+        "initial_generals": np.asarray(static.initial_generals, dtype=np.int32),
+        "cities": np.asarray(state.cities, dtype=np.int32),
+        "cities_present_at": np.asarray(state.cities_present_at, dtype=np.int32),
+        "capture_events": sim_adapter._capture_events_to_array(state.capture_events),
     }
-    assert set(sim.keys()) == expected_keys
-
-    # Time-indexed fields satisfy [t] + .shape[0] access pattern.
-    map_size = static.map_width * static.map_height
-    own_t = sim["ownership"][0]
-    assert own_t.shape == (map_size,)
-    assert own_t.dtype == np.int8
-    assert sim["ownership"].shape == (1000,)
-
-    arm_t = sim["armies"][0]
-    assert arm_t.shape == (map_size,)
-    assert arm_t.dtype == np.int16
-    assert sim["armies"].shape == (1000,)
 
 
-def test_build_mask_runs_on_adapter(state_static_pair):
+def test_build_mask_on_sim_dict(state_static_pair):
     state, static = state_static_pair
-    sim = sim_adapter.sim_dict_from_state(state, static)
+    sim = _build_sim_dict(state, static)
     H, W = static.map_height, static.map_width
 
     m = mask.build_mask(sim, t=0, perspective_slot=0, H=H, W=W)
@@ -64,7 +61,5 @@ def test_build_mask_runs_on_adapter(state_static_pair):
 
     # At t=0 the only owned tile for player 0 is its general, which has
     # army=1 — below the army>=2 threshold for legal moves. So the entire
-    # mask is False at game start. This isn't a useful state to play
-    # from, but it confirms the legality logic is wired correctly to our
-    # adapter's ownership/armies/mountains fields.
+    # mask is False at game start.
     assert not m.any(), "expected no legal moves at t=0 (general has army=1)"
