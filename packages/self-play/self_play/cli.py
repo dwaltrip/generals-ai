@@ -46,8 +46,6 @@ def main() -> int:
                         help="Seed-map replay ID. Default: longest 2p replay in corpus.")
     parser.add_argument("--max-turns", type=int, default=1000,
                         help="Hard cap on game length (driver-level).")
-    parser.add_argument("--max-turns-hint", type=int, default=1000,
-                        help="Pre-allocation size for ownership/armies buffers.")
     parser.add_argument("--sample", action="store_true",
                         help="Bernoulli-sample pass + softmax-sample move (vs argmax).")
     parser.add_argument("--force-move", action="store_true",
@@ -80,7 +78,6 @@ def main() -> int:
         model, static,
         device=device,
         max_turns=args.max_turns,
-        max_turns_hint=args.max_turns_hint,
         sample=args.sample,
         force_move=args.force_move,
         temperature=args.temperature,

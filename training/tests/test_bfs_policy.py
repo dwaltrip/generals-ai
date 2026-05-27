@@ -60,10 +60,11 @@ def _make_fixture(total_army: int, *, enemy_city_visible: bool = True):
     general_locations[PERSPECTIVE] = _flat(OWN_GENERAL)
     general_locations[ENEMY] = _flat(ENEMY_GENERAL)
 
-    # Only t=0 matters; sized [1, P].
-    land_count_history = np.zeros((1, P), dtype=np.int32)
-    army_count_history = np.zeros((1, P), dtype=np.int64)
-    army_count_history[0, PERSPECTIVE] = total_army
+    land_row = np.zeros(P, dtype=np.int32)
+    army_row = np.zeros(P, dtype=np.int64)
+    army_row[PERSPECTIVE] = total_army
+    land_count_history = [land_row]
+    army_count_history = [army_row]
 
     known_mountain = np.zeros((H, W), dtype=bool)
     known_city = np.zeros((H, W), dtype=bool)

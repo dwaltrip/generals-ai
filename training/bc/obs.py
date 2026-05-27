@@ -41,6 +41,7 @@ until it trains. Worth coming back to:
 from __future__ import annotations
 
 from collections import deque
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -146,8 +147,9 @@ class MemoryState:
     dataset's per-game walk.
 
     Field categories:
-      - Static per game: `is_structure`, `land_count_history`, `army_count_history`.
-        Computed once in `init_memory`; never mutated thereafter.
+      - Static per game: `is_structure`.
+      - Scoreboard: `land_count_history`, `army_count_history`. Training:
+        precomputed for all T rows. Live: appended per tick.
       - Per-cell mutable masks: `historically_seen`, `known_mountain`,
         `known_city`, `known_general`, plus the `last_seen_*` channels and
         `turns_since_seen`.
@@ -167,12 +169,12 @@ class MemoryState:
     # the perspective hasn't observed it. Updated by step_memory on first
     # sighting. Self general is set in init_memory (always known at t=0).
     general_locations: np.ndarray
-    # int32 [T, P]: per-tick land count (cells owned). Computed once in
-    # init_memory. Scoreboard is global; available regardless of fog.
-    land_count_history: np.ndarray
-    # int64 [T, P]: per-tick total army (summed over owned cells). Same shape
-    # as land_count_history; same precomputation logic.
-    army_count_history: np.ndarray
+    # list of (P,) int32 arrays: per-tick land count (cells owned).
+    # Training: precomputed for all T rows in init_memory.
+    # Live inference: row 0 from init_memory_live, appended per tick.
+    land_count_history: list[np.ndarray]
+    # list of (P,) int64 arrays: per-tick total army. Same shape/lifecycle.
+    army_count_history: list[np.ndarray]
 
     # ---- Mutable per-cell (advanced by step_memory) ----
     # bool [H, W]: cells the agent has ever had vision of. Monotonic.
@@ -222,14 +224,15 @@ class MemoryState:
     view_buf: deque = field(default_factory=lambda: deque(maxlen=DENSE_HISTORY_N + 1))
 
 
-def init_memory(
-    sim: dict[str, np.ndarray],
+def _init_memory_common(
+    sim: Mapping[str, np.ndarray | list[np.ndarray]],
     perspective_slot: int,
     H: int,
     W: int,
-    P: int = 8,
+    P: int,
 ) -> MemoryState:
-    """Build a fresh `MemoryState` for one (game, perspective) walk."""
+    """Shared setup for init_memory / init_memory_live. Returns a
+    MemoryState with empty scoreboard lists (caller fills them)."""
     HW = H * W
 
     # The static "is this cell a structure" mask: mountains + initial cities
@@ -250,23 +253,11 @@ def init_memory(
     general_locations = np.full(P, -1, dtype=np.int32)
     general_locations[perspective_slot] = int(sim["initial_generals"][perspective_slot])
 
-    # Precompute per-tick scoreboard (global info — available through fog).
-    # T*P*HW work once per game; cheap relative to the per-tick obs cost.
-    ownership = sim["ownership"]  # [T, HW] int8
-    armies = sim["armies"]  # [T, HW] int16
-    T = ownership.shape[0]
-    land_count_history = np.zeros((T, P), dtype=np.int32)
-    army_count_history = np.zeros((T, P), dtype=np.int64)
-    for p in range(P):
-        owned_mask = (ownership == p)  # [T, HW]
-        land_count_history[:, p] = owned_mask.sum(axis=1)
-        army_count_history[:, p] = (armies * owned_mask).sum(axis=1)
-
     state = MemoryState(
         is_structure=is_structure,
         general_locations=general_locations,
-        land_count_history=land_count_history,
-        army_count_history=army_count_history,
+        land_count_history=[],
+        army_count_history=[],
         historically_seen=np.zeros((H, W), dtype=bool),
         known_mountain=np.zeros((H, W), dtype=bool),
         known_city=np.zeros((H, W), dtype=bool),
@@ -283,6 +274,60 @@ def init_memory(
     own_loc = int(general_locations[perspective_slot])
     own_r, own_c = divmod(own_loc, W)
     state.known_general[own_r, own_c] = True
+
+    return state
+
+
+def scoreboard_row(ownership_row: np.ndarray, armies_row: np.ndarray, P: int):
+    """Compute (land_counts, army_counts) for a single tick."""
+    land = np.zeros(P, dtype=np.int32)
+    army = np.zeros(P, dtype=np.int64)
+    for p in range(P):
+        mask = ownership_row == p
+        land[p] = mask.sum()
+        army[p] = (armies_row * mask).sum()
+    return land, army
+
+
+def init_memory(
+    sim: dict[str, np.ndarray],
+    perspective_slot: int,
+    H: int,
+    W: int,
+    P: int = 8,
+) -> MemoryState:
+    """Training path: precompute scoreboard for all T rows."""
+    state = _init_memory_common(sim, perspective_slot, H, W, P)
+
+    ownership = sim["ownership"]  # [T, HW] int8
+    armies = sim["armies"]  # [T, HW] int16
+    T = ownership.shape[0]
+    land_buf = np.zeros((T, P), dtype=np.int32)
+    army_buf = np.zeros((T, P), dtype=np.int64)
+    for p in range(P):
+        owned_mask = (ownership == p)  # [T, HW]
+        land_buf[:, p] = owned_mask.sum(axis=1)
+        army_buf[:, p] = (armies * owned_mask).sum(axis=1)
+    state.land_count_history = [land_buf[t] for t in range(T)]
+    state.army_count_history = [army_buf[t] for t in range(T)]
+
+    return state
+
+
+def init_memory_live(
+    sim: Mapping[str, np.ndarray | list[np.ndarray]],
+    perspective_slot: int,
+    H: int,
+    W: int,
+    P: int = 8,
+) -> MemoryState:
+    """Live inference path: compute scoreboard for row 0 only.
+    Caller appends subsequent rows each tick."""
+    state = _init_memory_common(sim, perspective_slot, H, W, P)
+
+    land_0, army_0 = scoreboard_row(sim["ownership"][0], sim["armies"][0], P)
+    state.land_count_history = [land_0]
+    state.army_count_history = [army_0]
 
     return state
 
@@ -441,7 +486,7 @@ def compute_known_passable(
 
     Returns a flat bool `[H*W]` array — True means passable.
     """
-    total_army = int(state.army_count_history[t, perspective_slot])
+    total_army = int(state.army_count_history[t][perspective_slot])
 
     own_loc = int(state.general_locations[perspective_slot])
     own_general_mask = np.zeros((H, W), dtype=bool)
@@ -609,12 +654,12 @@ def _cat_self_broadcast(
     # of the unpadded board; padding stays zero.
     self_army_count = np.full(
         (H, W),
-        state.army_count_history[t, perspective_slot] / _ARMY_DIVISOR,
+        state.army_count_history[t][perspective_slot] / _ARMY_DIVISOR,
         dtype=np.float32,
     )
     self_land_count = np.full(
         (H, W),
-        state.land_count_history[t, perspective_slot] / _LAND_DIVISOR,
+        state.land_count_history[t][perspective_slot] / _LAND_DIVISOR,
         dtype=np.float32,
     )
     timestep = np.full((H, W), t / _TIMESTEP_DIVISOR, dtype=np.float32)
@@ -626,11 +671,11 @@ def _cat_opp_broadcast(
 ) -> list[np.ndarray]:
     # Cat 7: Per-opponent broadcast scalars (14 channels).
     opp_army_count = [
-        np.full((H, W), state.army_count_history[t, opp] / _ARMY_DIVISOR, dtype=np.float32)
+        np.full((H, W), state.army_count_history[t][opp] / _ARMY_DIVISOR, dtype=np.float32)
         for opp in opp_slots
     ]
     opp_land_count = [
-        np.full((H, W), state.land_count_history[t, opp] / _LAND_DIVISOR, dtype=np.float32)
+        np.full((H, W), state.land_count_history[t][opp] / _LAND_DIVISOR, dtype=np.float32)
         for opp in opp_slots
     ]
     return [*opp_army_count, *opp_land_count]
@@ -648,7 +693,7 @@ def _cat_scoreboard(
     opp_land_delta = [
         np.full(
             (H, W),
-            (state.land_count_history[t, opp] - state.land_count_history[t_prev, opp])
+            (state.land_count_history[t][opp] - state.land_count_history[t_prev][opp])
                 / _LAND_DELTA_DIVISOR,
             dtype=np.float32,
         )

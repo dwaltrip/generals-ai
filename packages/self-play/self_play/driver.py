@@ -33,7 +33,6 @@ def play_game(
     static: Any,
     device: torch.device,
     max_turns: int = 2000,
-    max_turns_hint: int = 1000,
     force_move: bool = False,
     sample: bool = False,
     temperature: float = 1.0,
@@ -56,10 +55,14 @@ def play_game(
         )
 
     agents = [
-        ModelAgent(model, perspective_slot=p, device=device,
-                   max_turns_hint=max_turns_hint,
-                   force_move=force_move, sample=sample,
-                   temperature=temperature)
+        ModelAgent(
+            model,
+            perspective_slot=p,
+            device=device,
+            force_move=force_move,
+            sample=sample,
+            temperature=temperature,
+        )
         for p in (0, 1)
     ]
     for ag in agents:

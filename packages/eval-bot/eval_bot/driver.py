@@ -18,7 +18,6 @@ def play_game(
     static: Any,
     cfg: BotConfig | None = None,
     max_ticks: int = 2000,
-    max_ticks_hint: int = 2000,
     progress_interval: int = 50,
 ) -> tuple[sim_core.State, list[EvalBot]]:
     """Play one game with EvalBots on every slot. Returns the final state
@@ -29,7 +28,7 @@ def play_game(
 
     bot_cfg = cfg or BotConfig()
     bots = [
-        EvalBot(perspective_slot=p, cfg=bot_cfg, max_ticks_hint=max_ticks_hint)
+        EvalBot(perspective_slot=p, cfg=bot_cfg)
         for p in range(num_players)
     ]
     for bot in bots:

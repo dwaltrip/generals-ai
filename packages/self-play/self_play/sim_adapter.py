@@ -7,7 +7,7 @@ from __future__ import annotations
 import numpy as np
 
 
-def _capture_events_to_array(events) -> np.ndarray:
+def capture_events_to_array(events) -> np.ndarray:
     """Pack capture events into the `[N, 3] int32` shape (timestep, captor,
     captured) that step_memory's filter `events[events[:, 0] == t]` expects.
 

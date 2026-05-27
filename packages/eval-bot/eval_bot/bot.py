@@ -52,11 +52,10 @@ class EvalBot:
         self,
         perspective_slot: int,
         cfg: BotConfig,
-        max_ticks_hint: int = 2000,
     ):
         self.perspective_slot = perspective_slot
         self.cfg = cfg
-        self.world = WorldModel(perspective_slot, self.cfg, max_ticks_hint)
+        self.world = WorldModel(perspective_slot, self.cfg)
         self._active_plan: Plan | None = None
         self._idle_ticks: int = 0
 

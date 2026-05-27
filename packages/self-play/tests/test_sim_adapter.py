@@ -31,22 +31,16 @@ def state_static_pair():
     return state, static
 
 
-def _build_sim_dict(state, static, T=1000):
-    H, W = static.map_height, static.map_width
-    HW = H * W
-    ownership = np.full((T, HW), -1, dtype=np.int8)
-    armies = np.zeros((T, HW), dtype=np.int16)
-    ownership[0] = state.snapshots_ownership[0]
-    armies[0] = state.snapshots_armies[0]
+def _build_sim_dict(state, static):
     return {
-        "ownership": ownership,
-        "armies": armies,
+        "ownership": [np.asarray(state.snapshots_ownership[0], dtype=np.int8)],
+        "armies": [np.asarray(state.snapshots_armies[0], dtype=np.int16)],
         "mountains": np.asarray(static.mountains, dtype=np.int32),
         "initial_cities": np.asarray(static.initial_cities, dtype=np.int32),
         "initial_generals": np.asarray(static.initial_generals, dtype=np.int32),
         "cities": np.asarray(state.cities, dtype=np.int32),
         "cities_present_at": np.asarray(state.cities_present_at, dtype=np.int32),
-        "capture_events": sim_adapter._capture_events_to_array(state.capture_events),
+        "capture_events": sim_adapter.capture_events_to_array(state.capture_events),
     }
 
 
