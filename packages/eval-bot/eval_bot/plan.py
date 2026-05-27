@@ -52,6 +52,11 @@ class ExplorePlan(Plan):
 
 
 @dataclass
+class NaiveExplorePlan(Plan):
+    pass
+
+
+@dataclass
 class GatherResult:
     """Raw output of gather_path — caller wraps in the appropriate Plan variant."""
     moves: list[tuple[int, int, int]]

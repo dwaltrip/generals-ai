@@ -14,9 +14,9 @@ import sim_core
 from eval_bot.attack import should_clear_attack, try_attack
 from eval_bot.bot_config import BotConfig
 from eval_bot.defend import should_clear_defend, try_defend
-from eval_bot.expand import MOVE_EXPAND, MOVE_EXPLORE, pick_expand_or_explore
+from eval_bot.expand import MOVE_EXPAND, MOVE_EXPLORE, pick_expand_or_explore, try_naive_explore
 from eval_bot.killshot import try_killshot
-from eval_bot.plan import AttackPlan, DefendPlan, GateResult, KillshotPlan, Plan, SingleMove
+from eval_bot.plan import AttackPlan, DefendPlan, GateResult, KillshotPlan, NaiveExplorePlan, Plan, SingleMove
 from eval_bot.world_model import PlayerView, WorldModel
 
 
@@ -58,6 +58,7 @@ class EvalBot:
         self.cfg = cfg
         self.world = WorldModel(perspective_slot, self.cfg, max_ticks_hint)
         self._active_plan: Plan | None = None
+        self._idle_ticks: int = 0
 
         self.n_passed = 0
         self.n_moved = 0
@@ -68,6 +69,7 @@ class EvalBot:
     def init_for_game(self, state: sim_core.State, static: Any) -> None:
         self.world.init_for_game(state, static)
         self._active_plan = None
+        self._idle_ticks = 0
 
         self.n_passed = 0
         self.n_moved = 0
@@ -82,14 +84,18 @@ class EvalBot:
         """
         move = self._tick_active_plan(view)
         if move is not None:
+            self._idle_ticks = 0
             self.n_moved += 1
             return move
 
         result = self._pick_new_plan(view)
 
         if result is None:
+            self._idle_ticks += 1
             self.n_no_move += 1
             return (-1, -1, -1)
+
+        self._idle_ticks = 0
 
         if isinstance(result, SingleMove):
             self.n_moved += 1
@@ -180,5 +186,11 @@ class EvalBot:
         result = pick_expand_or_explore(view, self.cfg)
         if result is not None:
             return result
+
+        # last resort: naive explore when idle too long
+        if self._idle_ticks >= self.cfg.NAIVE_EXPLORE_IDLE_TICKS:
+            naive = try_naive_explore(view, self.cfg)
+            if naive is not None:
+                return naive
 
         return None

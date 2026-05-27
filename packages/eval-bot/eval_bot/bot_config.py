@@ -40,13 +40,20 @@ class BotConfig:
     TARGET_SCORE_W_GROWING: float = 0
     TARGET_SCORE_W_CONFLICT: float = 0
 
+    # -- naive explore fallback --
+    # TODO: improve so this doesn't fire beyond early game
+    NAIVE_EXPLORE_IDLE_TICKS: int = 6
+    NAIVE_EXPLORE_MIN_EMPTY: int = 3
+    NAIVE_EXPLORE_MIN_ARMY: int = 5
+    NAIVE_EXPLORE_FOG_DEPTH: int = 4
+
     # -- conflict detection --
     CONFLICT_WINDOW: int = 20
     CONFLICT_THRESHOLD: int = 3
     CONFLICT_MATCH_TOL: int = 5
 
     # -- expand / explore --
-    EXPAND_EXPLORE_THRESHOLD: float = 0.4
-    EXPLORE_FOG_DEPTH: int = 3
+    EXPAND_EXPLORE_THRESHOLD: float = 0.5
+    EXPLORE_FOG_DEPTH: int = 4
     EXPLORE_MAX_PLAN_TICKS: int = 15
     EXPLORE_MIN_ARMY: int = 5

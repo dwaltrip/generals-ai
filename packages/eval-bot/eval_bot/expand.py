@@ -11,10 +11,10 @@ from __future__ import annotations
 
 import numpy as np
 
-from eval_bot.bfs import bfs_distances, bfs_distances_multi
+from eval_bot.bfs import bfs_distances, bfs_distances_multi, bfs_path
 from eval_bot.bot_config import BotConfig
 from eval_bot.gather import gather_path
-from eval_bot.plan import ExplorePlan, GateResult, SingleMove
+from eval_bot.plan import ExplorePlan, GateResult, NaiveExplorePlan, SingleMove
 from eval_bot.world_model import PlayerView
 
 NEUTRAL = -1
@@ -211,3 +211,79 @@ def pick_expand_or_explore(view: PlayerView, cfg: BotConfig) -> GateResult:
             return _to_single(move, MOVE_EXPAND)
 
     return None
+
+
+def try_naive_explore(view: PlayerView, cfg: BotConfig) -> NaiveExplorePlan | None:
+    """Last-resort explore: grab a nearby stack and push it toward fog.
+
+    TODO: gate this to early game only — currently fires whenever the bot
+    is idle, which may not be desirable in mid/late game.
+    """
+    own = view.own
+    arm = view.arm
+    my_slot = view.my_slot
+    H, W = view.H, view.W
+
+    own_flat = own.reshape(-1)
+    arm_flat = arm.reshape(-1)
+
+    # need visible empty tiles to push toward
+    empty_mask = (own_flat == NEUTRAL) & (arm_flat == 0)
+    empty_tiles = np.where(empty_mask)[0]
+    if len(empty_tiles) < cfg.NAIVE_EXPLORE_MIN_EMPTY:
+        return None
+
+    # source: owned tile with enough army, closest to any empty tile
+    dist_from_empty = bfs_distances_multi(empty_tiles.tolist(), view.passable, H, W)
+    best_source = -1
+    best_dist = H * W + 1
+    for tile in range(H * W):
+        if own_flat[tile] != my_slot:
+            continue
+        if arm_flat[tile] < cfg.NAIVE_EXPLORE_MIN_ARMY:
+            continue
+        d = dist_from_empty[tile]
+        if 0 <= d < best_dist:
+            best_dist = d
+            best_source = tile
+    if best_source == -1:
+        return None
+
+    # target: fogged passable tile at depth from frontier
+    frontier = _unoccupied_frontier(own, my_slot, H, W)
+    frontier_tiles = np.where(frontier.reshape(-1))[0]
+    if len(frontier_tiles) == 0:
+        return None
+
+    dist_from_frontier = bfs_distances_multi(frontier_tiles.tolist(), view.passable, H, W)
+    vis_flat = view.vis.reshape(-1)
+
+    candidates_by_depth: dict[int, list[int]] = {}
+    for cell in range(H * W):
+        d = int(dist_from_frontier[cell])
+        if d <= 0 or d > cfg.NAIVE_EXPLORE_FOG_DEPTH:
+            continue
+        if vis_flat[cell]:
+            continue
+        if not view.passable[cell]:
+            continue
+        candidates_by_depth.setdefault(d, []).append(cell)
+
+    if not candidates_by_depth:
+        return None
+
+    best_depth = max(candidates_by_depth)
+    targets = candidates_by_depth[best_depth]
+    target = int(np.random.choice(targets))
+
+    path = bfs_path(best_source, target, view.passable, H, W)
+    if not path or len(path) < 2:
+        return None
+
+    gen_flat = view.gen_flat
+    moves = []
+    for i in range(len(path) - 1):
+        is50 = 1 if (i == 0 and path[0] == gen_flat and arm_flat[gen_flat] >= 10) else 0
+        moves.append((path[i], path[i + 1], is50))
+
+    return NaiveExplorePlan(moves=moves)
