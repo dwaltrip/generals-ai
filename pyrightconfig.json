@@ -6,6 +6,7 @@
     "tools",
     "training",
     "packages/utils",
+    "packages/game-runner",
     "packages/self-play",
     "packages/eval-bot",
 ],

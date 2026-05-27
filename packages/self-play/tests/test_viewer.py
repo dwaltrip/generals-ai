@@ -11,7 +11,7 @@ import pytest
 import sim_core
 
 from replay_collector.config import DB_PATH
-from self_play import seed_map, viewer
+from game_runner import seed_map, viewer
 
 
 @pytest.fixture(scope="module")

@@ -16,7 +16,8 @@ import pytest
 import torch
 
 from replay_collector.config import DB_PATH
-from self_play import agent, driver, seed_map, viewer
+from game_runner import seed_map, viewer
+from self_play import agent, driver
 
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]

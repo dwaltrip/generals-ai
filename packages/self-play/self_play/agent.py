@@ -33,7 +33,7 @@ from bc.constants import H_PADDED, W_PADDED
 from bc.loss import flatten_policy_logits
 from bc.model import BCModel
 
-from self_play import sim_adapter
+from game_runner import sim_adapter
 
 
 P = 8  # fixed slot count the model + obs encoder were trained on

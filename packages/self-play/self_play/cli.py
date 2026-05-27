@@ -18,7 +18,8 @@ from pathlib import Path
 
 import torch
 
-from self_play import agent, driver, seed_map, viewer
+from game_runner import seed_map, viewer
+from self_play import agent, driver
 
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]

@@ -4,6 +4,7 @@ version = "0.0.1"
 description = "Hand-coded greedy bot for evaluating NN training progress"
 requires-python = ">=3.14"
 dependencies = [
+    "game-runner",
     "numpy>=2.0",
     "sim-core",
     "self-play",
@@ -20,3 +21,9 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["eval_bot"]
+
+[tool.uv.sources]
+game-runner = { workspace = true }
+self-play = { workspace = true }
+sim-core = { workspace = true }
+training = { workspace = true }

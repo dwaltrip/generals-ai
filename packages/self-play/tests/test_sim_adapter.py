@@ -16,7 +16,7 @@ import sim_core
 from bc import mask
 from bc.constants import H_PADDED, W_PADDED
 from replay_collector.config import DB_PATH
-from self_play import seed_map, sim_adapter
+from game_runner import seed_map, sim_adapter
 
 
 @pytest.fixture(scope="module")

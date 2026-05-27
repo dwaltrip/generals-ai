@@ -16,8 +16,8 @@ import datetime as dt
 import random
 from pathlib import Path
 
-from self_play.seed_map import list_two_player_replay_ids, load_static_from_db
-from self_play.viewer import build_html_from_state
+from game_runner.seed_map import list_two_player_replay_ids, load_static_from_db
+from game_runner.viewer import build_html_from_state
 
 from eval_bot.driver import play_game
 

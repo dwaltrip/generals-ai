@@ -7,6 +7,7 @@ dependencies = [
     "modal>=1.4.3",
     "cloud-train-poc",
     "eval-bot",
+    "game-runner",
     "replay-collector",
     "replay-parser",
     "self-play",
@@ -28,6 +29,7 @@ package = false
 members = [
     "cloud-poc",
     "packages/eval-bot",
+    "packages/game-runner",
     "replay-collector",
     "replay-parser",
     "packages/self-play",
@@ -39,6 +41,7 @@ members = [
 [tool.uv.sources]
 cloud-train-poc = { workspace = true }
 eval-bot = { workspace = true }
+game-runner = { workspace = true }
 replay-collector = { workspace = true }
 replay-parser = { workspace = true }
 self-play = { workspace = true }
@@ -59,6 +62,7 @@ addopts = "--import-mode=importlib"
 pythonpath = ["replay-parser/tests"]
 testpaths = [
     "packages/eval-bot/tests",
+    "packages/game-runner/tests",
     "replay-collector/tests",
     "replay-parser/tests",
     "packages/self-play/tests",

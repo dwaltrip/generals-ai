@@ -20,7 +20,7 @@ from bc import obs as bc_obs, visibility
 from bc.obs import MemoryState
 
 from self_play.agent import pad_initial_generals
-from self_play.sim_adapter import capture_events_to_array
+from game_runner.sim_adapter import capture_events_to_array
 
 from eval_bot.bfs import bfs_distances
 from eval_bot.bot_config import BotConfig

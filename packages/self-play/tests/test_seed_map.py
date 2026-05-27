@@ -9,7 +9,7 @@ import pytest
 import sim_core
 
 from replay_collector.config import DB_PATH
-from self_play import seed_map
+from game_runner import seed_map
 
 
 @pytest.fixture(scope="module")

@@ -18,7 +18,8 @@ import torch
 import sim_core
 
 from replay_collector.config import DB_PATH
-from self_play import agent, seed_map
+from game_runner import seed_map
+from self_play import agent
 
 
 # Repo-rooted absolute path so the test works from any CWD.
