@@ -108,14 +108,14 @@ def _build_game_meta(
     replay_id: str,
     policy_specs: list[str],
     max_turns: int,
-    swapped: bool = False,
+    slot_map: list[int],
 ) -> dict:
     return {
         "game_index": game_idx,
         "replay_id": replay_id,
         "policy_specs": policy_specs,
         "max_turns": max_turns,
-        "swapped": swapped,
+        "slot_map": slot_map,
     }
 
 
@@ -124,12 +124,12 @@ def _build_results_row(
     replay_id: str,
     result: GameResult,
     metrics: dict,
-    swapped: bool = False,
+    slot_map: list[int],
 ) -> dict:
     return {
         "game_index": game_idx,
         "replay_id": replay_id,
-        "swapped": swapped,
+        "slot_map": slot_map,
         "winner": result.winner,
         "game_length": result.game_length,
         "player_stats": [
@@ -145,13 +145,31 @@ def _build_results_row(
     }
 
 
+def _make_slot_map(num_players: int, swapped: bool) -> list[int]:
+    """slot_map[slot] = original policy index for that slot."""
+    identity = list(range(num_players))
+    return list(reversed(identity)) if swapped else identity
+
+
+def _names_for_slots(policy_names: list[str], slot_map: list[int]) -> list[str]:
+    """Policy names in slot order for a given game."""
+    return [policy_names[slot_map[s]] for s in range(len(slot_map))]
+
+
+def _winning_policy(winner_slot: int | None, slot_map: list[int]) -> int | None:
+    """Map a slot-index winner back to the original policy index."""
+    if winner_slot is None:
+        return None
+    return slot_map[winner_slot]
+
+
 def run(args: argparse.Namespace) -> None:
     device = _resolve_device(args.device)
     policy_specs: list[str] = args.policy
     num_players = len(policy_specs)
+    policy_names = build_policy_names(policy_specs)
 
     print(f"device: {device}")
-    policy_names = build_policy_names(policy_specs)
     print(f"policies ({num_players} players):")
     for i, name in enumerate(policy_names):
         print(f"  p{i}: {name}")
@@ -207,7 +225,9 @@ def run(args: argparse.Namespace) -> None:
     print()
 
     results_path = out_dir / "results.jsonl"
-    results: list[GameResult] = []
+    win_counts = [0] * num_players
+    draw_count = 0
+    total_length = 0
     t0 = time.perf_counter()
     game_idx = 0
 
@@ -220,15 +240,12 @@ def run(args: argparse.Namespace) -> None:
             for swapped in swap_rounds:
                 game_idx += 1
                 label = f"game_{game_idx:03d}"
+                slot_map = _make_slot_map(num_players, swapped)
 
-                # Build policies — swap slot assignment if swapped
-                if swapped:
-                    specs_this_game = list(reversed(policy_specs))
-                else:
-                    specs_this_game = policy_specs
+                # Build policies in slot order
                 policies = [
-                    parse_policy_spec(spec, slot=i, device=device)
-                    for i, spec in enumerate(specs_this_game)
+                    parse_policy_spec(policy_specs[slot_map[s]], slot=s, device=device)
+                    for s in range(num_players)
                 ]
 
                 # Run with metrics collection
@@ -241,35 +258,42 @@ def run(args: argparse.Namespace) -> None:
                     max_turns=args.max_turns,
                     on_tick=collector.on_tick,
                 )
-                results.append(result)
                 metrics = collector.finalize(result, policies)
+                total_length += result.game_length
+
+                # Track wins by original policy index
+                winner_policy = _winning_policy(result.winner, slot_map)
+                if winner_policy is not None:
+                    win_counts[winner_policy] += 1
+                else:
+                    draw_count += 1
 
                 # Save game files
                 assert result.state is not None
                 write_eval_game(result.state, static, games_dir / f"{label}.npz")
                 meta = _build_game_meta(
-                    game_idx, replay_id, policy_specs, args.max_turns, swapped,
+                    game_idx, replay_id, policy_specs, args.max_turns, slot_map,
                 )
                 (games_dir / f"{label}.meta.json").write_text(json.dumps(meta, indent=2))
                 (games_dir / f"{label}.metrics.json").write_text(json.dumps(metrics, indent=2))
 
                 # Append to results JSONL
                 row = _build_results_row(
-                    game_idx, replay_id, result, swapped=swapped, metrics=metrics,
+                    game_idx, replay_id, result, slot_map=slot_map, metrics=metrics,
                 )
                 with open(results_path, "a") as f:
                     f.write(json.dumps(row) + "\n")
 
                 # Progress line
-                names_this_game = list(reversed(policy_names)) if swapped else policy_names
-                if result.winner is not None:
-                    winner_str = names_this_game[result.winner]
+                slot_names = _names_for_slots(policy_names, slot_map)
+                if winner_policy is not None:
+                    winner_str = policy_names[winner_policy]
                 else:
                     winner_str = "draw"
                 swap_tag = " [swapped]" if swapped else ""
                 lands = " ".join(
-                    f"{names_this_game[i]}={ps.land:3d}"
-                    for i, ps in enumerate(result.player_stats)
+                    f"{slot_names[s]}={ps.land:3d}"
+                    for s, ps in enumerate(result.player_stats)
                 )
                 print(
                     f"  {label}: {winner_str:12s}  len={result.game_length:4d}"
@@ -282,14 +306,12 @@ def run(args: argparse.Namespace) -> None:
     print()
     print(f"completed {game_idx} games in {elapsed:.1f}s")
     for p in range(num_players):
-        wins = sum(1 for r in results if r.winner == p)
-        print(f"  {policy_names[p]:20s}: {wins:3d} wins ({wins/game_idx:.0%})")
-    draws = sum(1 for r in results if r.winner is None)
-    if draws:
-        print(f"  {'draws':20s}: {draws:3d}     ({draws/game_idx:.0%})")
+        print(f"  {policy_names[p]:20s}: "
+              f"{win_counts[p]:3d} wins ({win_counts[p]/game_idx:.0%})")
+    if draw_count:
+        print(f"  {'draws':20s}: {draw_count:3d}     ({draw_count/game_idx:.0%})")
 
-    avg_len = sum(r.game_length for r in results) / game_idx
-    print(f"  avg game length: {avg_len:.0f} ticks")
+    print(f"  avg game length: {total_length / game_idx:.0f} ticks")
     print(f"\nresults: {results_path}")
     print(f"replays: {games_dir}")
 

@@ -50,8 +50,9 @@ def _load_usernames(npz_path: Path, num_players: int) -> list[str]:
         return [f"Player {i+1}" for i in range(num_players)]
 
     names = build_policy_names(specs)
-    if meta.get("swapped", False):
-        names = list(reversed(names))
+    slot_map = meta.get("slot_map")
+    if slot_map:
+        names = [names[slot_map[s]] for s in range(len(slot_map))]
     while len(names) < num_players:
         names.append(f"Player {len(names)+1}")
     return names[:num_players]
