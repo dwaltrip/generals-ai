@@ -7,8 +7,8 @@ prototype we pluck a static from an existing corpus replay and feed it
 to `sim_core.new_state(...)`.
 
 `load_static_from_db(replay_id)` is the one we'll actually call from the
-self-play loop. `list_two_player_replay_ids(...)` is a convenience for
-picking a candidate without hand-writing SQL.
+game loop. `list_replay_ids_by_player_count(...)` is a convenience for
+picking candidates without hand-writing SQL.
 
 Uses `decode_wire` directly rather than `parse_replay` — the latter
 re-runs `sim_core.simulate()` which we don't need here (we only want
@@ -43,21 +43,31 @@ def load_static_from_db(replay_id: str) -> Any:
     return decode_wire(wire).static
 
 
-def list_two_player_replay_ids(limit: int = 20) -> list[str]:
-    """Candidate 2-player replay IDs, longest-game first.
+def list_replay_ids_by_player_count(
+    num_players: int, limit: int | None = None,
+) -> list[str]:
+    """Candidate replay IDs with `num_players` players.
 
-    Longer games are generally more interesting starting positions to
-    seed self-play from (more developed maps, real generals.io 1v1
-    dynamics rather than instant-surrender lobbies).
+    Returned in SQLite's implementation-defined row order (insertion /
+    rowid). We use these replays only as a source of static maps
+    (terrain, mountains, initial cities + generals); player activity
+    from the original game is irrelevant, so we don't filter or order
+    by game length — that would bias the map sample.
+
+    `limit=None` (default) returns every matching row in the corpus.
+    Callers that want a smoke-test sample pass a small explicit limit.
     """
+    sql = "SELECT id FROM replays WHERE player_count = ? AND wire_data IS NOT NULL"
+    params: tuple = (num_players,)
+    if limit is not None:
+        sql += " LIMIT ?"
+        params = (num_players, limit)
     with sqlite3.connect(DB_PATH) as conn:
-        rows = conn.execute(
-            """
-            SELECT id FROM replays
-            WHERE player_count = 2 AND wire_data IS NOT NULL
-            ORDER BY turns DESC
-            LIMIT ?
-            """,
-            (limit,),
-        ).fetchall()
+        rows = conn.execute(sql, params).fetchall()
     return [r[0] for r in rows]
+
+
+def list_two_player_replay_ids(limit: int | None = None) -> list[str]:
+    """Convenience wrapper for 2-player replays. See
+    `list_replay_ids_by_player_count` for the general version."""
+    return list_replay_ids_by_player_count(num_players=2, limit=limit)

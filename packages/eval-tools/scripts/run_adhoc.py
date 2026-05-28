@@ -50,7 +50,7 @@ from eval_tools.policy_spec import build_policy_names, parse_policy_spec
 from game_runner.policy import GameResult
 from game_runner.runner import run_game
 from game_runner.save import write_eval_game
-from game_runner.seed_map import list_two_player_replay_ids, load_static_from_db
+from game_runner.seed_map import list_replay_ids_by_player_count, load_static_from_db
 from self_play.agent import default_device
 
 
@@ -68,9 +68,15 @@ def _resolve_maps(
 
     if mode == "random":
         count = int(parts[1]) if len(parts) > 1 else 10
-        candidates = list_two_player_replay_ids(limit=200)
+        # NOTE: pulls every matching map from the corpus (no cap). For 8p
+        # FFA that's ~180k ids; the list lives in memory only during this
+        # function call, and seeded rng.choice over the full list gives
+        # unbiased map sampling.
+        candidates = list_replay_ids_by_player_count(num_players)
         if not candidates:
-            raise RuntimeError("no replay maps found in corpus")
+            raise RuntimeError(
+                f"no {num_players}-player replay maps found in corpus"
+            )
         rng = random.Random(map_seed)
         return [rng.choice(candidates) for _ in range(count)]
 
