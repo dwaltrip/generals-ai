@@ -21,7 +21,7 @@ Files produced:
   - `args.json`         — full config as JSON, for provenance.
   - `batches.jsonl`     — one record per batch.
   - `epochs.jsonl`      — one record per epoch (train + val summary, ckpt name).
-  - `checkpoints/epoch_NNN.pt` — model state_dict at end of each epoch.
+  - `checkpoints/epoch_NNN.pt` — combined dict (model + optim + scaler + epoch) per epoch.
 """
 
 from __future__ import annotations
@@ -32,6 +32,7 @@ from pathlib import Path
 import torch
 from torch.utils.data import DataLoader
 
+from bc.checkpoint import ckpt_name
 from bc.constants import H_PADDED, OBS_CHANNELS, W_PADDED
 from bc.dataset import IterableDataset, assert_safe_loader
 from bc.eval import run_val
@@ -40,6 +41,7 @@ from bc.model import BCModel
 from bc.run_dir import RunArtifacts
 from bc.run_logger import RunLogger
 from bc.splits import load_manifest, samples_for_split
+from bc.state import TrainingState
 from bc.train_config import TrainConfig
 from shared.device import (
     dataloader_kwargs,
@@ -57,28 +59,6 @@ def _fmt_metric(x: float | None, prec: int = 4) -> str:
     """Format a metric for console output, with `n/a` fallback for `None`.
     `run_val` returns `None` for accuracies whose denominators are 0."""
     return f"{x:.{prec}f}" if x is not None else "n/a"
-
-
-def _ckpt_name(epoch: int) -> str:
-    """Deterministic checkpoint filename for an epoch. Split from
-    `_save_checkpoint` so callers can refer to the planned name in logs
-    or `epochs.jsonl` records *before* the save actually executes —
-    used to preserve epoch metrics if the save itself raises.
-    """
-    return f"epoch_{epoch:03d}.pt"
-
-
-def _save_checkpoint(model: torch.nn.Module, ckpt_dir: Path, epoch: int) -> str:
-    """Save the model's `state_dict` to `<ckpt_dir>/epoch_NNN.pt`. Returns
-    the filename (sans dir) for logging.
-
-    State-dict only — no optim/RNG/epoch payload. Resume-from-checkpoint
-    isn't on the spike's path; reloading for eval or inference needs only
-    the weights. Epoch number lives in the filename + `epochs.jsonl`.
-    """
-    name = _ckpt_name(epoch)
-    torch.save(model.state_dict(), ckpt_dir / name)
-    return name
 
 
 def _measure_model_flops_per_sample(model: BCModel, device: torch.device) -> int:
@@ -375,29 +355,23 @@ def run_loop(
     """
     # --- Model + optimizer ---
     print(f"building model on {device} (value_head={config.value_head_variant})")
-    model = BCModel(value_head_variant=config.value_head_variant).to(device)
-    optim = torch.optim.AdamW(
-        model.parameters(),
-        lr=config.lr,
-        weight_decay=config.weight_decay,
-        betas=(0.9, 0.999),
-    )
-    n_params = sum(p.numel() for p in model.parameters())
+    state = TrainingState.fresh(config, device)
+    n_params = sum(p.numel() for p in state.model.parameters())
     print(f"  params: {n_params:,}")
 
     # Mixed precision resolution. `amp_dtype is None` is the canonical
-    # "AMP off" sentinel — autocast/scaler are wired through both code
-    # paths so the fp32 case is a no-op rather than a separate branch.
+    # "AMP off" sentinel — autocast is wired through both code paths so the
+    # fp32 case is a no-op rather than a separate branch. The matching
+    # GradScaler lives on `state` (built from the same precision decision).
     resolved_precision = resolve_precision(config.precision, device)
     amp_dtype = torch.float16 if resolved_precision == "fp16" else None
-    scaler = torch.amp.GradScaler(device.type, enabled=amp_dtype is not None)
     print(f"  precision: {resolved_precision} (config={config.precision!r})")
 
     # FLOPs/sample + device peak: drives MFU per-epoch. FLOPs are measured
     # once on a synthetic batch; peak comes from a hardcoded device table
     # (`shared.perf`) and is `None` on unknown hardware — in which case
     # MFU is omitted rather than computed against a wrong denominator.
-    flops_per_sample = _measure_model_flops_per_sample(model, device)
+    flops_per_sample = _measure_model_flops_per_sample(state.model, device)
     peak_tflops = peak_tflops_fp32(device)
     print(f"  fwd+bwd FLOPs/sample: {flops_per_sample / 1e9:.2f} GFLOPs")
     if peak_tflops is not None:
@@ -422,8 +396,8 @@ def run_loop(
         for epoch in range(1, config.epochs + 1):
             summary = train_one_epoch(
                 epoch=epoch,
-                model=model,
-                optim=optim,
+                model=state.model,
+                optim=state.optim,
                 dataset=dataset,
                 loader=loader,
                 device=device,
@@ -431,14 +405,14 @@ def run_loop(
                 run_start=run_start,
                 max_batches=config.max_batches,
                 log_every=config.log_every,
-                scaler=scaler,
+                scaler=state.scaler,
                 amp_dtype=amp_dtype,
             )
             if config.skip_val:
                 val_summary = None
             else:
                 val_summary = run_val(
-                    model=model,
+                    model=state.model,
                     val_samples=val_samples,
                     device=device,
                     batch_size=config.batch_size,
@@ -459,17 +433,21 @@ def run_loop(
 
             # Write the epoch row + print the summary BEFORE saving the checkpoint.
             # A checkpoint-save failure shouldn't lose the epoch's computed metrics.
-            ckpt_name = _ckpt_name(epoch)
+            ckpt_file = ckpt_name(epoch)
             artifacts.logger.log_epoch({
                 "epoch": epoch,
                 **summary,
                 "val": val_summary,
-                "ckpt": ckpt_name,
+                "ckpt": ckpt_file,
             })
             print_epoch_summary(epoch, summary, val_summary)
 
-            # Now the actual save. Failure here raises out of the loop
-            # with metrics + summary already persisted above.
-            _save_checkpoint(model, artifacts.ckpt_dir, epoch)
-            print(f"[epoch {epoch}] saved checkpoint: checkpoints/{ckpt_name}")
+            # Commit the epoch: bump `state.epoch` to the just-completed value,
+            # then save. The bump happens only after the epoch's work + metrics
+            # are persisted, so a crash before here leaves `state.epoch` one
+            # behind — exactly what resume expects. Save failure raises out of
+            # the loop with metrics already written above.
+            state.epoch = epoch
+            state.save(artifacts.ckpt_dir)
+            print(f"[epoch {epoch}] saved checkpoint: checkpoints/{ckpt_file}")
             print()

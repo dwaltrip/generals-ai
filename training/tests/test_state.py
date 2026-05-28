@@ -1,0 +1,67 @@
+"""TrainingState.save / from_checkpoint round-trips model + optim + epoch."""
+
+from __future__ import annotations
+
+import torch
+
+from bc.constants import H_PADDED, OBS_CHANNELS, W_PADDED
+from bc.state import TrainingState
+from bc.train_config import TrainConfig
+
+
+def _config(tmp_path):
+    # Paths are unused by fresh()/save()/from_checkpoint() and not existence-
+    # checked at construction, so dummy values are fine.
+    return TrainConfig(
+        manifest=tmp_path / "m.json",
+        intermediate=tmp_path / "i",
+        run_dir=tmp_path / "run",
+        value_head_variant="direct",
+    )
+
+
+def _one_step(state: TrainingState, device: torch.device) -> None:
+    """One synthetic optimizer step so the optim accumulates moment buffers."""
+    obs = torch.zeros(2, OBS_CHANNELS, H_PADDED, W_PADDED, device=device)
+    valid_mask = torch.ones(2, 1, H_PADDED, W_PADDED, dtype=torch.bool, device=device)
+    out = state.model(obs, valid_mask)
+    loss = out["policy_logits"].sum() + out["pass_logit"].sum() + out["value_logits"].sum()
+    state.optim.zero_grad()
+    state.scaler.scale(loss).backward()
+    state.scaler.step(state.optim)
+    state.scaler.update()
+
+
+def test_training_state_round_trip(tmp_path):
+    device = torch.device("cpu")
+    config = _config(tmp_path)
+    ckpt_dir = tmp_path / "checkpoints"
+    ckpt_dir.mkdir()
+
+    src = TrainingState.fresh(config, device)
+    _one_step(src, device)  # non-trivial optim state before saving
+    src.epoch = 3
+    path = src.save(ckpt_dir)
+
+    # On-disk combined format.
+    raw = torch.load(path, weights_only=True)
+    assert set(raw) >= {"model", "optim", "scaler", "epoch"}
+    assert raw["epoch"] == 3
+    assert path.name == "epoch_003.pt"
+
+    restored = TrainingState.from_checkpoint(path, config, device)
+    assert restored.epoch == 3
+
+    # Model weights round-trip exactly.
+    s, r = src.model.state_dict(), restored.model.state_dict()
+    assert s.keys() == r.keys()
+    for k in s:
+        assert torch.equal(s[k], r[k]), f"model param mismatch: {k}"
+
+    # AdamW moment buffers round-trip — the optimizer trajectory is preserved.
+    src_opt = src.optim.state_dict()["state"]
+    res_opt = restored.optim.state_dict()["state"]
+    assert src_opt.keys() == res_opt.keys()
+    for pid in src_opt:
+        for buf in ("exp_avg", "exp_avg_sq"):
+            assert torch.equal(src_opt[pid][buf], res_opt[pid][buf]), f"optim {buf} @ {pid}"
