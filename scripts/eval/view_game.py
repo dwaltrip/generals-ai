@@ -19,6 +19,10 @@ import subprocess
 import sys
 from types import SimpleNamespace
 
+
+# Add scripts/ to path so `eval` package is importable
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
 import numpy as np
 
 from game_runner.viewer import render_viewer_html
@@ -29,6 +33,29 @@ from game_runner.viewer import render_viewer_html
 # These should live in the eval package (or game-runner) once this
 # moves out of scripts/. The current duck-typed approach works but
 # is untyped and fragile — field name typos are silent.
+
+def _load_usernames(npz_path: Path, num_players: int) -> list[str]:
+    """Derive display names from the sibling .meta.json if it exists."""
+    meta_path = npz_path.with_suffix(".meta.json")
+    if not meta_path.exists():
+        return [f"Player {i+1}" for i in range(num_players)]
+
+    import json
+
+    from eval.policy_spec import build_policy_names
+
+    meta = json.loads(meta_path.read_text())
+    specs: list[str] = meta.get("policy_specs", [])
+    if not specs:
+        return [f"Player {i+1}" for i in range(num_players)]
+
+    names = build_policy_names(specs)
+    if meta.get("swapped", False):
+        names = list(reversed(names))
+    while len(names) < num_players:
+        names.append(f"Player {len(names)+1}")
+    return names[:num_players]
+
 
 def _load_game(npz_path: Path) -> tuple[SimpleNamespace, SimpleNamespace]:
     """Load a .npz and return (mock_state, mock_static) objects that
@@ -80,7 +107,7 @@ def _load_game(npz_path: Path) -> tuple[SimpleNamespace, SimpleNamespace]:
     static = SimpleNamespace(
         map_width=map_width,
         map_height=map_height,
-        usernames=[f"Player {i+1}" for i in range(num_players)],
+        usernames=_load_usernames(npz_path, num_players),
         mountains=data["mountains"].tolist(),
         initial_cities=data["initial_cities"].tolist(),
         initial_city_armies=data["initial_city_armies"].tolist(),

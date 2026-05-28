@@ -71,8 +71,8 @@ def _parse_checkpoint_spec(
 
     opts = _parse_kv_opts(":".join(segments[1:])) if len(segments) > 1 else {}
 
-    force_move = opts.pop("force_move", "false").lower() == "true"
-    sample = opts.pop("sample", "false").lower() == "true"
+    force_move = _parse_bool(opts.pop("force_move", "false"), "force_move")
+    sample = _parse_bool(opts.pop("sample", "false"), "sample")
     temperature = float(opts.pop("temperature", "1.0"))
     value_head_variant = opts.pop("value_head_variant", "direct")
 
@@ -122,11 +122,23 @@ def _parse_kv_opts(opts_str: str) -> dict[str, str]:
         return {}
     result = {}
     for pair in opts_str.split(","):
-        if "=" not in pair:
-            raise ValueError(f"malformed option '{pair}', expected key=value")
-        key, value = pair.split("=", maxsplit=1)
-        result[key.strip()] = value.strip()
+        pair = pair.strip()
+        if not pair:
+            continue
+        if "=" in pair:
+            key, value = pair.split("=", maxsplit=1)
+            result[key.strip()] = value.strip()
+        else:
+            result[pair] = "true"
     return result
+
+
+def _parse_bool(value: str, key: str) -> bool:
+    if value.lower() == "true":
+        return True
+    if value.lower() == "false":
+        return False
+    raise ValueError(f"invalid boolean value '{value}' for {key}, expected true/false")
 
 
 def describe_policy(spec: str) -> str:
@@ -134,9 +146,27 @@ def describe_policy(spec: str) -> str:
     parts = spec.split(":", maxsplit=1)
     policy_type = parts[0].lower()
     if policy_type == "checkpoint":
-        segments = (parts[1] if len(parts) > 1 else "").split(":")
-        path = Path(segments[0]).name if segments[0] else "???"
-        return f"checkpoint({path})"
+        return "bc-model"
     elif policy_type == "evalbot":
         return "evalbot"
     return spec
+
+
+def build_policy_names(specs: list[str]) -> list[str]:
+    """Build display names from a list of policy specs, numbering
+    duplicates (e.g. two checkpoints become 'bc-model 1', 'bc-model 2').
+    Unique types get no number."""
+    raw = [describe_policy(s) for s in specs]
+    counts: dict[str, int] = {}
+    for name in raw:
+        counts[name] = counts.get(name, 0) + 1
+
+    seen: dict[str, int] = {}
+    result = []
+    for name in raw:
+        if counts[name] == 1:
+            result.append(name)
+        else:
+            seen[name] = seen.get(name, 0) + 1
+            result.append(f"{name} {seen[name]}")
+    return result

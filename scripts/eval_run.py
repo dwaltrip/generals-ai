@@ -57,7 +57,7 @@ from self_play.agent import default_device
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from eval.metrics_collector import MetricsCollector
-from eval.policy_spec import describe_policy, parse_policy_spec
+from eval.policy_spec import build_policy_names, parse_policy_spec
 
 
 def _resolve_device(name: str) -> torch.device:
@@ -95,6 +95,7 @@ def _build_run_config(args: argparse.Namespace) -> dict:
         "maps_arg": args.maps,
         "map_seed": args.map_seed,
         "games_per_map": args.games_per_map,
+        "swap_slots": args.swap_slots,
         "max_turns": args.max_turns,
         "device": args.device,
         "sample_interval": args.sample_interval,
@@ -107,12 +108,14 @@ def _build_game_meta(
     replay_id: str,
     policy_specs: list[str],
     max_turns: int,
+    swapped: bool = False,
 ) -> dict:
     return {
         "game_index": game_idx,
         "replay_id": replay_id,
         "policy_specs": policy_specs,
         "max_turns": max_turns,
+        "swapped": swapped,
     }
 
 
@@ -121,10 +124,12 @@ def _build_results_row(
     replay_id: str,
     result: GameResult,
     metrics: dict,
+    swapped: bool = False,
 ) -> dict:
     return {
         "game_index": game_idx,
         "replay_id": replay_id,
+        "swapped": swapped,
         "winner": result.winner,
         "game_length": result.game_length,
         "player_stats": [
@@ -146,14 +151,35 @@ def run(args: argparse.Namespace) -> None:
     num_players = len(policy_specs)
 
     print(f"device: {device}")
+    policy_names = build_policy_names(policy_specs)
     print(f"policies ({num_players} players):")
-    for i, spec in enumerate(policy_specs):
-        print(f"  p{i}: {describe_policy(spec)}")
+    for i, name in enumerate(policy_names):
+        print(f"  p{i}: {name}")
+
+    # Validate policy specs early (before loading maps or creating output dirs)
+    try:
+        for i, spec in enumerate(policy_specs):
+            parse_policy_spec(spec, slot=i, device=device)
+    except (ValueError, FileNotFoundError) as e:
+        print(f"\nerror: invalid --policy spec: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    # Validate --swap-slots
+    swap_slots = args.swap_slots
+    if swap_slots and num_players != 2:
+        print(
+            f"\nerror: --swap-slots only supported for 2-player games, "
+            f"got {num_players} policies",
+            file=sys.stderr,
+        )
+        sys.exit(1)
 
     # Resolve maps
     replay_ids = _resolve_maps(args.maps, args.map_seed, num_players)
-    total_games = len(replay_ids) * args.games_per_map
-    print(f"maps: {len(replay_ids)} unique, {args.games_per_map} games each = {total_games} total")
+    rounds_per_map = args.games_per_map * (2 if swap_slots else 1)
+    total_games = len(replay_ids) * rounds_per_map
+    print(f"maps: {len(replay_ids)} unique, {args.games_per_map} games each"
+          f"{' (x2 with slot swap)' if swap_slots else ''} = {total_games} total")
     print(f"max_turns: {args.max_turns}")
 
     # Validate player count against first map
@@ -185,50 +211,70 @@ def run(args: argparse.Namespace) -> None:
     t0 = time.perf_counter()
     game_idx = 0
 
+    swap_rounds = [False, True] if swap_slots else [False]
+
     for replay_id in replay_ids:
         static = load_static_from_db(replay_id)
 
         for _rep in range(args.games_per_map):
-            game_idx += 1
-            label = f"game_{game_idx:03d}"
+            for swapped in swap_rounds:
+                game_idx += 1
+                label = f"game_{game_idx:03d}"
 
-            # Build fresh policies for each game
-            policies = [
-                parse_policy_spec(spec, slot=i, device=device)
-                for i, spec in enumerate(policy_specs)
-            ]
+                # Build policies — swap slot assignment if swapped
+                if swapped:
+                    specs_this_game = list(reversed(policy_specs))
+                else:
+                    specs_this_game = policy_specs
+                policies = [
+                    parse_policy_spec(spec, slot=i, device=device)
+                    for i, spec in enumerate(specs_this_game)
+                ]
 
-            # Run with metrics collection
-            collector = MetricsCollector(
-                num_players=num_players,
-                sample_interval=args.sample_interval,
-            )
-            result = run_game(
-                policies, static,
-                max_turns=args.max_turns,
-                on_tick=collector.on_tick,
-            )
-            results.append(result)
-            metrics = collector.finalize(result, policies)
+                # Run with metrics collection
+                collector = MetricsCollector(
+                    num_players=num_players,
+                    sample_interval=args.sample_interval,
+                )
+                result = run_game(
+                    policies, static,
+                    max_turns=args.max_turns,
+                    on_tick=collector.on_tick,
+                )
+                results.append(result)
+                metrics = collector.finalize(result, policies)
 
-            # Save game files
-            assert result.state is not None
-            write_eval_game(result.state, static, games_dir / f"{label}.npz")
-            meta = _build_game_meta(game_idx, replay_id, policy_specs, args.max_turns)
-            (games_dir / f"{label}.meta.json").write_text(json.dumps(meta, indent=2))
-            (games_dir / f"{label}.metrics.json").write_text(json.dumps(metrics, indent=2))
+                # Save game files
+                assert result.state is not None
+                write_eval_game(result.state, static, games_dir / f"{label}.npz")
+                meta = _build_game_meta(
+                    game_idx, replay_id, policy_specs, args.max_turns, swapped,
+                )
+                (games_dir / f"{label}.meta.json").write_text(json.dumps(meta, indent=2))
+                (games_dir / f"{label}.metrics.json").write_text(json.dumps(metrics, indent=2))
 
-            # Append to results JSONL
-            row = _build_results_row(game_idx, replay_id, result, metrics)
-            with open(results_path, "a") as f:
-                f.write(json.dumps(row) + "\n")
+                # Append to results JSONL
+                row = _build_results_row(
+                    game_idx, replay_id, result, swapped=swapped, metrics=metrics,
+                )
+                with open(results_path, "a") as f:
+                    f.write(json.dumps(row) + "\n")
 
-            # Progress line
-            winner_str = f"p{result.winner}" if result.winner is not None else "draw"
-            lands = " ".join(
-                f"p{i}={ps.land:3d}" for i, ps in enumerate(result.player_stats)
-            )
-            print(f"  {label}: {winner_str:5s}  len={result.game_length:4d}  {lands}")
+                # Progress line
+                names_this_game = list(reversed(policy_names)) if swapped else policy_names
+                if result.winner is not None:
+                    winner_str = names_this_game[result.winner]
+                else:
+                    winner_str = "draw"
+                swap_tag = " [swapped]" if swapped else ""
+                lands = " ".join(
+                    f"{names_this_game[i]}={ps.land:3d}"
+                    for i, ps in enumerate(result.player_stats)
+                )
+                print(
+                    f"  {label}: {winner_str:12s}  len={result.game_length:4d}"
+                    f"  {lands}{swap_tag}"
+                )
 
     elapsed = time.perf_counter() - t0
 
@@ -237,11 +283,10 @@ def run(args: argparse.Namespace) -> None:
     print(f"completed {game_idx} games in {elapsed:.1f}s")
     for p in range(num_players):
         wins = sum(1 for r in results if r.winner == p)
-        print(f"  p{p} ({describe_policy(policy_specs[p]):30s}): "
-              f"{wins:3d} wins ({wins/game_idx:.0%})")
+        print(f"  {policy_names[p]:20s}: {wins:3d} wins ({wins/game_idx:.0%})")
     draws = sum(1 for r in results if r.winner is None)
     if draws:
-        print(f"  {'draws':33s}: {draws:3d}     ({draws/game_idx:.0%})")
+        print(f"  {'draws':20s}: {draws:3d}     ({draws/game_idx:.0%})")
 
     avg_len = sum(r.game_length for r in results) / game_idx
     print(f"  avg game length: {avg_len:.0f} ticks")
@@ -265,6 +310,9 @@ def main() -> int:
                         help="RNG seed for random map selection")
     parser.add_argument("--games-per-map", type=int, default=1,
                         help="Number of games to play per map")
+    parser.add_argument("--swap-slots", action="store_true",
+                        help="Play each game twice with slots reversed (2-player only). "
+                             "Doubles the total game count.")
     parser.add_argument("--max-turns", type=int, default=1000)
     parser.add_argument("--device", type=str, default="auto",
                         choices=["auto", "cpu", "mps", "cuda"])
