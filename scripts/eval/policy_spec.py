@@ -1,0 +1,142 @@
+"""Parse --policy CLI arguments into Policy instances.
+
+Formats:
+    checkpoint:path/to/model.pt
+    checkpoint:path/to/model.pt:force_move=true,sample=true,temperature=0.5
+    evalbot
+    evalbot:config=path/to/config.json
+
+Each --policy arg fills the next player slot.
+"""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+from typing import Any
+
+import torch
+
+from eval_bot.bot_config import BotConfig
+from eval_bot.eval_bot_agent import EvalBotAgent
+from game_runner.policy import Policy
+from self_play.agent import ModelAgent, load_checkpoint
+
+
+# Cache loaded models so the same checkpoint isn't loaded twice when used
+# in multiple slots.
+_model_cache: dict[tuple[str, str], Any] = {}
+
+
+def _get_or_load_model(
+    path: str, device: torch.device, value_head_variant: str,
+) -> Any:
+    key = (path, str(device))
+    if key not in _model_cache:
+        _model_cache[key] = load_checkpoint(path, device, value_head_variant)
+    return _model_cache[key]
+
+
+def parse_policy_spec(
+    spec: str, slot: int, device: torch.device,
+) -> Policy:
+    parts = spec.split(":", maxsplit=1)
+    policy_type = parts[0].lower()
+    opts_str = parts[1] if len(parts) > 1 else ""
+
+    if policy_type == "checkpoint":
+        return _parse_checkpoint_spec(opts_str, slot, device)
+    elif policy_type == "evalbot":
+        return _parse_evalbot_spec(opts_str, slot)
+    else:
+        raise ValueError(
+            f"unknown policy type '{policy_type}' in slot {slot}. "
+            f"expected 'checkpoint' or 'evalbot'"
+        )
+
+
+def _parse_checkpoint_spec(
+    opts_str: str, slot: int, device: torch.device,
+) -> ModelAgent:
+    # First segment is the path, rest are key=value options
+    segments = opts_str.split(":")
+    if not segments or not segments[0]:
+        raise ValueError(
+            f"checkpoint policy in slot {slot} requires a path: "
+            f"'checkpoint:path/to/model.pt[:key=val,...]'"
+        )
+    path = segments[0]
+    if not Path(path).exists():
+        raise FileNotFoundError(f"checkpoint not found: {path}")
+
+    opts = _parse_kv_opts(":".join(segments[1:])) if len(segments) > 1 else {}
+
+    force_move = opts.pop("force_move", "false").lower() == "true"
+    sample = opts.pop("sample", "false").lower() == "true"
+    temperature = float(opts.pop("temperature", "1.0"))
+    value_head_variant = opts.pop("value_head_variant", "direct")
+
+    if opts:
+        raise ValueError(
+            f"unknown checkpoint options in slot {slot}: {list(opts.keys())}"
+        )
+
+    model = _get_or_load_model(path, device, value_head_variant)
+    return ModelAgent(
+        model,
+        perspective_slot=slot,
+        device=device,
+        force_move=force_move,
+        sample=sample,
+        temperature=temperature,
+    )
+
+
+def _parse_evalbot_spec(opts_str: str, slot: int) -> EvalBotAgent:
+    opts = _parse_kv_opts(opts_str) if opts_str else {}
+
+    cfg = BotConfig()
+    config_path = opts.pop("config", None)
+    if config_path is not None:
+        if not Path(config_path).exists():
+            raise FileNotFoundError(f"evalbot config not found: {config_path}")
+        with open(config_path) as f:
+            overrides = json.load(f)
+        for key, value in overrides.items():
+            if not hasattr(cfg, key):
+                raise ValueError(
+                    f"unknown BotConfig field '{key}' in evalbot config for slot {slot}"
+                )
+            setattr(cfg, key, value)
+
+    if opts:
+        raise ValueError(
+            f"unknown evalbot options in slot {slot}: {list(opts.keys())}"
+        )
+
+    return EvalBotAgent(perspective_slot=slot, cfg=cfg)
+
+
+def _parse_kv_opts(opts_str: str) -> dict[str, str]:
+    if not opts_str:
+        return {}
+    result = {}
+    for pair in opts_str.split(","):
+        if "=" not in pair:
+            raise ValueError(f"malformed option '{pair}', expected key=value")
+        key, value = pair.split("=", maxsplit=1)
+        result[key.strip()] = value.strip()
+    return result
+
+
+def describe_policy(spec: str) -> str:
+    """Short human-readable label for a policy spec, for log output."""
+    parts = spec.split(":", maxsplit=1)
+    policy_type = parts[0].lower()
+    if policy_type == "checkpoint":
+        segments = (parts[1] if len(parts) > 1 else "").split(":")
+        path = Path(segments[0]).name if segments[0] else "???"
+        return f"checkpoint({path})"
+    elif policy_type == "evalbot":
+        return "evalbot"
+    return spec
