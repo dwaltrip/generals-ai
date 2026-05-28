@@ -13,7 +13,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from bc.train import bc_run, initialize_run_dir
+from bc.run_dir import initialize_run_dir
+from bc.train import bc_run
 from bc.train_cli import build_arg_parser, config_from_args
 
 

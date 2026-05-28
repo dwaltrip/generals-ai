@@ -11,7 +11,7 @@ second and writes one JSONL record to `<run_dir>/gpu_util.jsonl`:
     ...
 
 `t_sec` is monotonic time since the sidecar started, so a `tail -f` on this
-file alongside `console.log` aligns one-to-one in human time.
+file alongside `run.log` aligns one-to-one in human time.
 
 ## Why a thread, not a subprocess
 

@@ -26,12 +26,8 @@ Files produced:
 
 from __future__ import annotations
 
-import contextlib
-import json
 import time
-from dataclasses import asdict
 from pathlib import Path
-from typing import TextIO
 
 import torch
 from torch.utils.data import DataLoader
@@ -41,8 +37,10 @@ from bc.dataset import IterableDataset, assert_safe_loader
 from bc.eval import run_val
 from bc.loss import LossAccumulator, bc_loss
 from bc.model import BCModel
+from bc.run_dir import RunArtifacts
+from bc.run_logger import RunLogger
 from bc.splits import load_manifest, samples_for_split
-from bc.train_config import TrainConfig, json_default
+from bc.train_config import TrainConfig
 from shared.device import (
     dataloader_kwargs,
     disable_mps_fallback,
@@ -53,12 +51,6 @@ from shared.device import (
 from shared.gpu_sidecar import gpu_util_sidecar
 from shared.perf import compute_mfu, measure_total_flops, peak_tflops_fp32
 from utils.log import tee_stdio
-
-
-def _write_jsonl(fp: TextIO, record: dict) -> None:
-    """Append one record + newline. Files are opened line-buffered, so a
-    `tail -f` sees each record as soon as the newline lands."""
-    fp.write(json.dumps(record) + "\n")
 
 
 def _fmt_metric(x: float | None, prec: int = 4) -> str:
@@ -126,7 +118,7 @@ def train_one_epoch(
     dataset: IterableDataset,
     loader: DataLoader,
     device: torch.device,
-    batches_fp: TextIO,
+    logger: RunLogger,
     run_start: float,
     max_batches: int | None,
     log_every: int,
@@ -136,7 +128,7 @@ def train_one_epoch(
     """Run one epoch of BC training.
 
     Iterates `loader`, performs forward/backward/optim.step per batch,
-    writes per-batch JSONL records to `batches_fp`, and prints a console
+    writes per-batch JSONL records via `logger`, and prints a console
     line every `log_every` batches with a rolling samples/sec rate.
 
     Returns the epoch summary dict: sample-weighted mean losses (via
@@ -194,7 +186,7 @@ def train_one_epoch(
         window_samples += B
         n_batches_seen += 1
 
-        _write_jsonl(batches_fp, {
+        logger.log_batch({
             "epoch": epoch,
             "batch_idx": batch_idx,
             "batch_size": B,
@@ -230,21 +222,38 @@ def train_one_epoch(
     }
 
 
-def initialize_run_dir(config: TrainConfig) -> None:
-    """Create `config.run_dir` and persist run provenance.
+def build_dataloader(
+    config: TrainConfig,
+    train_samples: list[tuple[Path, int]],
+    device: torch.device,
+) -> tuple[IterableDataset, DataLoader]:
+    """Build the train `IterableDataset` + `DataLoader` from a config.
 
-    Mkdirs the run dir with `exist_ok=False` so two runs landing in the
-    same wall-clock second collide explicitly. Writes `args.json` (full
-    `TrainConfig` as JSON) and announces the path. Call before `bc_run`.
-
-    Split out from `bc_run` so cloud callers can drop sibling provenance
-    files (e.g. `args_cloud.json`) into the run dir *before* training
-    starts, instead of relying on a try/finally cleanup hook.
+    Returns both: the typed dataset (so the loop can call `set_epoch`,
+    which `loader.dataset` doesn't expose) and the loader. Prints the
+    resolved dataloader settings — `pin_memory`/`prefetch_factor` are
+    device-dependent, so the log shows resolved value vs. config request.
     """
-    config.run_dir.mkdir(parents=True, exist_ok=False)
-    print(f"run dir: {config.run_dir}")
-    with (config.run_dir / "args.json").open("w") as fp:
-        json.dump(asdict(config), fp, default=json_default, indent=2)
+    ds = IterableDataset(
+        samples=train_samples,
+        seed=config.seed,
+        shuffle_buffer_size=config.shuffle_buffer_size,
+    )
+    dl_kwargs = dataloader_kwargs(
+        num_workers=config.num_workers,
+        pin_memory=config.pin_memory,
+        prefetch_factor=config.prefetch_factor,
+        device=device,
+    )
+    loader = DataLoader(ds, batch_size=config.batch_size, **dl_kwargs)
+    assert_safe_loader(loader)
+    print(
+        f"dataloader: batch_size={config.batch_size}  "
+        f"num_workers={dl_kwargs['num_workers']}  "
+        f"pin_memory={dl_kwargs['pin_memory']} (config={config.pin_memory!r})  "
+        f"prefetch_factor={dl_kwargs.get('prefetch_factor', 'n/a')}"
+    )
+    return ds, loader
 
 
 def bc_run(config: TrainConfig) -> None:
@@ -271,10 +280,10 @@ def bc_run(config: TrainConfig) -> None:
     ckpt_dir.mkdir()
 
     # Tee from here so everything past the run-dir setup — manifest load,
-    # dataset summary, model build, training — lands in console.log. The
+    # dataset summary, model build, training — lands in run.log. The
     # "run dir:" line printed by `initialize_run_dir` stays terminal-only;
     # self-reference inside the log would just be noise.
-    with tee_stdio(config.run_dir / "console.log"):
+    with tee_stdio(config.run_dir / "run.log"):
         # --- Manifest + dataset ---
         print(f"loading manifest: {config.manifest}")
         manifest = load_manifest(config.manifest)
@@ -288,25 +297,7 @@ def bc_run(config: TrainConfig) -> None:
             f"val_pairs={len(val_samples):,}"
         )
 
-        ds = IterableDataset(
-            samples=train_samples,
-            seed=config.seed,
-            shuffle_buffer_size=config.shuffle_buffer_size,
-        )
-        dl_kwargs = dataloader_kwargs(
-            num_workers=config.num_workers,
-            pin_memory=config.pin_memory,
-            prefetch_factor=config.prefetch_factor,
-            device=device,
-        )
-        loader = DataLoader(ds, batch_size=config.batch_size, **dl_kwargs)
-        assert_safe_loader(loader)
-        print(
-            f"dataloader: batch_size={config.batch_size}  "
-            f"num_workers={dl_kwargs['num_workers']}  "
-            f"pin_memory={dl_kwargs['pin_memory']} (config={config.pin_memory!r})  "
-            f"prefetch_factor={dl_kwargs.get('prefetch_factor', 'n/a')}"
-        )
+        ds, loader = build_dataloader(config, train_samples, device)
 
         run_loop(
             config=config,
@@ -317,6 +308,52 @@ def bc_run(config: TrainConfig) -> None:
             run_dir=config.run_dir,
             ckpt_dir=ckpt_dir,
         )
+
+
+def print_epoch_summary(epoch: int, summary: dict, val_summary: dict | None) -> None:
+    """Print the end-of-epoch console block: train means + throughput,
+    then the val block (or a skip notice). Reads MFU from `summary["mfu"]`
+    (already computed by the caller); omits the MFU clause when it's `None`
+    (unknown device peak)."""
+    print()
+    mfu_str = (
+        f" | MFU {summary['mfu'] * 100:.1f}%"
+        if summary["mfu"] is not None else ""
+    )
+    print(
+        f"[epoch {epoch}] complete | "
+        f"{summary['n_samples']:,} frames ({summary['n_non_pass']:,} non-pass) "
+        f"in {summary['duration_sec']:.1f}s | "
+        f"{summary['samples_per_sec']:.0f} samples/sec"
+        f"{mfu_str} ({summary['n_batches']} batches)"
+    )
+    print(
+        f"[epoch {epoch}] mean: "
+        f"policy {summary['policy']:.4f}  "
+        f"value {summary['value']:.4f}  "
+        f"pass {summary['pass']:.4f}  |  "
+        f"total {summary['total']:.4f}"
+    )
+    if val_summary is not None:
+        print(
+            f"[epoch {epoch}] val | "
+            f"{val_summary['n_samples']:,} frames ({val_summary['n_non_pass']:,} non-pass) "
+            f"in {val_summary['duration_sec']:.1f}s | "
+            f"{val_summary['samples_per_sec']:.0f} samples/sec | "
+            f"policy {val_summary['policy']:.4f}  "
+            f"value {val_summary['value']:.4f}  "
+            f"pass {val_summary['pass']:.4f}  |  "
+            f"total {val_summary['total']:.4f}"
+        )
+        print(
+            f"[epoch {epoch}] val | "
+            f"top1 {_fmt_metric(val_summary['top1'])}  "
+            f"top3 {_fmt_metric(val_summary['top3'])}  "
+            f"pass_acc {_fmt_metric(val_summary['pass_acc'])}  "
+            f"pass_frac {_fmt_metric(val_summary['pass_frac'])}"
+        )
+    else:
+        print(f"[epoch {epoch}] val skipped (--skip-val)")
 
 
 def run_loop(
@@ -332,8 +369,9 @@ def run_loop(
 
     Per epoch: train pass via `train_one_epoch`, full val pass via
     `run_val`, checkpoint save, one row to `epochs.jsonl`, console
-    summary. JSONL handles are line-buffered and closed in `finally` so
-    `tail -f` works and a mid-epoch raise still flushes records to disk.
+    summary. JSONL handles (owned by `RunArtifacts`) are line-buffered and
+    closed on context exit so `tail -f` works and a mid-epoch raise still
+    flushes records to disk.
     """
     # --- Model + optimizer ---
     print(f"building model on {device} (value_head={config.value_head_variant})")
@@ -370,13 +408,17 @@ def run_loop(
 
     # --- Train loop ---
     run_start = time.perf_counter()
-    # `ExitStack` cleanly enables multiple context-manager-like helpers w/o deep nesting.
-    with contextlib.ExitStack() as xs:
-        # JSONL writers are line-buffered: `tail -f` sees each record as it's written
-        batches_fp = xs.enter_context((run_dir / "batches.jsonl").open("w", buffering=1))
-        epochs_fp = xs.enter_context((run_dir / "epochs.jsonl").open("w", buffering=1))
-        xs.enter_context(gpu_util_sidecar(run_dir, device))
-
+    artifacts = RunArtifacts(
+        run_dir=run_dir,
+        ckpt_dir=ckpt_dir,
+        logger=RunLogger(run_dir),
+        flops_per_sample=flops_per_sample,
+        peak_tflops=peak_tflops,
+    )
+    # `RunArtifacts` opens/closes the JSONL writers; the gpu sidecar is a
+    # sibling context manager. Both unwind on a mid-epoch raise, flushing
+    # the line-buffered records to disk.
+    with artifacts, gpu_util_sidecar(run_dir, device):
         for epoch in range(1, config.epochs + 1):
             summary = train_one_epoch(
                 epoch=epoch,
@@ -385,7 +427,7 @@ def run_loop(
                 dataset=dataset,
                 loader=loader,
                 device=device,
-                batches_fp=batches_fp,
+                logger=artifacts.logger,
                 run_start=run_start,
                 max_batches=config.max_batches,
                 log_every=config.log_every,
@@ -409,61 +451,25 @@ def run_loop(
 
             # Augment the epoch summary with MFU (None when peak is unknown) and the
             # FLOPs constant used to compute it, so the jsonl row is self-describing.
-            mfu = compute_mfu(summary["samples_per_sec"], flops_per_sample, peak_tflops)
+            mfu = compute_mfu(
+                summary["samples_per_sec"], artifacts.flops_per_sample, artifacts.peak_tflops
+            )
             summary["mfu"] = round(mfu, 4) if mfu is not None else None
-            summary["flops_per_sample"] = flops_per_sample
+            summary["flops_per_sample"] = artifacts.flops_per_sample
 
             # Write the epoch row + print the summary BEFORE saving the checkpoint.
             # A checkpoint-save failure shouldn't lose the epoch's computed metrics.
             ckpt_name = _ckpt_name(epoch)
-            _write_jsonl(epochs_fp, {
+            artifacts.logger.log_epoch({
                 "epoch": epoch,
                 **summary,
                 "val": val_summary,
                 "ckpt": ckpt_name,
             })
-            print()
-            mfu_str = (
-                f" | MFU {summary['mfu'] * 100:.1f}%"
-                if summary["mfu"] is not None else ""
-            )
-            print(
-                f"[epoch {epoch}] complete | "
-                f"{summary['n_samples']:,} frames ({summary['n_non_pass']:,} non-pass) "
-                f"in {summary['duration_sec']:.1f}s | "
-                f"{summary['samples_per_sec']:.0f} samples/sec"
-                f"{mfu_str} ({summary['n_batches']} batches)"
-            )
-            print(
-                f"[epoch {epoch}] mean: "
-                f"policy {summary['policy']:.4f}  "
-                f"value {summary['value']:.4f}  "
-                f"pass {summary['pass']:.4f}  |  "
-                f"total {summary['total']:.4f}"
-            )
-            if val_summary is not None:
-                print(
-                    f"[epoch {epoch}] val | "
-                    f"{val_summary['n_samples']:,} frames ({val_summary['n_non_pass']:,} non-pass) "
-                    f"in {val_summary['duration_sec']:.1f}s | "
-                    f"{val_summary['samples_per_sec']:.0f} samples/sec | "
-                    f"policy {val_summary['policy']:.4f}  "
-                    f"value {val_summary['value']:.4f}  "
-                    f"pass {val_summary['pass']:.4f}  |  "
-                    f"total {val_summary['total']:.4f}"
-                )
-                print(
-                    f"[epoch {epoch}] val | "
-                    f"top1 {_fmt_metric(val_summary['top1'])}  "
-                    f"top3 {_fmt_metric(val_summary['top3'])}  "
-                    f"pass_acc {_fmt_metric(val_summary['pass_acc'])}  "
-                    f"pass_frac {_fmt_metric(val_summary['pass_frac'])}"
-                )
-            else:
-                print(f"[epoch {epoch}] val skipped (--skip-val)")
+            print_epoch_summary(epoch, summary, val_summary)
 
             # Now the actual save. Failure here raises out of the loop
             # with metrics + summary already persisted above.
-            _save_checkpoint(model, ckpt_dir, epoch)
+            _save_checkpoint(model, artifacts.ckpt_dir, epoch)
             print(f"[epoch {epoch}] saved checkpoint: checkpoints/{ckpt_name}")
             print()

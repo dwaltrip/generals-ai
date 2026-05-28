@@ -59,7 +59,8 @@ def train_remote(config: TrainConfig, modal_gpu: str) -> None:
     know about: which GPU class the operator requested, which device
     CUDA actually surfaced, container hostname.
     """
-    from bc.train import bc_run, initialize_run_dir
+    from bc.run_dir import initialize_run_dir
+    from bc.train import bc_run
 
     initialize_run_dir(config)
     _write_args_cloud(config.run_dir, modal_gpu)

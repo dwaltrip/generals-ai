@@ -72,7 +72,7 @@ class TrainConfig:
     #
     # Note on provenance: `args.json` stores the operator's input (which
     # may be `None` for "auto"); the booled-out value actually used by
-    # the DataLoader is logged to `console.log` at run start. Re-running
+    # the DataLoader is logged to `run.log` at run start. Re-running
     # the same config on a different device intentionally re-resolves —
     # `args.json` is the canonical input, not the resolved state.
     pin_memory: bool | None = None
