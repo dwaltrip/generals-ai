@@ -20,7 +20,6 @@ its own perspective state.
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -57,24 +56,6 @@ def pad_initial_generals(
     padded = np.full(num_slots, own, dtype=np.int32)
     padded[: len(ig)] = ig
     return padded
-
-
-def load_checkpoint(
-    path: str | Path,
-    device: torch.device,
-    value_head_variant: str = "direct",
-) -> BCModel:
-    """Construct a BCModel and load weights from a `.pt` state-dict file.
-
-    `value_head_variant` must match the variant the checkpoint was trained
-    with — otherwise `load_state_dict(strict=True)` raises on mismatched keys.
-    """
-    model = BCModel(value_head_variant=value_head_variant)
-    state_dict = torch.load(path, map_location=device, weights_only=True)
-    model.load_state_dict(state_dict)
-    model.to(device)
-    model.eval()
-    return model
 
 
 def default_device() -> torch.device:

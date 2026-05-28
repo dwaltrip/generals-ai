@@ -15,15 +15,17 @@ from pathlib import Path
 import pytest
 import torch
 
+from bc.checkpoint import load_bc_model
 from replay_collector.config import DB_PATH
 from game_runner import seed_map, viewer
 from self_play import agent, driver
 
 
-_REPO_ROOT = Path(__file__).resolve().parents[2]
+# packages/self-play/tests/ → repo root is 3 levels up.
+_REPO_ROOT = Path(__file__).resolve().parents[3]
 _CHECKPOINT = _REPO_ROOT / "training" / "data" / "runs-cloud" \
     / "2026-05-23T23-40-14Z" / "checkpoints" / "epoch_005.pt"
-_TMP_DIR = _REPO_ROOT / "self-play" / "tmp"
+_TMP_DIR = _REPO_ROOT / "packages" / "self-play" / "tmp"
 
 
 @pytest.fixture(scope="module")
@@ -31,7 +33,7 @@ def loaded_model():
     if not _CHECKPOINT.exists():
         pytest.skip(f"checkpoint not present at {_CHECKPOINT}")
     device = agent.default_device()
-    model = agent.load_checkpoint(_CHECKPOINT, device)
+    model = load_bc_model(_CHECKPOINT, device)
     return model, device
 
 

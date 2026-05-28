@@ -18,6 +18,7 @@ from pathlib import Path
 
 import torch
 
+from bc.checkpoint import load_bc_model
 from game_runner import seed_map, viewer
 from self_play import agent, driver
 
@@ -66,7 +67,7 @@ def main() -> int:
 
     device = _resolve_device(args.device)
     print(f"loading checkpoint: {args.checkpoint}")
-    model = agent.load_checkpoint(args.checkpoint, device)
+    model = load_bc_model(args.checkpoint, device)
     print(f"device: {device}")
 
     replay_id = args.replay_id or seed_map.list_two_player_replay_ids(limit=1)[0]

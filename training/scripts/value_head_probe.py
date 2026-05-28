@@ -49,9 +49,9 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from bc.checkpoint import load_bc_model
 from bc.constants import H_PADDED, W_PADDED
 from bc.dataset import IterableDataset
-from bc.model import BCModel
 from bc.splits import load_manifest, samples_for_split
 from shared.device import disable_mps_fallback, pick_device
 
@@ -198,9 +198,7 @@ def load_frozen_trunk(
     with so the strict load succeeds.
     """
     print(f"loading checkpoint: {ckpt_path}")
-    state = torch.load(ckpt_path, map_location=device, weights_only=True)
-    model = BCModel(value_head_variant=value_head_variant).to(device)
-    model.load_state_dict(state)
+    model = load_bc_model(ckpt_path, device, value_head_variant)
     trunk = model.trunk
     for p in trunk.parameters():
         p.requires_grad = False

@@ -15,12 +15,13 @@ from pathlib import Path
 import random
 import time
 
+from bc.checkpoint import load_bc_model
 from eval_bot.bot_config import BotConfig
 from eval_bot.eval_bot_agent import EvalBotAgent
 from game_runner.policy import GameResult
 from game_runner.runner import run_game
 from game_runner.seed_map import list_two_player_replay_ids, load_static_from_db
-from self_play.agent import ModelAgent, default_device, load_checkpoint
+from self_play.agent import ModelAgent, default_device
 
 
 def run_eval(
@@ -34,7 +35,7 @@ def run_eval(
     seed: int | None,
 ) -> None:
     device = default_device() if device_name == "auto" else __import__("torch").device(device_name)
-    model = load_checkpoint(checkpoint, device)
+    model = load_bc_model(checkpoint, device)
     print(f"checkpoint: {checkpoint}")
     print(f"device: {device}")
     print(f"mode: force_move={force_move} sample={sample} temperature={temperature}")

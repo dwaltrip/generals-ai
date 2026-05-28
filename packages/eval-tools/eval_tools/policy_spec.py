@@ -17,10 +17,11 @@ from typing import Any
 
 import torch
 
+from bc.checkpoint import load_bc_model
 from eval_bot.bot_config import BotConfig
 from eval_bot.eval_bot_agent import EvalBotAgent
 from game_runner.policy import Policy
-from self_play.agent import ModelAgent, load_checkpoint
+from self_play.agent import ModelAgent
 
 
 # Cache loaded models so the same checkpoint isn't loaded twice when used
@@ -33,7 +34,7 @@ def _get_or_load_model(
 ) -> Any:
     key = (path, str(device))
     if key not in _model_cache:
-        _model_cache[key] = load_checkpoint(path, device, value_head_variant)
+        _model_cache[key] = load_bc_model(path, device, value_head_variant)
     return _model_cache[key]
 
 
