@@ -15,9 +15,12 @@ from bc.train_config import TrainConfig, make_run_id
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
-    # TODO: as the knob count grows past ~15, or when we start doing
-    # cross-run sweeps, revisit moving to a config file (YAML/TOML).
-    # The args.json dump in the run dir captures per-run provenance for now.
+    # TODO: support a `--config <file>` JSON input (deferred). With ~18 knobs
+    # and cross-run sweeps, a file beats long CLI lines. Read the same schema
+    # we already emit as `args.json`, so a run's args.json round-trips as input
+    # (reproduce-a-run + resume fall out for free). Precedence:
+    #   TrainConfig defaults < --config file < explicit CLI flags < env paths.
+    # Hand-rolled merge, not Hydra/OmegaConf (overkill at this scale).
     parser = argparse.ArgumentParser()
     # `--manifest`, `--intermediate`, `--out-dir` are required *values*, but
     # the parser doesn't enforce `required=True` so wrappers can supply
