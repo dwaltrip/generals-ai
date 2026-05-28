@@ -132,6 +132,19 @@ class ModelAgent:
         self.n_moved = 0
         self.n_no_legal = 0
 
+        # Per-tick diagnostic series, reset by init_for_game. Captured every
+        # tick the agent thinks: value/pass always; policy stats only when
+        # the legality mask has at least one legal move. Pre-temperature
+        # policy distribution — intrinsic model confidence, comparable across
+        # temperature settings.
+        self._value_exp_placement_per_tick: list[float] = []
+        self._value_top_prob_per_tick: list[float] = []
+        self._value_entropy_per_tick: list[float] = []
+        self._pass_prob_per_tick: list[float] = []
+        self._top1_prob_per_tick: list[float] = []
+        self._top3_prob_per_tick: list[float] = []
+        self._entropy_per_tick: list[float] = []
+
     def init_for_game(self, state: sim_core.State, static: Any) -> None:
         H, W = static.map_height, static.map_width
 
@@ -166,6 +179,14 @@ class ModelAgent:
         self.n_passed = 0
         self.n_moved = 0
         self.n_no_legal = 0
+
+        self._value_exp_placement_per_tick = []
+        self._value_top_prob_per_tick = []
+        self._value_entropy_per_tick = []
+        self._pass_prob_per_tick = []
+        self._top1_prob_per_tick = []
+        self._top3_prob_per_tick = []
+        self._entropy_per_tick = []
 
     def _pad_initial_generals(self, initial_generals) -> np.ndarray:
         return pad_initial_generals(initial_generals, self.perspective_slot)
@@ -234,6 +255,8 @@ class ModelAgent:
         masked_logits = flatten_policy_logits(out["policy_logits"], mask_tensor)
 
         has_legal = bool(mask_tensor.any())
+        self._record_tick_diagnostics(out, masked_logits, has_legal)
+
         if not has_legal:
             # Degenerate case — no legal moves (e.g. very early game when
             # all owned tiles still have army<2). Pass is the only option.
@@ -265,3 +288,111 @@ class ModelAgent:
         self.n_moved += 1
         return actions.decode(is_pass=False, flat_idx=flat_idx,
                               W_unpadded=W, W_padded=W_PADDED)
+
+    def _record_tick_diagnostics(
+        self,
+        out: dict[str, torch.Tensor],
+        masked_logits: torch.Tensor,
+        has_legal: bool,
+    ) -> None:
+        # Value head: categorical placement over 8 classes (0=1st, 7=8th).
+        # Pre-softmax logits → probabilities → derived stats.
+        value_probs = torch.softmax(out["value_logits"][0], dim=0)
+        placements = torch.arange(
+            value_probs.size(0), dtype=value_probs.dtype, device=value_probs.device,
+        )
+        exp_placement = float((value_probs * placements).sum().item()) + 1.0  # 1..8 scale
+        top_prob = float(value_probs.max().item())
+        value_entropy = float(
+            -(value_probs * (value_probs + 1e-12).log()).sum().item()
+        )
+        self._value_exp_placement_per_tick.append(exp_placement)
+        self._value_top_prob_per_tick.append(top_prob)
+        self._value_entropy_per_tick.append(value_entropy)
+
+        # Pass head: sigmoid of scalar logit.
+        self._pass_prob_per_tick.append(
+            float(torch.sigmoid(out["pass_logit"][0]).item())
+        )
+
+        # Policy head: only meaningful when at least one legal slot exists.
+        # Skip entirely when no legal moves — leaves these series sparser
+        # than the value/pass series by n_no_legal entries.
+        if has_legal:
+            probs = torch.softmax(masked_logits[0], dim=0)
+            k = min(3, probs.size(0))
+            top_k = torch.topk(probs, k=k).values
+            self._top1_prob_per_tick.append(float(top_k[0].item()))
+            self._top3_prob_per_tick.append(float(top_k.sum().item()))
+            self._entropy_per_tick.append(
+                float(-(probs * (probs + 1e-12).log()).sum().item())
+            )
+
+    def get_diagnostics(self) -> dict[str, Any]:
+        """Per-game diagnostic summary picked up by `MetricsCollector` via
+        duck-typed `getattr(policy, "get_diagnostics", None)`.
+
+        Lands in the eval-run output as `metrics["policy_diagnostics"][p]`
+        in both `games/game_NNN.metrics.json` and the corresponding row of
+        `results.jsonl`.
+        """
+        def _agg(xs: list[float]) -> dict[str, float]:
+            if not xs:
+                return {"mean": float("nan"), "p50": float("nan"), "p90": float("nan")}
+            arr = np.asarray(xs)
+            return {
+                "mean": float(arr.mean()),
+                "p50": float(np.percentile(arr, 50)),
+                "p90": float(np.percentile(arr, 90)),
+            }
+
+        ep = self._value_exp_placement_per_tick
+        if ep:
+            arr = np.asarray(ep)
+            value_pos = {
+                "mean": float(arr.mean()),
+                "std": float(arr.std()),
+                "min": float(arr.min()),
+                "max": float(arr.max()),
+            }
+        else:
+            value_pos = {k: float("nan") for k in ("mean", "std", "min", "max")}
+
+        low_conf = sum(1 for p in self._top1_prob_per_tick if p < 0.3)
+        high_conf = sum(1 for p in self._top1_prob_per_tick if p > 0.8)
+
+        return {
+            "value": {
+                "exp_placement": {**value_pos, "per_tick": ep},
+                "top_prob": {**_agg(self._value_top_prob_per_tick),
+                             "per_tick": self._value_top_prob_per_tick},
+                "entropy": {**_agg(self._value_entropy_per_tick),
+                            "per_tick": self._value_entropy_per_tick},
+            },
+            "pass_prob": {
+                **_agg(self._pass_prob_per_tick),
+                "per_tick": self._pass_prob_per_tick,
+            },
+            "policy": {
+                "top1_prob": {**_agg(self._top1_prob_per_tick),
+                              "per_tick": self._top1_prob_per_tick},
+                "top3_prob_mean": (
+                    float(np.mean(self._top3_prob_per_tick))
+                    if self._top3_prob_per_tick else float("nan")
+                ),
+                "entropy": {**_agg(self._entropy_per_tick),
+                            "per_tick": self._entropy_per_tick},
+                "low_conf_ticks": low_conf,
+                "high_conf_ticks": high_conf,
+            },
+            "decisions": {
+                "n_moved": self.n_moved,
+                "n_passed": self.n_passed,
+                "n_no_legal": self.n_no_legal,
+            },
+            "config": {
+                "force_move": self.force_move,
+                "sample": self.sample,
+                "temperature": self.temperature,
+            },
+        }
