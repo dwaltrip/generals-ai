@@ -160,10 +160,29 @@ def run_val(
             # Move to CPU before bincount — keeps the tiny per-batch
             # bookkeeping device-agnostic.
             if non_pass.any():
-                # MPS workaround: `topk[non_pass, 0]` (bool mask + int
-                # column in one bracket) returns garbage indices on MPS.
-                # Split into two ops to dodge. Unclear when this regressed.
-                # POC run on 2026-05-21 with similar code completed val cleanly.
+                # ===================================================================
+                # TODO(mps-val-crash): BROKEN ON MPS — local val-on runs crash here.
+                #
+                # A bool-mask index into an int column on the MPS backend
+                # (`topk[:, 0][non_pass]`) returns garbage indices, raising:
+                #   AcceleratorError: index <huge-int> out of bounds ... size 64
+                #
+                # Reproduced 2026-05-28 on M1 Max. The earlier "split the index
+                # into two ops" dodge (what the code below already does) no longer
+                # dodges it — the bool-mask gather itself is the failing op. A POC
+                # on 2026-05-21 ran val cleanly, so it regressed sometime after.
+                #
+                # Impact: blocks every local MPS val pass (run_val). Cloud/CUDA is
+                # unaffected, so cloud training + val still works — this only bites
+                # local smoke runs that don't pass --skip-val.
+                #
+                # Likely fix: move to CPU BEFORE the bool-mask gather, e.g.
+                #   npm = non_pass.cpu()
+                #   pred_subs   = (topk[:, 0].cpu()[npm]) % 8
+                #   target_subs = (action_target.cpu()[npm]) % 8
+                # Deferred — out of scope for the train.py refactor series; wants a
+                # focused pass that verifies the fix against an MPS val run.
+                # ===================================================================
                 pred_subs = (topk[:, 0][non_pass] % 8).cpu()
                 target_subs = (action_target[non_pass] % 8).cpu()
                 pred_counts += torch.bincount(pred_subs, minlength=8)
