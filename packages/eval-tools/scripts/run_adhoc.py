@@ -36,12 +36,14 @@ Output structure:
 from __future__ import annotations
 
 import argparse
+from dataclasses import dataclass
 import datetime as dt
 import json
 from pathlib import Path
 import random
 import sys
 import time
+from typing import Any
 
 import torch
 
@@ -163,6 +165,90 @@ def _winning_policy(winner_slot: int | None, slot_map: list[int]) -> int | None:
     return slot_map[winner_slot]
 
 
+@dataclass
+class _RunCtx:
+    """Per-run configuration that doesn't change between games."""
+    device: torch.device
+    num_players: int
+    policy_specs: list[str]
+    policy_names: list[str]
+    max_turns: int
+    sample_interval: int
+    games_dir: Path
+    results_path: Path
+
+
+@dataclass
+class _GameOutcome:
+    """Stat-bearing result of one game, used by the caller to accumulate."""
+    winner_policy: int | None  # original policy index of winner, or None for draw
+    game_length: int
+
+
+def _play_and_record_game(
+    ctx: _RunCtx,
+    game_idx: int,
+    replay_id: str,
+    static: Any,
+    slot_map: list[int],
+    swapped: bool,
+) -> _GameOutcome:
+    """Play one configured game, save its artifacts, print a progress line."""
+    label = f"game_{game_idx:03d}"
+
+    policies = [
+        parse_policy_spec(ctx.policy_specs[slot_map[s]], slot=s, device=ctx.device)
+        for s in range(ctx.num_players)
+    ]
+
+    collector = MetricsCollector(
+        num_players=ctx.num_players,
+        sample_interval=ctx.sample_interval,
+    )
+    result = run_game(
+        policies, static,
+        max_turns=ctx.max_turns,
+        on_tick=collector.on_tick,
+    )
+    metrics = collector.finalize(result, policies)
+
+    winner_policy = _winning_policy(result.winner, slot_map)
+
+    assert result.state is not None
+    write_eval_game(result.state, static, ctx.games_dir / f"{label}.npz")
+    meta = _build_game_meta(
+        game_idx, replay_id, ctx.policy_specs, ctx.max_turns, slot_map,
+    )
+    (ctx.games_dir / f"{label}.meta.json").write_text(json.dumps(meta, indent=2))
+    (ctx.games_dir / f"{label}.metrics.json").write_text(json.dumps(metrics, indent=2))
+
+    row = _build_results_row(
+        game_idx, replay_id, result, slot_map=slot_map, metrics=metrics,
+    )
+    with open(ctx.results_path, "a") as f:
+        f.write(json.dumps(row) + "\n")
+
+    slot_names = _names_for_slots(ctx.policy_names, slot_map)
+    if winner_policy is not None:
+        winner_str = ctx.policy_names[winner_policy]
+    else:
+        winner_str = "draw"
+    swap_tag = " [swapped]" if swapped else ""
+    lands = " ".join(
+        f"{slot_names[s]}={ps.land:3d}"
+        for s, ps in enumerate(result.player_stats)
+    )
+    print(
+        f"  {label}: {winner_str:12s}  len={result.game_length:4d}"
+        f"  {lands}{swap_tag}"
+    )
+
+    return _GameOutcome(
+        winner_policy=winner_policy,
+        game_length=result.game_length,
+    )
+
+
 def run(args: argparse.Namespace) -> None:
     device = _resolve_device(args.device)
     policy_specs: list[str] = args.policy
@@ -225,6 +311,16 @@ def run(args: argparse.Namespace) -> None:
     print()
 
     results_path = out_dir / "results.jsonl"
+    ctx = _RunCtx(
+        device=device,
+        num_players=num_players,
+        policy_specs=policy_specs,
+        policy_names=policy_names,
+        max_turns=args.max_turns,
+        sample_interval=args.sample_interval,
+        games_dir=games_dir,
+        results_path=results_path,
+    )
     win_counts = [0] * num_players
     draw_count = 0
     total_length = 0
@@ -235,70 +331,18 @@ def run(args: argparse.Namespace) -> None:
 
     for replay_id in replay_ids:
         static = load_static_from_db(replay_id)
-
         for _rep in range(args.games_per_map):
             for swapped in swap_rounds:
                 game_idx += 1
-                label = f"game_{game_idx:03d}"
                 slot_map = _make_slot_map(num_players, swapped)
-
-                # Build policies in slot order
-                policies = [
-                    parse_policy_spec(policy_specs[slot_map[s]], slot=s, device=device)
-                    for s in range(num_players)
-                ]
-
-                # Run with metrics collection
-                collector = MetricsCollector(
-                    num_players=num_players,
-                    sample_interval=args.sample_interval,
+                outcome = _play_and_record_game(
+                    ctx, game_idx, replay_id, static, slot_map, swapped,
                 )
-                result = run_game(
-                    policies, static,
-                    max_turns=args.max_turns,
-                    on_tick=collector.on_tick,
-                )
-                metrics = collector.finalize(result, policies)
-                total_length += result.game_length
-
-                # Track wins by original policy index
-                winner_policy = _winning_policy(result.winner, slot_map)
-                if winner_policy is not None:
-                    win_counts[winner_policy] += 1
+                total_length += outcome.game_length
+                if outcome.winner_policy is not None:
+                    win_counts[outcome.winner_policy] += 1
                 else:
                     draw_count += 1
-
-                # Save game files
-                assert result.state is not None
-                write_eval_game(result.state, static, games_dir / f"{label}.npz")
-                meta = _build_game_meta(
-                    game_idx, replay_id, policy_specs, args.max_turns, slot_map,
-                )
-                (games_dir / f"{label}.meta.json").write_text(json.dumps(meta, indent=2))
-                (games_dir / f"{label}.metrics.json").write_text(json.dumps(metrics, indent=2))
-
-                # Append to results JSONL
-                row = _build_results_row(
-                    game_idx, replay_id, result, slot_map=slot_map, metrics=metrics,
-                )
-                with open(results_path, "a") as f:
-                    f.write(json.dumps(row) + "\n")
-
-                # Progress line
-                slot_names = _names_for_slots(policy_names, slot_map)
-                if winner_policy is not None:
-                    winner_str = policy_names[winner_policy]
-                else:
-                    winner_str = "draw"
-                swap_tag = " [swapped]" if swapped else ""
-                lands = " ".join(
-                    f"{slot_names[s]}={ps.land:3d}"
-                    for s, ps in enumerate(result.player_stats)
-                )
-                print(
-                    f"  {label}: {winner_str:12s}  len={result.game_length:4d}"
-                    f"  {lands}{swap_tag}"
-                )
 
     elapsed = time.perf_counter() - t0
 
