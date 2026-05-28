@@ -240,9 +240,10 @@ def bc_run(config: TrainConfig) -> None:
     """Drive a BC training run end-to-end from a validated config.
 
     Precondition: `config.run_dir` exists. Loads the manifest and builds
-    the train dataset, then hands off to `run_loop` for model build +
-    training. Callable from a notebook or test by constructing a
-    `TrainConfig` directly (after initializing the run dir).
+    the train dataset, builds the model + optimizer (`TrainingState.fresh`)
+    and the run artifacts, then drives the epoch loop via `train_loop`.
+    Callable from a notebook or test by constructing a `TrainConfig`
+    directly (after initializing the run dir).
     """
     disable_mps_fallback()
 
@@ -279,15 +280,38 @@ def bc_run(config: TrainConfig) -> None:
 
         ds, loader = build_dataloader(config, train_samples, device)
 
-        run_loop(
-            config=config,
-            device=device,
-            dataset=ds,
-            loader=loader,
-            val_samples=val_samples,
+        # --- Model + optimizer ---
+        print(f"building model on {device} (value_head={config.value_head_variant})")
+        state = TrainingState.fresh(config, device)
+        n_params = sum(p.numel() for p in state.model.parameters())
+        print(f"  params: {n_params:,}")
+
+        # Resolve precision for the startup banner; `train_loop` re-derives
+        # the autocast dtype from the same (deterministic) decision.
+        resolved_precision = resolve_precision(config.precision, device)
+        print(f"  precision: {resolved_precision} (config={config.precision!r})")
+
+        # FLOPs/sample + device peak: drives MFU per-epoch. FLOPs are measured
+        # once on a synthetic batch; peak comes from a hardcoded device table
+        # (`shared.perf`) and is `None` on unknown hardware — in which case
+        # MFU is omitted rather than computed against a wrong denominator.
+        flops_per_sample = _measure_model_flops_per_sample(state.model, device)
+        peak_tflops = peak_tflops_fp32(device)
+        print(f"  fwd+bwd FLOPs/sample: {flops_per_sample / 1e9:.2f} GFLOPs")
+        if peak_tflops is not None:
+            print(f"  device peak FP32:     {peak_tflops:.1f} TFLOPS")
+        else:
+            print("  device peak FP32:     unknown (MFU will be omitted)")
+        print()
+
+        artifacts = RunArtifacts(
             run_dir=config.run_dir,
             ckpt_dir=ckpt_dir,
+            logger=RunLogger(config.run_dir),
+            flops_per_sample=flops_per_sample,
+            peak_tflops=peak_tflops,
         )
+        train_loop(state, config, loader, ds, val_samples, device, artifacts)
 
 
 def print_epoch_summary(epoch: int, summary: dict, val_summary: dict | None) -> None:
@@ -336,64 +360,40 @@ def print_epoch_summary(epoch: int, summary: dict, val_summary: dict | None) -> 
         print(f"[epoch {epoch}] val skipped (--skip-val)")
 
 
-def run_loop(
+def train_loop(
+    state: TrainingState,
     config: TrainConfig,
-    device: torch.device,
-    dataset: IterableDataset,
     loader: DataLoader,
+    dataset: IterableDataset,
     val_samples: list[tuple[Path, int]],
-    run_dir: Path,
-    ckpt_dir: Path,
+    device: torch.device,
+    artifacts: RunArtifacts,
 ) -> None:
-    """Build the model + optimizer and drive the epoch loop.
+    """Drive the epoch loop over a prepared `TrainingState` + `RunArtifacts`.
 
     Per epoch: train pass via `train_one_epoch`, full val pass via
-    `run_val`, checkpoint save, one row to `epochs.jsonl`, console
-    summary. JSONL handles (owned by `RunArtifacts`) are line-buffered and
-    closed on context exit so `tail -f` works and a mid-epoch raise still
-    flushes records to disk.
+    `run_val`, checkpoint save, one row to `epochs.jsonl`, console summary.
+    The epoch range starts at `state.epoch + 1`, so a fresh state (epoch 0)
+    runs `1..N` and a resumed state (epoch K) continues at `K+1` — epoch
+    numbering stays monotonic across resume segments.
+
+    JSONL handles (owned by `RunArtifacts`) are line-buffered and closed on
+    context exit so `tail -f` works and a mid-epoch raise still flushes
+    records to disk. The caller builds `state` + `artifacts` and measures
+    FLOPs; this function only loops.
     """
-    # --- Model + optimizer ---
-    print(f"building model on {device} (value_head={config.value_head_variant})")
-    state = TrainingState.fresh(config, device)
-    n_params = sum(p.numel() for p in state.model.parameters())
-    print(f"  params: {n_params:,}")
-
-    # Mixed precision resolution. `amp_dtype is None` is the canonical
+    # Mixed-precision resolution. `amp_dtype is None` is the canonical
     # "AMP off" sentinel — autocast is wired through both code paths so the
-    # fp32 case is a no-op rather than a separate branch. The matching
-    # GradScaler lives on `state` (built from the same precision decision).
-    resolved_precision = resolve_precision(config.precision, device)
-    amp_dtype = torch.float16 if resolved_precision == "fp16" else None
-    print(f"  precision: {resolved_precision} (config={config.precision!r})")
+    # fp32 case is a no-op rather than a separate branch. Mirrors the
+    # GradScaler decision on `state` (both derive from the same precision).
+    amp_dtype = torch.float16 if resolve_precision(config.precision, device) == "fp16" else None
 
-    # FLOPs/sample + device peak: drives MFU per-epoch. FLOPs are measured
-    # once on a synthetic batch; peak comes from a hardcoded device table
-    # (`shared.perf`) and is `None` on unknown hardware — in which case
-    # MFU is omitted rather than computed against a wrong denominator.
-    flops_per_sample = _measure_model_flops_per_sample(state.model, device)
-    peak_tflops = peak_tflops_fp32(device)
-    print(f"  fwd+bwd FLOPs/sample: {flops_per_sample / 1e9:.2f} GFLOPs")
-    if peak_tflops is not None:
-        print(f"  device peak FP32:     {peak_tflops:.1f} TFLOPS")
-    else:
-        print("  device peak FP32:     unknown (MFU will be omitted)")
-    print()
-
-    # --- Train loop ---
     run_start = time.perf_counter()
-    artifacts = RunArtifacts(
-        run_dir=run_dir,
-        ckpt_dir=ckpt_dir,
-        logger=RunLogger(run_dir),
-        flops_per_sample=flops_per_sample,
-        peak_tflops=peak_tflops,
-    )
     # `RunArtifacts` opens/closes the JSONL writers; the gpu sidecar is a
     # sibling context manager. Both unwind on a mid-epoch raise, flushing
     # the line-buffered records to disk.
-    with artifacts, gpu_util_sidecar(run_dir, device):
-        for epoch in range(1, config.epochs + 1):
+    with artifacts, gpu_util_sidecar(artifacts.run_dir, device):
+        for epoch in range(state.epoch + 1, config.epochs + 1):
             summary = train_one_epoch(
                 epoch=epoch,
                 model=state.model,
