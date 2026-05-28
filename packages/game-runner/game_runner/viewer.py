@@ -77,15 +77,30 @@ def build_html_from_state(
     and initial generals off it, so any divergence would render a board
     that doesn't match the snapshots.
     """
-    fake_replay = SimpleNamespace(static=dataclasses.replace(
+    fake_static = dataclasses.replace(
         static,
         usernames=[f"Player {i+1}" for i, _ in enumerate(static.usernames)],
-    ))
-    payload = _build_payload(replay_id, state, fake_replay)
+    )
+    return render_viewer_html(replay_id, state, fake_static)
+
+
+def render_viewer_html(
+    label: str,
+    state: Any,
+    static: Any,
+) -> str:
+    """Lower-level renderer that accepts any state/static duck types.
+
+    Unlike build_html_from_state, does not call dataclasses.replace on
+    static — the caller is responsible for providing the right usernames.
+    Works with SimpleNamespace mocks (e.g. from loading a saved .npz).
+    """
+    fake_replay = SimpleNamespace(static=static)
+    payload = _build_payload(label, state, fake_replay)
 
     template = _TEMPLATE_PATH.read_text()
     substitutions = {
-        "$REPLAY_ID": replay_id,
+        "$REPLAY_ID": label,
         "$NEUTRAL_BG": _viewer_constants.NEUTRAL_TILE_BG,
         "$MOUNTAIN_BG": _viewer_constants.MOUNTAIN_TILE_BG,
         "$NEUTRAL_CITY_BG": _viewer_constants.NEUTRAL_CITY_BG,
