@@ -12,7 +12,7 @@ from collections.abc import Sequence
 
 import numpy as np
 
-from eval.move_analyzer import MoveAnalyzer
+from eval_tools.move_analyzer import MoveAnalyzer
 from game_runner.policy import GameResult, Policy
 import sim_core
 

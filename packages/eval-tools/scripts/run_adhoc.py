@@ -4,19 +4,19 @@
 Usage (from repo root):
 
     # Model vs EvalBot, 10 games
-    ./scripts/eval_run.py \\
+    ./packages/eval-tools/scripts/run_adhoc.py \\
         --policy checkpoint:path/to/epoch_005.pt:force_move=true \\
         --policy evalbot \\
         --games 10
 
     # Two checkpoints head-to-head
-    ./scripts/eval_run.py \\
+    ./packages/eval-tools/scripts/run_adhoc.py \\
         --policy checkpoint:path/to/epoch_003.pt:force_move=true \\
         --policy checkpoint:path/to/epoch_005.pt:force_move=true \\
         --games 20
 
     # 4-player FFA with mixed policies
-    ./scripts/eval_run.py \\
+    ./packages/eval-tools/scripts/run_adhoc.py \\
         --policy checkpoint:path/to/model.pt \\
         --policy evalbot \\
         --policy evalbot \\
@@ -45,19 +45,13 @@ import time
 
 import torch
 
+from eval_tools.metrics_collector import MetricsCollector
+from eval_tools.policy_spec import build_policy_names, parse_policy_spec
 from game_runner.policy import GameResult
 from game_runner.runner import run_game
 from game_runner.save import write_eval_game
 from game_runner.seed_map import list_two_player_replay_ids, load_static_from_db
 from self_play.agent import default_device
-
-
-# scripts/eval/ is a sibling directory; add scripts/ to path so we can
-# import from the eval package.
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-
-from eval.metrics_collector import MetricsCollector
-from eval.policy_spec import build_policy_names, parse_policy_spec
 
 
 def _resolve_device(name: str) -> torch.device:

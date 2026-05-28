@@ -7,6 +7,7 @@ dependencies = [
     "modal>=1.4.3",
     "cloud-train-poc",
     "eval-bot",
+    "eval-tools",
     "game-runner",
     "replay-collector",
     "replay-parser",
@@ -29,6 +30,7 @@ package = false
 members = [
     "cloud-poc",
     "packages/eval-bot",
+    "packages/eval-tools",
     "packages/game-runner",
     "replay-collector",
     "replay-parser",
@@ -41,6 +43,7 @@ members = [
 [tool.uv.sources]
 cloud-train-poc = { workspace = true }
 eval-bot = { workspace = true }
+eval-tools = { workspace = true }
 game-runner = { workspace = true }
 replay-collector = { workspace = true }
 replay-parser = { workspace = true }

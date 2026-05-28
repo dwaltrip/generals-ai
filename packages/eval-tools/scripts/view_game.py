@@ -2,9 +2,9 @@
 """Render a saved eval game (.npz) as a timestep-viewer HTML file.
 
 Usage:
-    ./scripts/eval/view_game.py data/eval-runs/.../games/game_001.npz
-    ./scripts/eval/view_game.py data/eval-runs/.../games/game_001.npz --out /tmp/game.html
-    ./scripts/eval/view_game.py data/eval-runs/.../games/game_001.npz --open
+    ./packages/eval-tools/scripts/view_game.py <game.npz>
+    ./packages/eval-tools/scripts/view_game.py <game.npz> --out /tmp/game.html
+    ./packages/eval-tools/scripts/view_game.py <game.npz> --open
 
 Reads the compressed .npz saved by write_eval_game and produces a
 self-contained HTML viewer — no sim_core replay needed since the .npz
@@ -19,10 +19,6 @@ import subprocess
 import sys
 from types import SimpleNamespace
 
-
-# Add scripts/ to path so `eval` package is importable
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-
 import numpy as np
 
 from game_runner.viewer import render_viewer_html
@@ -30,9 +26,8 @@ from game_runner.viewer import render_viewer_html
 
 # TODO: Replace SimpleNamespace mocks with proper dataclasses
 # (SavedGameState, SavedGameStatic, CaptureEvent, DeathEvent, etc.).
-# These should live in the eval package (or game-runner) once this
-# moves out of scripts/. The current duck-typed approach works but
-# is untyped and fragile — field name typos are silent.
+# The current duck-typed approach works but is untyped and fragile —
+# field name typos are silent.
 
 def _load_usernames(npz_path: Path, num_players: int) -> list[str]:
     """Derive display names from the sibling .meta.json if it exists."""
@@ -42,7 +37,7 @@ def _load_usernames(npz_path: Path, num_players: int) -> list[str]:
 
     import json
 
-    from eval.policy_spec import build_policy_names
+    from eval_tools.policy_spec import build_policy_names
 
     meta = json.loads(meta_path.read_text())
     specs: list[str] = meta.get("policy_specs", [])
