@@ -376,6 +376,7 @@ dependencies = [
     { name = "numpy" },
     { name = "self-play" },
     { name = "sim-core" },
+    { name = "utils" },
 ]
 
 [package.metadata]
@@ -385,6 +386,7 @@ requires-dist = [
     { name = "numpy", specifier = ">=2.0" },
     { name = "self-play", editable = "packages/self-play" },
     { name = "sim-core", editable = "sim-core" },
+    { name = "utils", editable = "packages/utils" },
 ]
 
 [[package]]

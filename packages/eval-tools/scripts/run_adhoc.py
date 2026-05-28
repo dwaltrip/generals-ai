@@ -54,6 +54,7 @@ from game_runner.runner import run_game
 from game_runner.save import write_eval_game
 from game_runner.seed_map import list_replay_ids_by_player_count, load_static_from_db
 from self_play.agent import default_device
+from utils.log import tee_stdio
 
 
 def _resolve_device(name: str) -> torch.device:
@@ -255,12 +256,10 @@ def run(args: argparse.Namespace) -> None:
     num_players = len(policy_specs)
     policy_names = build_policy_names(policy_specs)
 
-    print(f"device: {device}")
-    print(f"policies ({num_players} players):")
-    for i, name in enumerate(policy_names):
-        print(f"  p{i}: {name}")
-
-    # Validate policy specs early (before loading maps or creating output dirs)
+    # Validate everything up front (no stdout prints): a failure here exits
+    # before we create the output dir, so we don't leave behind empty run
+    # dirs on bad invocations. tee_stdio also catches SystemExit and would
+    # dump a misleading traceback into the log if we exited inside it.
     try:
         for i, spec in enumerate(policy_specs):
             parse_policy_spec(spec, slot=i, device=device)
@@ -268,7 +267,6 @@ def run(args: argparse.Namespace) -> None:
         print(f"\nerror: invalid --policy spec: {e}", file=sys.stderr)
         sys.exit(1)
 
-    # Validate --swap-slots
     swap_slots = args.swap_slots
     if swap_slots and num_players != 2:
         print(
@@ -278,15 +276,10 @@ def run(args: argparse.Namespace) -> None:
         )
         sys.exit(1)
 
-    # Resolve maps
     replay_ids = _resolve_maps(args.maps, args.map_seed, num_players)
     rounds_per_map = args.games_per_map * (2 if swap_slots else 1)
     total_games = len(replay_ids) * rounds_per_map
-    print(f"maps: {len(replay_ids)} unique, {args.games_per_map} games each"
-          f"{' (x2 with slot swap)' if swap_slots else ''} = {total_games} total")
-    print(f"max_turns: {args.max_turns}")
 
-    # Validate player count against first map
     import sim_core
     static_check = load_static_from_db(replay_ids[0])
     state_check = sim_core.new_state(static_check)
@@ -307,6 +300,42 @@ def run(args: argparse.Namespace) -> None:
     # Save run config
     config = _build_run_config(args)
     (out_dir / "config.json").write_text(json.dumps(config, indent=2))
+
+    with tee_stdio(out_dir / "run.log"):
+        _run_games(
+            args=args,
+            device=device,
+            policy_specs=policy_specs,
+            policy_names=policy_names,
+            num_players=num_players,
+            swap_slots=swap_slots,
+            replay_ids=replay_ids,
+            total_games=total_games,
+            out_dir=out_dir,
+            games_dir=games_dir,
+        )
+
+
+def _run_games(
+    *,
+    args: argparse.Namespace,
+    device: torch.device,
+    policy_specs: list[str],
+    policy_names: list[str],
+    num_players: int,
+    swap_slots: bool,
+    replay_ids: list[str],
+    total_games: int,
+    out_dir: Path,
+    games_dir: Path,
+) -> None:
+    print(f"device: {device}")
+    print(f"policies ({num_players} players):")
+    for i, name in enumerate(policy_names):
+        print(f"  p{i}: {name}")
+    print(f"maps: {len(replay_ids)} unique, {args.games_per_map} games each"
+          f"{' (x2 with slot swap)' if swap_slots else ''} = {total_games} total")
+    print(f"max_turns: {args.max_turns}")
     print(f"output: {out_dir}")
     print()
 

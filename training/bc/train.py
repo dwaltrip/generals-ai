@@ -51,8 +51,8 @@ from shared.device import (
     resolve_precision,
 )
 from shared.gpu_sidecar import gpu_util_sidecar
-from shared.log import tee_stdio
 from shared.perf import compute_mfu, measure_total_flops, peak_tflops_fp32
+from utils.log import tee_stdio
 
 
 def _write_jsonl(fp: TextIO, record: dict) -> None:

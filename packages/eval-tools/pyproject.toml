@@ -9,6 +9,7 @@ dependencies = [
     "numpy>=2.0",
     "self-play",
     "sim-core",
+    "utils",
 ]
 
 [build-system]
@@ -23,3 +24,4 @@ eval-bot = { workspace = true }
 game-runner = { workspace = true }
 self-play = { workspace = true }
 sim-core = { workspace = true }
+utils = { workspace = true }
