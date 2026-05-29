@@ -16,6 +16,12 @@
   "typeCheckingMode": "basic",
   "pythonVersion": "3.14",
   "executionEnvironments": [
+    // torch's stubs don't explicitly re-export its C-level symbols (device, zeros, Tensor, ...),
+    // so reportPrivateImportUsage fires on every use. Scope the rule off in the torch-using roots
+    // only; it stays an error everywhere else.
+    { "root": "training",            "reportPrivateImportUsage": "none" },
+    { "root": "packages/self-play",  "reportPrivateImportUsage": "none" },
+    { "root": "packages/eval-tools", "reportPrivateImportUsage": "none" },
     { "root": "replay-parser/scripts", "extraPaths": ["replay-parser/scripts"] },
     { "root": "replay-parser/tests",   "extraPaths": ["replay-parser/tests"] },
     { "root": "replay-parser/tools/timestep_viewer", "extraPaths": ["replay-parser/tools/timestep_viewer"] }
