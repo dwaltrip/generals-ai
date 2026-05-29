@@ -102,7 +102,7 @@ def bc_loss(
     is_pass = targets["is_pass"]                # [B] bool
     value_target = targets["value_target"]      # [B] int64
 
-    B = policy_logits.shape[0]
+    _B = policy_logits.shape[0]
 
     # --- Policy CE ---
     # F.cross_entropy applies log-softmax internally; the flatten helper's

@@ -48,6 +48,7 @@ import subprocess
 
 from bc.filters import DROP_REASONS, FILTER_VERSION, eligible_perspectives
 from bc.utils import list_sim_paths, meta_path_for
+from utils.docstring import doc_summary
 from utils.json_io import write_json
 from utils.player_name_lists import load_union
 
@@ -201,7 +202,7 @@ def load_manifest(path: Path) -> dict:
     for key in ("version", "seed", "filter_version", "kept_pairs", "train", "val"):
         assert key in m, f"manifest missing required key: {key}"
     assert m["version"] == MANIFEST_VERSION, (
-        f"manifest schema version mismatch: file has {m['version']}, code expects {MANIFEST_VERSION}"
+        f"manifest schema version mismatch: file has {m['version']}, expected {MANIFEST_VERSION}"
     )
     # Catches truncation / hand-edit damage that would silently shrink the train
     # or val list. A non-matching count means the file isn't what its provenance
@@ -282,7 +283,7 @@ def _cmd_build(args: argparse.Namespace) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(prog="bc.splits", description=__doc__.splitlines()[1])
+    parser = argparse.ArgumentParser(prog="bc.splits", description=doc_summary(__doc__, 1))
     sub = parser.add_subparsers(dest="cmd", required=True)
 
     build = sub.add_parser("build", help="Build a new train/val split manifest")
@@ -291,7 +292,7 @@ def main() -> None:
     build.add_argument(
         "--intermediate",
         type=Path,
-        default=Path(__file__).resolve().parent.parent.parent / "replay-parser" / "data" / "intermediate",
+        default=_REPO_ROOT / "replay-parser" / "data" / "intermediate",
         help="Intermediate corpus root (defaults to replay-parser/data/intermediate).",
     )
     build.add_argument("--val-frac", type=float, default=DEFAULT_VAL_FRAC)

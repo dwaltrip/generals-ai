@@ -692,7 +692,8 @@ def run_probe_mode(
     device: torch.device,
     out_dir: Path,
 ) -> None:
-    print(f"\n--- sub-split val perspectives ({1 - args.probe_val_frac:.0%}/{args.probe_val_frac:.0%}) ---")
+    val_frac = args.probe_val_frac
+    print(f"\n--- sub-split val perspectives ({1 - val_frac:.0%}/{val_frac:.0%}) ---")
     train_persp, val_persp = split_perspectives(val_samples, args.probe_val_frac, args.seed)
     print(f"  train_probe: {len(train_persp)} perspectives")
     print(f"  val_probe:   {len(val_persp)} perspectives")

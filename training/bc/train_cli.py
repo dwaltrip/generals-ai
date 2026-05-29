@@ -37,8 +37,10 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--manifest", type=Path, default=None)
     # TODO: possibly rename `--intermediate` arg? it's a bit of a vague name.
     parser.add_argument("--intermediate", type=Path, default=None)
-    parser.add_argument("--out-dir", type=Path, default=None,
-                        help="Parent dir for runs. Joined with a fresh run-id to form `TrainConfig.run_dir`.")
+    parser.add_argument(
+        "--out-dir", type=Path, default=None,
+        help="Parent dir for runs. Joined with a fresh run-id to form `TrainConfig.run_dir`.",
+    )
 
     # Training knobs carry no defaults here — `TrainConfig`'s field defaults
     # are the single source. `default=SUPPRESS` keeps an unpassed flag off the
@@ -49,7 +51,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--batch-size", type=int, default=argparse.SUPPRESS)
     parser.add_argument("--lr", type=float, default=argparse.SUPPRESS)
     parser.add_argument("--weight-decay", type=float, default=argparse.SUPPRESS)
-    parser.add_argument("--device", choices=("auto", "cuda", "mps", "cpu"), default=argparse.SUPPRESS)
+    parser.add_argument(
+        "--device",
+        choices=("auto", "cuda", "mps", "cpu"),
+        default=argparse.SUPPRESS,
+    )
     parser.add_argument("--seed", type=int, default=argparse.SUPPRESS)
     parser.add_argument(
         "--shuffle-buffer-size",
@@ -99,7 +105,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "--skip-val",
         action="store_true",
         default=argparse.SUPPRESS,
-        help="Skip the per-epoch val pass. For perf-testing runs where val cost dominates wall time.",
+        help="Skip per-epoch val pass. For perf-testing runs where isn't needed.",
     )
     parser.add_argument(
         "--value-head",

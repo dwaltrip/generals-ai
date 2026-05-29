@@ -687,7 +687,9 @@ def _cat_scoreboard(
     # opp_N_city_inference is the "infer cities from peacetime growth"
     # heuristic — TODO, currently emits zero. opp_N_land_delta is a simple
     # K-tick land-count delta.
-    opp_city_inference = [np.zeros((H, W), dtype=np.float32) for _ in opp_slots]  # TODO: 5.05-1 §F encoding
+
+    # TODO: 5.05-1 §F encoding
+    opp_city_inference = [np.zeros((H, W), dtype=np.float32) for _ in opp_slots]
     t_prev = max(0, t - _LAND_DELTA_WINDOW)
     opp_land_delta = [
         np.full(

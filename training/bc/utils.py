@@ -6,7 +6,7 @@ def meta_path_for(sim_path: Path) -> Path:
 
 
 def sim_path_for(replay_id: str, intermediate_root: Path) -> Path:
-    """Replay-id → on-disk sim path. Mirrors the parser's `intermediate_dir / rid[:2]` convention."""
+    """Replay-id → on-disk sim path. Mirrors parser's `intermediate_dir / rid[:2]` convention."""
     return intermediate_root / replay_id[:2] / f"{replay_id}.npz"
 
 

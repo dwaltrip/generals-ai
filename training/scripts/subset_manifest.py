@@ -28,6 +28,7 @@ import argparse
 from pathlib import Path
 
 from bc.splits import load_manifest
+from utils.docstring import doc_summary
 from utils.json_io import write_json
 
 
@@ -51,8 +52,14 @@ def subset_manifest(src: dict, max_pairs: int) -> dict:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--in", dest="src", type=Path, required=True, help="path to source manifest")
+    parser = argparse.ArgumentParser(description=doc_summary(__doc__))
+    parser.add_argument(
+        "--in",
+        dest="src",
+        type=Path,
+        required=True,
+        help="path to source manifest",
+    )
     parser.add_argument(
         "--max-pairs",
         type=int,
