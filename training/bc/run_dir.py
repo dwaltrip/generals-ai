@@ -19,6 +19,7 @@ import re
 from bc.checkpoint import is_legacy_checkpoint
 from bc.run_logger import RunLogger
 from bc.train_config import TrainConfig, json_default
+from utils.log import abort
 
 
 def initialize_run_dir(config: TrainConfig) -> None:
@@ -123,11 +124,11 @@ def prepare_resume(run_dir: Path) -> ResumeInfo:
     fixes the path and retries.
     """
     if not run_dir.exists():
-        raise SystemExit(f"--resume: run dir not found: {run_dir}")
+        abort(f"--resume: run dir not found: {run_dir}")
     ckpt_dir = run_dir / "checkpoints"
     ckpts = list(ckpt_dir.glob("epoch_*.pt")) if ckpt_dir.exists() else []
     if not ckpts:
-        raise SystemExit(f"--resume: no checkpoints found under {ckpt_dir}")
+        abort(f"--resume: no checkpoints found under {ckpt_dir}")
 
     latest = max(ckpts, key=lambda p: int(p.stem.split("_")[1]))
     parent_epoch = int(latest.stem.split("_")[1])
@@ -153,7 +154,7 @@ def load_parent_config(parent_args_path: Path) -> dict:
     """Load a parent run's args file as a `TrainConfig` field dict, dropping
     the `_resume_meta` block (present when the parent is itself a resume)."""
     if not parent_args_path.exists():
-        raise SystemExit(f"--resume: parent args not found: {parent_args_path}")
+        abort(f"--resume: parent args not found: {parent_args_path}")
     data = json.loads(parent_args_path.read_text())
     data.pop("_resume_meta", None)
     return data
@@ -175,12 +176,12 @@ def check_drift(config: TrainConfig, parent: dict, force_config_mismatch: bool) 
         bucket = locked if name in _CHECKPOINT_OWNED else trajectory
         bucket.append(f"{name} {parent.get(name)!r}->{new_val!r}")
     if locked:
-        raise SystemExit(
+        abort(
             f"--resume: lr/weight_decay are checkpoint-owned and cannot change on "
             f"resume ({', '.join(locked)}); the restored optimizer state pins them."
         )
     if trajectory and not force_config_mismatch:
-        raise SystemExit(
+        abort(
             f"--resume: config drift from parent ({', '.join(trajectory)}); "
             f"pass --force-config-mismatch to override."
         )

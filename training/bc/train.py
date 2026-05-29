@@ -50,10 +50,11 @@ from bc.loss import LossAccumulator, bc_loss
 from bc.model import BCModel
 from bc.resume_warmup import WarmupSchedule
 from bc.run_dir import RunArtifacts
+from bc.run_logger import RunLogger
 from bc.splits import load_manifest, samples_for_split
 from bc.state import TrainingState
 from bc.train_config import TrainConfig
-from utils.log import tee_stdio
+from utils.log import abort, tee_stdio
 
 
 def _fmt_metric(x: float | None, prec: int = 4) -> str:
@@ -280,11 +281,11 @@ def run_training(
     disable_mps_fallback()
 
     if not config.manifest.exists():
-        raise SystemExit(f"manifest not found: {config.manifest}")
+        abort(f"manifest not found: {config.manifest}")
     if not config.intermediate.exists():
-        raise SystemExit(f"intermediate corpus not found: {config.intermediate}")
+        abort(f"intermediate corpus not found: {config.intermediate}")
     if not config.run_dir.exists():
-        raise SystemExit(f"run_dir not found: {config.run_dir}")
+        abort(f"run_dir not found: {config.run_dir}")
 
     device = pick_device(config.device)
     torch.manual_seed(config.seed)
@@ -334,6 +335,15 @@ def run_training(
             print(f"  device peak FP32:     {peak_tflops:.1f} TFLOPS")
         else:
             print("  device peak FP32:     unknown (MFU will be omitted)")
+        # Resume-only: announce the legacy cold-restart LR ramp so it's visible
+        # in run{suffix}.log (the per-batch lr lands in batches.jsonl). Prints
+        # only when a warmup is configured — silent on fresh/combined runs.
+        if state.warmup is not None:
+            w = state.warmup
+            print(
+                f"  legacy-resume LR warmup: ramping over first {w.n_batches} batches "
+                f"({w.target_lr / w.n_batches:.2e} -> {w.target_lr:.2e})"
+            )
         print()
 
         artifacts = RunArtifacts(

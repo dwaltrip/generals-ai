@@ -23,6 +23,7 @@ from bc.run_dir import (
 from bc.state import TrainingState
 from bc.train import run_training
 from bc.train_config import TrainConfig
+from utils.log import abort
 
 
 # TrainConfig fields supplied by the environment, not carried over from the
@@ -70,19 +71,19 @@ def bc_resume(
     effective = _resume_config(config, parent, overrides)
     check_drift(effective, parent, force_config_mismatch)
     if info.parent_epoch >= effective.epochs:
-        raise SystemExit(
+        abort(
             f"--resume: latest checkpoint is epoch {info.parent_epoch}, but --epochs "
             f"is {effective.epochs} — nothing to resume (raise --epochs to continue)."
         )
     if info.is_legacy_checkpoint and legacy_lr_warmup_batches is None:
-        raise SystemExit(
+        abort(
             "--resume: latest checkpoint is a legacy bare-state_dict (no saved "
             "optimizer state). Cold-restarting the optimizer is an explicit opt-in "
             "— pass --legacy-lr-warmup-batches N (e.g. 500) to ramp the LR while "
             "AdamW's variance estimate re-warms."
         )
     if not info.is_legacy_checkpoint and legacy_lr_warmup_batches is not None:
-        raise SystemExit(
+        abort(
             "--resume: --legacy-lr-warmup-batches applies only to legacy "
             "bare-state_dict checkpoints. This is a combined-format checkpoint "
             "with healthy optimizer state — drop the flag to resume normally."

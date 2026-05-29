@@ -7,8 +7,10 @@ single source of truth for training flags; cloud-only flags are
 `add_argument`'d to the same parser by this wrapper, so collisions with
 training flags raise `argparse.ArgumentError` at add-time.
 
-Run:
-    uv run modal run training/scripts/run_bc_modal.py \\
+Run with `--detach` so the spawned training survives the local process —
+without it, Modal stops the ephemeral app when the local entrypoint returns
+and cancels the in-flight run (the function uses `.spawn()`, fire-and-forget):
+    uv run modal run --detach training/scripts/run_bc_modal.py \\
         --modal-gpu T4 --max-batches 5 --epochs 2
 """
 
@@ -46,7 +48,7 @@ training_runs_vol = modal.Volume.from_name("generals-ai.training-runs")
         "/data": parsed_replays_vol,
         "/runs": training_runs_vol,
     },
-    timeout=60 * 60 * 6,
+    timeout=60 * 60 * 12,
 )
 def train_remote(
     config: TrainConfig,

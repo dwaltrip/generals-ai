@@ -7,7 +7,22 @@ import traceback
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Iterator, Protocol
+from typing import Iterator, NoReturn, Protocol
+
+
+def abort(message: str) -> NoReturn:
+    """Print `message` to stdout, then raise `SystemExit(message)`.
+
+    The `print` is the point: it puts the reason on stdout regardless of how the
+    `SystemExit` is handled. Run-abort checks (e.g. a resume drift / legacy /
+    missing-checkpoint gate) fire *before* `tee_stdio` opens its log, and on
+    Modal a container only surfaces what reached stdout/stderr — a bare
+    `raise SystemExit(msg)` there can terminate the run with the reason lost.
+    Routing run-aborts through here keeps the reason visible in the call log.
+    The message stays on the `SystemExit` too, so callers (and tests) see it.
+    """
+    print(message)
+    raise SystemExit(message)
 
 
 class _Writable(Protocol):
