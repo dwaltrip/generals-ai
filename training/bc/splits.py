@@ -42,9 +42,9 @@ from __future__ import annotations
 import argparse
 import datetime
 import json
+from pathlib import Path
 import random
 import subprocess
-from pathlib import Path
 
 from bc.filters import DROP_REASONS, FILTER_VERSION, eligible_perspectives
 from bc.utils import list_sim_paths, meta_path_for
@@ -176,7 +176,7 @@ def build_manifest(
     return {
         "version": MANIFEST_VERSION,
         "seed": seed,
-        "built_at": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
+        "built_at": datetime.datetime.now(datetime.UTC).isoformat(timespec="seconds"),
         "intermediate_root": str(intermediate_root),
         "filter_version": FILTER_VERSION,
         "git_sha": _git_sha(),

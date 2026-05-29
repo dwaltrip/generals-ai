@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-from bc.resume_warmup import WarmupSchedule
 import pytest
 import torch
+
+from bc.resume_warmup import WarmupSchedule
 
 
 def _optim(lr: float = 0.0) -> torch.optim.Optimizer:

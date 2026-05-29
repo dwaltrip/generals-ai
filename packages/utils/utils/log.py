@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
+from datetime import UTC, datetime
+from pathlib import Path
 import sys
 import traceback
-from contextlib import contextmanager
-from datetime import datetime, timezone
-from pathlib import Path
-from typing import Iterator, NoReturn, Protocol
+from typing import NoReturn, Protocol
 
 
 def abort(message: str) -> NoReturn:
@@ -70,7 +71,7 @@ class _TimestampedStream:
 
     @staticmethod
     def _now_prefix() -> str:
-        return datetime.now(timezone.utc).strftime("[%H:%M:%S] ")
+        return datetime.now(UTC).strftime("[%H:%M:%S] ")
 
     def write(self, s: str) -> int:
         n = len(s)

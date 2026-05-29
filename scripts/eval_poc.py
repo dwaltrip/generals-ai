@@ -16,6 +16,7 @@ import random
 import time
 
 from bc.checkpoint import load_bc_model
+
 from eval_bot.bot_config import BotConfig
 from eval_bot.eval_bot_agent import EvalBotAgent
 from game_runner.policy import GameResult

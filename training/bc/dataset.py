@@ -30,7 +30,8 @@ from typing import TypeVar
 
 import numpy as np
 import torch
-from torch.utils.data import DataLoader, IterableDataset as TorchIterableDataset
+from torch.utils.data import DataLoader
+from torch.utils.data import IterableDataset as TorchIterableDataset
 
 from bc import actions, bfs
 from bc.constants import H_PADDED, W_PADDED

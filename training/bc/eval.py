@@ -37,8 +37,8 @@ Architectural notes:
 
 from __future__ import annotations
 
-import time
 from pathlib import Path
+import time
 
 import torch
 from torch.utils.data import DataLoader

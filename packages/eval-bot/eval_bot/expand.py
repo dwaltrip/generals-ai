@@ -17,6 +17,7 @@ from eval_bot.gather import gather_path
 from eval_bot.plan import ExplorePlan, GateResult, NaiveExplorePlan, SingleMove
 from eval_bot.world_model import PlayerView
 
+
 NEUTRAL = -1
 
 MOVE_EXPAND = "expand"

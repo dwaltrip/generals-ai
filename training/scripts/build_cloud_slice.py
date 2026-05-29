@@ -16,8 +16,8 @@ Run:
 from __future__ import annotations
 
 import argparse
-import shutil
 from pathlib import Path
+import shutil
 
 from bc.splits import load_manifest
 from bc.utils import meta_path_for, sim_path_for

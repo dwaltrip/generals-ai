@@ -1,0 +1,6 @@
+extend = "../ruff.toml"
+
+# `training/` ships top-level packages (`bc`, `shared`, …) rather than a
+# single `training` package. `src = ["."]` tells ruff to auto-detect them as
+# first-party for files under this directory — no need to enumerate names.
+src = ["."]

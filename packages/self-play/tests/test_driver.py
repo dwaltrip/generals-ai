@@ -12,12 +12,11 @@ browser for manual visual check.
 
 from pathlib import Path
 
-import pytest
-import torch
-
 from bc.checkpoint import load_bc_model
-from replay_collector.config import DB_PATH
+import pytest
+
 from game_runner import seed_map, viewer
+from replay_collector.config import DB_PATH
 from self_play import agent, driver
 
 

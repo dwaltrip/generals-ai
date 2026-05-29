@@ -48,7 +48,6 @@ import numpy as np
 
 from bc import bfs
 from bc.constants import (
-    CHANNEL_ORDER,
     CITY_TRAVERSABILITY_FACTOR,
     DENSE_HISTORY_N,
     H_PADDED,

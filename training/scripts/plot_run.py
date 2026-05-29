@@ -27,6 +27,7 @@ from pathlib import Path
 
 import matplotlib
 
+
 matplotlib.use("Agg")  # headless; must precede pyplot import
 import matplotlib.pyplot as plt
 

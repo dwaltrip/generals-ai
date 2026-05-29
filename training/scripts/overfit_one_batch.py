@@ -19,8 +19,8 @@ algorithmic from MPS-coverage bugs.
 from __future__ import annotations
 
 import argparse
-import time
 from pathlib import Path
+import time
 
 import torch
 from torch.utils.data import DataLoader

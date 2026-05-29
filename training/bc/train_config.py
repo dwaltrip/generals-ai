@@ -12,7 +12,7 @@ where to look on the outputs Volume.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 
@@ -136,7 +136,7 @@ def make_run_id() -> str:
     Dash-separated time component (not the `:` ISO 8601 uses) so the id
     is safe to use as a filesystem path on every OS we care about.
     """
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H-%M-%SZ")
+    return datetime.now(UTC).strftime("%Y-%m-%dT%H-%M-%SZ")
 
 
 def json_default(obj: object) -> str:

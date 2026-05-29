@@ -18,8 +18,8 @@ import sys
 
 from replay_collector.db import create_conn
 from replay_collector.sql_helpers import ffa_match_filter, from_player_games, wire_data_filter
-from utils.usernames import display_name
 from utils.docstring import doc_summary
+from utils.usernames import display_name
 
 
 def fetch_by_game_count(top_n: int, require_wire_data: bool) -> list[tuple[str, int]]:

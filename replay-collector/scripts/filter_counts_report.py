@@ -36,8 +36,8 @@ import time
 from replay_collector import wire
 from replay_collector.cli._shared import TMP_DIR
 from replay_collector.db import create_conn
-from utils.usernames import display_name
 from utils.player_name_lists import load_players
+from utils.usernames import display_name
 
 
 log = logging.getLogger("filter_counts")

@@ -22,17 +22,18 @@ from __future__ import annotations
 
 from typing import Any
 
-import numpy as np
-import torch
-
-import sim_core
-
-from bc import actions, bfs as bc_bfs, mask as bc_mask, obs as bc_obs, visibility
+from bc import actions, visibility
+from bc import bfs as bc_bfs
+from bc import mask as bc_mask
+from bc import obs as bc_obs
 from bc.constants import H_PADDED, W_PADDED
 from bc.loss import flatten_policy_logits
 from bc.model import BCModel
+import numpy as np
+import torch
 
 from game_runner import sim_adapter
+import sim_core
 
 
 P = 8  # fixed slot count the model + obs encoder were trained on

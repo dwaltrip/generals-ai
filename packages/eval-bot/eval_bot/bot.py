@@ -9,15 +9,21 @@ from __future__ import annotations
 
 from typing import Any
 
-import sim_core
-
 from eval_bot.attack import should_clear_attack, try_attack
 from eval_bot.bot_config import BotConfig
 from eval_bot.defend import should_clear_defend, try_defend
 from eval_bot.expand import MOVE_EXPAND, MOVE_EXPLORE, pick_expand_or_explore, try_naive_explore
 from eval_bot.killshot import try_killshot
-from eval_bot.plan import AttackPlan, DefendPlan, GateResult, KillshotPlan, NaiveExplorePlan, Plan, SingleMove
+from eval_bot.plan import (
+    AttackPlan,
+    DefendPlan,
+    GateResult,
+    KillshotPlan,
+    Plan,
+    SingleMove,
+)
 from eval_bot.world_model import PlayerView, WorldModel
+import sim_core
 
 
 def _is_spent(view: PlayerView, plan: Plan) -> bool:

@@ -3,8 +3,8 @@ semantics, `_walk` elimination cutoff) and `bc.filters.is_eligible`."""
 
 from __future__ import annotations
 
-import random
 from pathlib import Path
+import random
 
 import numpy as np
 import pytest

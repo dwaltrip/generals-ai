@@ -6,10 +6,9 @@ sim_core. Skips if the local replay DB isn't populated.
 
 import pytest
 
-import sim_core
-
-from replay_collector.config import DB_PATH
 from game_runner import seed_map
+from replay_collector.config import DB_PATH
+import sim_core
 
 
 @pytest.fixture(scope="module")

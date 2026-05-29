@@ -16,13 +16,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from shared.device import resolve_precision
 import torch
 
 from bc.checkpoint import ckpt_name, is_combined_checkpoint, load_bc_model
 from bc.model import BCModel
 from bc.resume_warmup import WarmupSchedule
 from bc.train_config import TrainConfig
+from shared.device import resolve_precision
 
 
 def _build_optim(model: BCModel, config: TrainConfig) -> torch.optim.Optimizer:

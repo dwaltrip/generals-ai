@@ -18,8 +18,8 @@ from collections import defaultdict
 import numpy as np
 import pytest
 
-import sim_core
 from replay_parser.parser import parse_replay
+import sim_core
 
 from _fixture_lib import FIXTURES, FIXTURES_DIR
 

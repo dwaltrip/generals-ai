@@ -36,9 +36,9 @@ to omit than to compare against a wrong denominator). Add entries as needed.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 import platform
 import subprocess
-from typing import Callable
 
 import torch
 from torch.utils.flop_counter import FlopCounterMode

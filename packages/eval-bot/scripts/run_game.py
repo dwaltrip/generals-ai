@@ -13,13 +13,12 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
-import random
 from pathlib import Path
-
-from game_runner.seed_map import list_two_player_replay_ids, load_static_from_db
-from game_runner.viewer import build_html_from_state
+import random
 
 from eval_bot.driver import play_game
+from game_runner.seed_map import list_two_player_replay_ids, load_static_from_db
+from game_runner.viewer import build_html_from_state
 
 
 _DEFAULT_TMP = Path(__file__).resolve().parents[1] / "tmp"

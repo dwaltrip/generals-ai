@@ -1,9 +1,9 @@
 """Write JSON to disk, formatted compactly via `fjson` when available."""
 
 import json
+from pathlib import Path
 import subprocess
 import sys
-from pathlib import Path
 
 
 def write_json(

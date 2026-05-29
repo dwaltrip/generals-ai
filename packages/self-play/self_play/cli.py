@@ -16,9 +16,9 @@ import argparse
 import datetime as dt
 from pathlib import Path
 
+from bc.checkpoint import load_bc_model
 import torch
 
-from bc.checkpoint import load_bc_model
 from game_runner import seed_map, viewer
 from self_play import agent, driver
 

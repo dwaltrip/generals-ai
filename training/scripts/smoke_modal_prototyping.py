@@ -23,6 +23,7 @@ Run:
 
 from __future__ import annotations
 
+from datetime import UTC
 from pathlib import Path
 
 import modal
@@ -112,10 +113,10 @@ def smoke_outputs() -> dict:
     `modal volume get generals-ai.training-runs /<run_id>/ <local-dest>`
     will see them once this returns.
     """
+    from datetime import datetime
     import json
     import platform
     import socket
-    from datetime import datetime, timezone
 
     from bc.train_config import make_run_id
 
@@ -126,7 +127,7 @@ def smoke_outputs() -> dict:
     metadata = {
         "run_id": run_id,
         "smoke": True,
-        "written_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "written_at": datetime.now(UTC).isoformat(timespec="seconds"),
         "python": platform.python_version(),
         "hostname": socket.gethostname(),
     }

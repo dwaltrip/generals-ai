@@ -12,15 +12,14 @@ training/data/runs-cloud/2026-05-23T23-40-14Z/checkpoints/epoch_005.pt
 
 from pathlib import Path
 
+from bc.checkpoint import load_bc_model
 import pytest
 import torch
 
-import sim_core
-
-from bc.checkpoint import load_bc_model
-from replay_collector.config import DB_PATH
 from game_runner import seed_map
+from replay_collector.config import DB_PATH
 from self_play import agent
+import sim_core
 
 
 # Repo-rooted absolute path so the test works from any CWD.
@@ -56,7 +55,7 @@ def test_load_checkpoint_smoke(loaded_model):
     assert isinstance(model, torch.nn.Module)
     # Sanity: forward a zero obs to confirm the loaded weights produce
     # the expected output shapes (size of the policy/pass/value heads).
-    from bc.constants import OBS_CHANNELS, H_PADDED, W_PADDED
+    from bc.constants import H_PADDED, OBS_CHANNELS, W_PADDED
     obs = torch.zeros((1, OBS_CHANNELS, H_PADDED, W_PADDED), device=device)
     valid_mask = torch.ones((1, 1, H_PADDED, W_PADDED), dtype=torch.bool, device=device)
     with torch.no_grad():

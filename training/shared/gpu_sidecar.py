@@ -33,12 +33,12 @@ Subprocess (`nvidia-smi` polling) would also work; threads are simpler.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 import json
+from pathlib import Path
 import threading
 import time
-from contextlib import contextmanager
-from pathlib import Path
-from typing import Iterator
 
 import torch
 

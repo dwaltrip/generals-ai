@@ -1,8 +1,7 @@
 """Smoke test: run a short game with EvalBots and verify they expand."""
 
-from game_runner.seed_map import list_two_player_replay_ids, load_static_from_db
-
 from eval_bot.driver import play_game
+from game_runner.seed_map import list_two_player_replay_ids, load_static_from_db
 
 
 def test_bots_expand():

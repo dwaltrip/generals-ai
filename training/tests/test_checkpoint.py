@@ -3,9 +3,10 @@ plus the combined-vs-legacy format detection used by the resume path."""
 
 from __future__ import annotations
 
+import torch
+
 from bc.checkpoint import is_legacy_checkpoint, load_bc_model
 from bc.model import BCModel
-import torch
 
 
 def test_load_bc_model_bare_state_dict(tmp_path):

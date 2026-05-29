@@ -10,20 +10,19 @@ from collections import deque
 from dataclasses import dataclass
 from typing import Any, NamedTuple
 
-import numpy as np
-
-import sim_core
-
 # TODO: cross-package dep on training internals — extract shared
 # fog-tracking module if this coupling becomes painful.
-from bc import obs as bc_obs, visibility
+from bc import obs as bc_obs
+from bc import visibility
 from bc.obs import MemoryState
-
-from self_play.agent import pad_initial_generals
-from game_runner.sim_adapter import capture_events_to_array
+import numpy as np
 
 from eval_bot.bfs import bfs_distances
 from eval_bot.bot_config import BotConfig
+from game_runner.sim_adapter import capture_events_to_array
+from self_play.agent import pad_initial_generals
+import sim_core
+
 
 P = 8  # fixed slot count the obs encoder was trained on
 

@@ -19,9 +19,9 @@ from __future__ import annotations
 import argparse
 import json
 import math
-import statistics
 from math import comb
 from pathlib import Path
+import statistics
 
 
 def policy_kind(spec: str) -> str:

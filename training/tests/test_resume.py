@@ -12,11 +12,12 @@ from dataclasses import asdict
 import json
 from pathlib import Path
 
+import pytest
+import torch
+
 from bc.resume import _resume_config, bc_resume
 from bc.run_dir import ResumeInfo, check_drift, prepare_resume
 from bc.train_config import TrainConfig, json_default
-import pytest
-import torch
 
 
 def _config(**overrides: object) -> TrainConfig:

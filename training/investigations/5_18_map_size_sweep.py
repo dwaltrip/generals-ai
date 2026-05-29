@@ -17,9 +17,9 @@ from pathlib import Path
 import sqlite3
 import time
 
-from _helpers import DB_PATH, iter_intermediate_files, replay_id_from_path
-
 from utils.distribution import print_counts_with_percents
+
+from _helpers import DB_PATH, iter_intermediate_files, replay_id_from_path
 
 
 def load_map_dims_and_started(db_path: Path) -> dict[str, tuple[int, int, int]]:

@@ -24,9 +24,9 @@ import sys
 from replay_collector import generals_api
 from replay_collector.client import RateLimiter, TrackedClient, make_client
 from replay_collector.runner import DEFAULT_RATES
-from utils.usernames import is_valid_username
 from utils.docstring import doc_summary
 from utils.player_name_lists import load_players_raw
+from utils.usernames import is_valid_username
 
 
 def main() -> None:

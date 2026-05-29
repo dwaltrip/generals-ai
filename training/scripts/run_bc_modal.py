@@ -22,9 +22,10 @@ from pathlib import Path
 import platform
 import socket
 
+import modal
+
 from bc.train_cli import build_arg_parser, config_from_args, training_overrides
 from bc.train_config import TrainConfig
-import modal
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent

@@ -17,8 +17,8 @@ import json
 from pathlib import Path
 import sys
 
-from utils.usernames import filter_valid
 from utils.docstring import doc_summary
+from utils.usernames import filter_valid
 
 
 def load_users_from_json(path: Path) -> list[str]:

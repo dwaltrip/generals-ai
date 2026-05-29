@@ -15,14 +15,14 @@ import time
 
 import numpy as np
 
+from utils.distribution import print_distribution
+
 from _helpers import (
     load_replay_months,
     meta_path_for,
     replay_id_from_path,
     sample_files,
 )
-
-from utils.distribution import print_distribution
 
 
 DEFAULT_N = 10_000

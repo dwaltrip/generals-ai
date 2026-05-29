@@ -30,15 +30,6 @@ from collections.abc import Callable
 from pathlib import Path
 import time
 
-from shared.device import (
-    dataloader_kwargs,
-    disable_mps_fallback,
-    move_batch,
-    pick_device,
-    resolve_precision,
-)
-from shared.gpu_sidecar import gpu_util_sidecar
-from shared.perf import compute_mfu, measure_total_flops, peak_tflops_fp32
 import torch
 from torch.utils.data import DataLoader
 
@@ -54,6 +45,15 @@ from bc.run_logger import RunLogger
 from bc.splits import load_manifest, samples_for_split
 from bc.state import TrainingState
 from bc.train_config import TrainConfig
+from shared.device import (
+    dataloader_kwargs,
+    disable_mps_fallback,
+    move_batch,
+    pick_device,
+    resolve_precision,
+)
+from shared.gpu_sidecar import gpu_util_sidecar
+from shared.perf import compute_mfu, measure_total_flops, peak_tflops_fp32
 from utils.log import abort, tee_stdio
 
 
