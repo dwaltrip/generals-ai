@@ -14,7 +14,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from bc.resume import bc_resume
-from bc.run_dir import initialize_run_dir
+from bc.run_dir import initialize_run_dir, prepare_resume
 from bc.train import bc_run
 from bc.train_cli import build_arg_parser, config_from_args, training_overrides
 
@@ -34,7 +34,9 @@ def main() -> None:
     args = parser.parse_args()
     config = config_from_args(args)
     if args.resume:
-        bc_resume(config, args.force_config_mismatch, training_overrides(args))
+        info = prepare_resume(config.run_dir)
+        bc_resume(config, args.force_config_mismatch, training_overrides(args),
+                  info, args.legacy_lr_warmup_batches)
     else:
         initialize_run_dir(config)
         bc_run(config)

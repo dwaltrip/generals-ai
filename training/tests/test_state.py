@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-import torch
-
 from bc.constants import H_PADDED, OBS_CHANNELS, W_PADDED
+from bc.model import BCModel
 from bc.state import TrainingState
 from bc.train_config import TrainConfig
+import torch
 
 
 def _config(tmp_path):
@@ -65,3 +65,31 @@ def test_training_state_round_trip(tmp_path):
     for pid in src_opt:
         for buf in ("exp_avg", "exp_avg_sq"):
             assert torch.equal(src_opt[pid][buf], res_opt[pid][buf]), f"optim {buf} @ {pid}"
+
+
+def test_from_checkpoint_legacy_uses_fallback_epoch(tmp_path):
+    """A legacy bare-state_dict has no epoch — resume passes the filename-derived
+    parent epoch as the fallback, and the warmup field is left for the resume
+    path to attach (not set here)."""
+    device = torch.device("cpu")
+    config = _config(tmp_path)
+    ckpt = tmp_path / "epoch_007.pt"
+    torch.save(BCModel(value_head_variant="direct").state_dict(), ckpt)
+
+    restored = TrainingState.from_checkpoint(ckpt, config, device, fallback_epoch=7)
+    assert restored.epoch == 7      # from the filename, not the 0 default
+    assert restored.warmup is None
+
+
+def test_from_checkpoint_combined_ignores_fallback_epoch(tmp_path):
+    """A combined checkpoint carries its own epoch — fallback is inert."""
+    device = torch.device("cpu")
+    config = _config(tmp_path)
+    ckpt_dir = tmp_path / "checkpoints"
+    ckpt_dir.mkdir()
+    src = TrainingState.fresh(config, device)
+    src.epoch = 4
+    path = src.save(ckpt_dir)
+
+    restored = TrainingState.from_checkpoint(path, config, device, fallback_epoch=99)
+    assert restored.epoch == 4      # the checkpoint's own epoch wins

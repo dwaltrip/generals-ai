@@ -26,23 +26,10 @@ Files produced:
 
 from __future__ import annotations
 
-import time
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable
+import time
 
-import torch
-from torch.utils.data import DataLoader
-
-from bc.checkpoint import ckpt_name
-from bc.constants import H_PADDED, OBS_CHANNELS, W_PADDED
-from bc.dataset import IterableDataset, assert_safe_loader
-from bc.eval import run_val
-from bc.loss import LossAccumulator, bc_loss
-from bc.model import BCModel
-from bc.run_dir import RunArtifacts
-from bc.splits import load_manifest, samples_for_split
-from bc.state import TrainingState
-from bc.train_config import TrainConfig
 from shared.device import (
     dataloader_kwargs,
     disable_mps_fallback,
@@ -52,6 +39,20 @@ from shared.device import (
 )
 from shared.gpu_sidecar import gpu_util_sidecar
 from shared.perf import compute_mfu, measure_total_flops, peak_tflops_fp32
+import torch
+from torch.utils.data import DataLoader
+
+from bc.checkpoint import ckpt_name
+from bc.constants import H_PADDED, OBS_CHANNELS, W_PADDED
+from bc.dataset import IterableDataset, assert_safe_loader
+from bc.eval import run_val
+from bc.loss import LossAccumulator, bc_loss
+from bc.model import BCModel
+from bc.resume_warmup import WarmupSchedule
+from bc.run_dir import RunArtifacts
+from bc.splits import load_manifest, samples_for_split
+from bc.state import TrainingState
+from bc.train_config import TrainConfig
 from utils.log import tee_stdio
 
 
@@ -104,12 +105,16 @@ def train_one_epoch(
     log_every: int,
     scaler: torch.amp.GradScaler,
     amp_dtype: torch.dtype | None,
+    warmup: WarmupSchedule | None = None,
 ) -> dict:
     """Run one epoch of BC training.
 
     Iterates `loader`, performs forward/backward/optim.step per batch,
     writes per-batch JSONL records via `logger`, and prints a console
     line every `log_every` batches with a rolling samples/sec rate.
+
+    `warmup` (legacy-resume LR ramp) is stepped at the top of each batch when
+    present; `None` on fresh runs and combined resumes, where the LR is constant.
 
     Returns the epoch summary dict: sample-weighted mean losses (via
     `LossAccumulator`) plus `n_batches`, `duration_sec`, `samples_per_sec`.
@@ -141,6 +146,11 @@ def train_one_epoch(
     for batch_idx, batch in enumerate(loader):
         if max_batches is not None and batch_idx >= max_batches:
             break
+
+        # Legacy-resume LR warmup: set this batch's LR on the optimizer before
+        # the step. No-op when warmup is None (fresh runs / combined resumes).
+        if warmup is not None:
+            warmup.step(optim)
 
         batch = move_batch(batch, device)
         optim.zero_grad()
@@ -174,6 +184,7 @@ def train_one_epoch(
             "value": float(losses["value"].item()),
             "pass": float(losses["pass"].item()),
             "total": float(losses["total"].item()),
+            "lr": optim.param_groups[0]["lr"],
             "n_non_pass": int(losses["n_non_pass"].item()),
             "wall_time_sec": round(time.perf_counter() - run_start, 3),
         })
@@ -428,6 +439,7 @@ def train_loop(
                 log_every=config.log_every,
                 scaler=state.scaler,
                 amp_dtype=amp_dtype,
+                warmup=state.warmup,
             )
             if config.skip_val:
                 val_summary = None

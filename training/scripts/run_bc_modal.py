@@ -14,16 +14,15 @@ Run:
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 import json
+from pathlib import Path
 import platform
 import socket
-from datetime import datetime, timezone
-from pathlib import Path
-
-import modal
 
 from bc.train_cli import build_arg_parser, config_from_args, training_overrides
 from bc.train_config import TrainConfig
+import modal
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -55,6 +54,7 @@ def train_remote(
     resume: str | None,
     force_config_mismatch: bool,
     overrides: dict,
+    legacy_lr_warmup_batches: int | None,
 ) -> None:
     """Run a fresh or resumed BC training segment on a Modal GPU.
 
@@ -76,7 +76,7 @@ def train_remote(
         # doesn't recompute (and double-count) the suffix.
         info = prepare_resume(config.run_dir)
         _write_args_cloud(config.run_dir, modal_gpu, suffix=info.next_suffix)
-        bc_resume(config, force_config_mismatch, overrides, info=info)
+        bc_resume(config, force_config_mismatch, overrides, info, legacy_lr_warmup_batches)
     else:
         initialize_run_dir(config)
         _write_args_cloud(config.run_dir, modal_gpu)
@@ -96,7 +96,7 @@ def _write_args_cloud(run_dir: Path, modal_gpu: str, suffix: str = "") -> None:
         "cuda_device_name": cuda_device_name,
         "python": platform.python_version(),
         "hostname": socket.gethostname(),
-        "written_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "written_at": datetime.now(UTC).isoformat(timespec="seconds"),
     }
     with (run_dir / f"args_cloud{suffix}.json").open("x") as fp:
         json.dump(args_cloud, fp, indent=2)
@@ -131,7 +131,8 @@ def train(*arglist: str) -> None:
     print(f"  uv run modal volume get generals-ai.training-runs /{run_id} training/data/runs-cloud")
 
     train_remote.with_options(gpu=args.modal_gpu).spawn(
-        config, args.modal_gpu, args.resume, args.force_config_mismatch, training_overrides(args)
+        config, args.modal_gpu, args.resume, args.force_config_mismatch,
+        training_overrides(args), args.legacy_lr_warmup_batches,
     )
 
     print()

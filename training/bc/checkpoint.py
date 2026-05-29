@@ -25,6 +25,29 @@ def ckpt_name(epoch: int) -> str:
     return f"epoch_{epoch:03d}.pt"
 
 
+def is_combined_checkpoint(obj: object) -> bool:
+    """True if a loaded checkpoint object is the combined dict format.
+
+    The combined format (written by `TrainingState.save`) is a dict carrying a
+    top-level `"model"` key alongside `optim`/`scaler`/`epoch`. A legacy bare
+    `state_dict` is also a dict, but its keys are parameter names
+    (`trunk.0.weight`, ...), so the `"model"` key is the discriminator.
+    """
+    return isinstance(obj, dict) and "model" in obj
+
+
+def is_legacy_checkpoint(path: str | Path, device: str | torch.device = "cpu") -> bool:
+    """True if `path` is a legacy bare-`state_dict` checkpoint.
+
+    Reads the checkpoint to inspect its top-level structure. The resume path
+    uses this to decide whether a cold optimizer restart (and the
+    `--legacy-lr-warmup-batches` opt-in) is required. Loads to CPU by default —
+    only the structure is needed, not a device-resident model.
+    """
+    obj = torch.load(path, map_location=device, weights_only=True)
+    return not is_combined_checkpoint(obj)
+
+
 def load_bc_model(
     path: str | Path,
     device: torch.device,
@@ -45,7 +68,7 @@ def load_bc_model(
     """
     model = BCModel(value_head_variant=value_head_variant)
     obj = torch.load(path, map_location=device, weights_only=True)
-    state_dict = obj["model"] if isinstance(obj, dict) and "model" in obj else obj
+    state_dict = obj["model"] if is_combined_checkpoint(obj) else obj
     model.load_state_dict(state_dict)
     model.to(device)
     model.eval()

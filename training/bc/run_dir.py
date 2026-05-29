@@ -10,12 +10,13 @@ existing run dir and write the `_resume_NN`-suffixed sibling provenance.
 
 from __future__ import annotations
 
-import json
-import re
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
+import json
 from pathlib import Path
+import re
 
+from bc.checkpoint import is_legacy_checkpoint
 from bc.run_logger import RunLogger
 from bc.train_config import TrainConfig, json_default
 
@@ -90,13 +91,16 @@ class ResumeInfo:
     `next_suffix` names this segment's artifacts ("_resume_NN");
     `latest_checkpoint` is the checkpoint to restore; `parent_epoch` is its
     epoch (the last completed); `parent_args_path` is the immediate
-    predecessor's args file (for drift comparison + the `_resume_meta` chain).
+    predecessor's args file (for drift comparison + the `_resume_meta` chain);
+    `is_legacy_checkpoint` flags a bare-state_dict checkpoint (cold optimizer
+    restart — requires `--legacy-lr-warmup-batches`).
     """
 
     next_suffix: str
     latest_checkpoint: Path
     parent_epoch: int
     parent_args_path: Path
+    is_legacy_checkpoint: bool
 
 
 # Drift buckets (design doc §--force-config-mismatch). Excluded fields are
@@ -112,10 +116,11 @@ _RESUME_SUFFIX_RE = re.compile(r"_resume_(\d{2})\.")
 def prepare_resume(run_dir: Path) -> ResumeInfo:
     """Inspect a run dir to plan a resume. Pure read — no writes.
 
-    Picks the latest checkpoint by epoch number and computes the next
-    `_resume_NN` suffix from the resume artifacts already present. Aborts
-    (`SystemExit`) if the run dir or its checkpoints are missing — the
-    operator fixes the path and retries.
+    Picks the latest checkpoint by epoch number, computes the next `_resume_NN`
+    suffix from the resume artifacts already present, and peeks the chosen
+    checkpoint's format (combined vs. legacy bare-state_dict). Aborts
+    (`SystemExit`) if the run dir or its checkpoints are missing — the operator
+    fixes the path and retries.
     """
     if not run_dir.exists():
         raise SystemExit(f"--resume: run dir not found: {run_dir}")
@@ -140,6 +145,7 @@ def prepare_resume(run_dir: Path) -> ResumeInfo:
         latest_checkpoint=latest,
         parent_epoch=parent_epoch,
         parent_args_path=run_dir / parent_args,
+        is_legacy_checkpoint=is_legacy_checkpoint(latest),
     )
 
 
@@ -180,15 +186,29 @@ def check_drift(config: TrainConfig, parent: dict, force_config_mismatch: bool) 
         )
 
 
-def write_args_resume(config: TrainConfig, info: ResumeInfo) -> None:
+def write_args_resume(
+    config: TrainConfig,
+    info: ResumeInfo,
+    *,
+    legacy_lr_warmup_batches: int | None,
+    force_config_mismatch: bool,
+) -> None:
     """Write `args_resume_NN.json`: the resume config plus a `_resume_meta`
-    block pointing at the immediate predecessor (for chain-walking). Uses
-    exclusive create, so a miscomputed suffix fails loudly."""
+    block. Uses exclusive create, so a miscomputed suffix fails loudly.
+
+    `_resume_meta` records the resume-segment facts that aren't part of the
+    trajectory config: the predecessor link (for chain-walking), and the
+    resume-time directives (`legacy_lr_warmup_batches`, `force_config_mismatch`)
+    plus the detected `legacy_checkpoint` flag — so every input to the segment
+    is captured even though these directives aren't `TrainConfig` fields."""
     payload = {
         "_resume_meta": {
             "resumed_from_epoch": info.parent_epoch,
             "parent_args": info.parent_args_path.name,
-            "resumed_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "resumed_at": datetime.now(UTC).isoformat(timespec="seconds"),
+            "legacy_lr_warmup_batches": legacy_lr_warmup_batches,
+            "force_config_mismatch": force_config_mismatch,
+            "legacy_checkpoint": info.is_legacy_checkpoint,
         },
         **asdict(config),
     }

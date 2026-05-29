@@ -132,6 +132,18 @@ def build_arg_parser() -> argparse.ArgumentParser:
             "parent run (lr/weight_decay still cannot change)."
         ),
     )
+    parser.add_argument(
+        "--legacy-lr-warmup-batches",
+        type=int,
+        default=None,
+        help=(
+            "On --resume from a legacy bare-state_dict checkpoint (no saved "
+            "optimizer state), linearly ramp the LR from ~0 to the target over "
+            "the first N batches of the resumed segment, while AdamW's variance "
+            "estimate re-warms. Required to resume a legacy checkpoint; rejected "
+            "on a combined-format one."
+        ),
+    )
     return parser
 
 
@@ -199,6 +211,11 @@ def config_from_args(args: argparse.Namespace) -> TrainConfig:
         raise SystemExit("--out-dir is required (or set a default in the wrapper)")
     if args.force_config_mismatch and not args.resume:
         raise SystemExit("--force-config-mismatch only applies with --resume")
+    if args.legacy_lr_warmup_batches is not None:
+        if not args.resume:
+            raise SystemExit("--legacy-lr-warmup-batches only applies with --resume")
+        if args.legacy_lr_warmup_batches < 1:
+            raise SystemExit("--legacy-lr-warmup-batches must be >= 1")
 
     return TrainConfig(
         manifest=args.manifest,
