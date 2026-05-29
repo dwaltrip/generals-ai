@@ -31,7 +31,6 @@ regen() {
         >> "$LOG"
 }
 
-regen cloud-train-poc cloud-poc/modal_requirements.txt
 regen training training/modal_requirements.txt
 
 echo "(uv export stdout captured in $LOG)"

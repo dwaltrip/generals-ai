@@ -5,7 +5,6 @@ description = "generals-ai monorepo workspace root"
 requires-python = ">=3.14"
 dependencies = [
     "modal>=1.4.3",
-    "cloud-train-poc",
     "eval-bot",
     "eval-tools",
     "game-runner",
@@ -28,7 +27,6 @@ package = false
 # `packages/` keeps the outer dir off sys.path's namespace-search candidates.
 [tool.uv.workspace]
 members = [
-    "cloud-poc",
     "packages/eval-bot",
     "packages/eval-tools",
     "packages/game-runner",
@@ -41,7 +39,6 @@ members = [
 ]
 
 [tool.uv.sources]
-cloud-train-poc = { workspace = true }
 eval-bot = { workspace = true }
 eval-tools = { workspace = true }
 game-runner = { workspace = true }

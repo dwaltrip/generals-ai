@@ -3,9 +3,7 @@
 		{
 			"path": "."
 		},
-		{
-			"path": "rust-py-demo"
-		}
+		
 	],
 	"settings": {}
 }

@@ -9,4 +9,4 @@ fi
 
 echo "[pre-commit] uv.lock changed — regenerating modal_requirements.txt files"
 ./tools/regen_modal_reqs.sh
-git add cloud-poc/modal_requirements.txt training/modal_requirements.txt
+git add training/modal_requirements.txt
