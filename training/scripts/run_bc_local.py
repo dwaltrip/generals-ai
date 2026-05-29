@@ -13,9 +13,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from bc.resume import bc_resume
 from bc.run_dir import initialize_run_dir
 from bc.train import bc_run
-from bc.train_cli import build_arg_parser, config_from_args
+from bc.train_cli import build_arg_parser, config_from_args, training_overrides
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -32,8 +33,11 @@ def main() -> None:
     )
     args = parser.parse_args()
     config = config_from_args(args)
-    initialize_run_dir(config)
-    bc_run(config)
+    if args.resume:
+        bc_resume(config, args.force_config_mismatch, training_overrides(args))
+    else:
+        initialize_run_dir(config)
+        bc_run(config)
 
 
 if __name__ == "__main__":

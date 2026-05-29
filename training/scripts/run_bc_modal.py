@@ -22,7 +22,7 @@ from pathlib import Path
 
 import modal
 
-from bc.train_cli import build_arg_parser, config_from_args
+from bc.train_cli import build_arg_parser, config_from_args, training_overrides
 from bc.train_config import TrainConfig
 
 
@@ -49,26 +49,42 @@ training_runs_vol = modal.Volume.from_name("generals-ai.training-runs")
     },
     timeout=60 * 60 * 6,
 )
-def train_remote(config: TrainConfig, modal_gpu: str) -> None:
-    """Run `bc_run` on a Modal GPU.
+def train_remote(
+    config: TrainConfig,
+    modal_gpu: str,
+    resume: str | None,
+    force_config_mismatch: bool,
+    overrides: dict,
+) -> None:
+    """Run a fresh or resumed BC training segment on a Modal GPU.
 
-    Initializes the run dir, drops `args_cloud.json` *before* training
-    starts (so cloud-side provenance is captured even if training
-    raises), then hands off to `bc_run`. `args_cloud.json` sits next to
-    bc's `args.json` and captures what the training contract doesn't
-    know about: which GPU class the operator requested, which device
-    CUDA actually surfaced, container hostname.
+    Fresh: initialize the run dir, drop `args_cloud.json` *before* training
+    starts (so cloud-side provenance is captured even if training raises),
+    then hand off to `bc_run`. Resume: skip init (the dir exists), write the
+    segment-suffixed `args_cloud_resume_NN.json`, then `bc_resume`.
+    `args_cloud*.json` sits next to bc's args file and captures what the
+    training contract doesn't know: which GPU class the operator requested,
+    which device CUDA surfaced, the container hostname.
     """
-    from bc.run_dir import initialize_run_dir
+    from bc.resume import bc_resume
+    from bc.run_dir import initialize_run_dir, prepare_resume
     from bc.train import bc_run
 
-    initialize_run_dir(config)
-    _write_args_cloud(config.run_dir, modal_gpu)
-    bc_run(config)
+    if resume:
+        # Compute the suffix once so the cloud-only provenance lands on the
+        # same segment bc_resume writes; pass `info` through so bc_resume
+        # doesn't recompute (and double-count) the suffix.
+        info = prepare_resume(config.run_dir)
+        _write_args_cloud(config.run_dir, modal_gpu, suffix=info.next_suffix)
+        bc_resume(config, force_config_mismatch, overrides, info=info)
+    else:
+        initialize_run_dir(config)
+        _write_args_cloud(config.run_dir, modal_gpu)
+        bc_run(config)
 
 
-def _write_args_cloud(run_dir: Path, modal_gpu: str) -> None:
-    """Write a `args_cloud.json` sibling to bc's `args.json`."""
+def _write_args_cloud(run_dir: Path, modal_gpu: str, suffix: str = "") -> None:
+    """Write an `args_cloud{suffix}.json` sibling to bc's args file."""
     import torch
 
     cuda_device_name: str | None = None
@@ -82,7 +98,7 @@ def _write_args_cloud(run_dir: Path, modal_gpu: str) -> None:
         "hostname": socket.gethostname(),
         "written_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
     }
-    with (run_dir / "args_cloud.json").open("w") as fp:
+    with (run_dir / f"args_cloud{suffix}.json").open("x") as fp:
         json.dump(args_cloud, fp, indent=2)
 
 
@@ -114,7 +130,9 @@ def train(*arglist: str) -> None:
     print("Once the run is done, pull artifacts:")
     print(f"  uv run modal volume get generals-ai.training-runs /{run_id} training/data/runs-cloud")
 
-    train_remote.with_options(gpu=args.modal_gpu).spawn(config, args.modal_gpu)
+    train_remote.with_options(gpu=args.modal_gpu).spawn(
+        config, args.modal_gpu, args.resume, args.force_config_mismatch, training_overrides(args)
+    )
 
     print()
     print("Run spawned.")

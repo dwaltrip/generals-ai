@@ -111,6 +111,27 @@ def build_arg_parser() -> argparse.ArgumentParser:
             "for multi-scale receptive field (~+0.82M params)."
         ),
     )
+
+    # Resume directives — not TrainConfig fields. Read by the wrapper to
+    # dispatch bc_resume vs. a fresh bc_run, and by config_from_args to point
+    # run_dir at the resume target.
+    parser.add_argument(
+        "--resume",
+        default=None,
+        help=(
+            "Resume run-id (the timestamp dir name under --out-dir) from its "
+            "latest checkpoint. Unspecified knobs carry over from the parent run."
+        ),
+    )
+    parser.add_argument(
+        "--force-config-mismatch",
+        action="store_true",
+        default=False,
+        help=(
+            "On --resume, allow trajectory-critical config changes vs. the "
+            "parent run (lr/weight_decay still cannot change)."
+        ),
+    )
     return parser
 
 
@@ -146,6 +167,18 @@ def _adapt(dest: str, value: object) -> object:
     return value
 
 
+def training_overrides(args: argparse.Namespace) -> dict[str, object]:
+    """The training-knob fields the operator explicitly passed — the resume
+    overlay set. Same projection `config_from_args` applies before filling the
+    rest from `TrainConfig` defaults; the resume path overlays it onto the
+    parent run's config instead."""
+    return {
+        _TRAINING_FIELDS[dest]: _adapt(dest, val)
+        for dest, val in vars(args).items()
+        if dest in _TRAINING_FIELDS
+    }
+
+
 def config_from_args(args: argparse.Namespace) -> TrainConfig:
     """Build a `TrainConfig` from parsed CLI args.
 
@@ -154,22 +187,22 @@ def config_from_args(args: argparse.Namespace) -> TrainConfig:
     the user didn't pass it). Training knobs are overlaid onto `TrainConfig`'s
     field defaults — only flags the operator actually passed appear in
     `vars(args)` (the rest defaulted to `SUPPRESS`), so unspecified knobs fall
-    through to the dataclass default."""
+    through to the dataclass default.
+
+    `run_dir` is `out_dir/<run-id>`; with `--resume` the run-id is the resume
+    target (an existing dir) rather than a fresh timestamp."""
     if args.manifest is None:
         raise SystemExit("--manifest is required (or set a default in the wrapper)")
     if args.intermediate is None:
         raise SystemExit("--intermediate is required (or set a default in the wrapper)")
     if args.out_dir is None:
         raise SystemExit("--out-dir is required (or set a default in the wrapper)")
+    if args.force_config_mismatch and not args.resume:
+        raise SystemExit("--force-config-mismatch only applies with --resume")
 
-    overrides = {
-        _TRAINING_FIELDS[dest]: _adapt(dest, val)
-        for dest, val in vars(args).items()
-        if dest in _TRAINING_FIELDS
-    }
     return TrainConfig(
         manifest=args.manifest,
         intermediate=args.intermediate,
-        run_dir=args.out_dir / make_run_id(),
-        **overrides,
+        run_dir=args.out_dir / (args.resume or make_run_id()),
+        **training_overrides(args),
     )
