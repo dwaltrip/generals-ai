@@ -29,8 +29,10 @@ class RunLogger:
         self._epochs_fp: TextIO | None = None
 
     def open(self) -> None:
-        self._batches_fp = self._batches_path.open("w", buffering=1)
-        self._epochs_fp = self._epochs_path.open("w", buffering=1)
+        # Exclusive create: a colliding suffix surfaces as FileExistsError at
+        # startup rather than truncating a prior segment's records.
+        self._batches_fp = self._batches_path.open("x", buffering=1)
+        self._epochs_fp = self._epochs_path.open("x", buffering=1)
 
     def log_batch(self, record: dict) -> None:
         assert self._batches_fp is not None, "RunLogger.open() not called"

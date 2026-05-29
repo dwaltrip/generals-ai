@@ -4,7 +4,7 @@ Background sampler for GPU utilization + memory, written to a JSONL sidecar.
 ## What it does
 
 When training on CUDA, this spawns a daemon thread that wakes up once per
-second and writes one JSONL record to `<run_dir>/gpu_util.jsonl`:
+second and writes one JSONL record to a caller-specified sidecar file:
 
     {"t_sec": 1.0, "gpu_util_pct": 87, "mem_alloc_mb": 421, "mem_reserved_mb": 512}
     {"t_sec": 2.0, "gpu_util_pct": 93, "mem_alloc_mb": 421, "mem_reserved_mb": 512}
@@ -44,12 +44,12 @@ import torch
 
 
 def _sampler_loop(
-    run_dir: Path,
+    jsonl_path: Path,
     stop_event: threading.Event,
     sample_interval_sec: float,
 ) -> None:
     """Daemon-thread body. Opens the JSONL file, samples until stopped."""
-    fp = (run_dir / "gpu_util.jsonl").open("w", buffering=1)
+    fp = jsonl_path.open("x", buffering=1)
     t0 = time.monotonic()
     try:
         # `stop_event.wait(timeout)` returns True if set, False on timeout.
@@ -78,14 +78,15 @@ def _sampler_loop(
 
 @contextmanager
 def gpu_util_sidecar(
-    run_dir: Path,
+    jsonl_path: Path,
     device: torch.device,
     sample_interval_sec: float = 1.0,
 ) -> Iterator[None]:
     """Run a 1 Hz GPU util/memory sampler for the duration of the block.
 
     On non-CUDA devices this is a no-op (yields immediately). On CUDA, a
-    daemon thread writes to `<run_dir>/gpu_util.jsonl` until the block exits.
+    daemon thread writes JSONL samples to `jsonl_path` (opened exclusive-
+    create) until the block exits.
     """
     if device.type != "cuda":
         # Quiet no-op: don't pollute the log with "skipped because MPS"
@@ -96,7 +97,7 @@ def gpu_util_sidecar(
     stop_event = threading.Event()
     thread = threading.Thread(
         target=_sampler_loop,
-        args=(run_dir, stop_event, sample_interval_sec),
+        args=(jsonl_path, stop_event, sample_interval_sec),
         name="gpu-util-sidecar",
         daemon=True,
     )

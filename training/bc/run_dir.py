@@ -9,7 +9,7 @@ their open/close lifecycle as a context manager.
 from __future__ import annotations
 
 import json
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 from bc.run_logger import RunLogger
@@ -29,7 +29,7 @@ def initialize_run_dir(config: TrainConfig) -> None:
     """
     config.run_dir.mkdir(parents=True, exist_ok=False)
     print(f"run dir: {config.run_dir}")
-    with (config.run_dir / "args.json").open("w") as fp:
+    with (config.run_dir / "args.json").open("x") as fp:
         json.dump(asdict(config), fp, default=json_default, indent=2)
 
 
@@ -42,17 +42,34 @@ class RunArtifacts:
     serialized training state. Acts as a context manager: `__enter__`
     opens the logger's JSONL writers, `__exit__` closes them.
 
+    `suffix` distinguishes resume segments ("" for the original run,
+    "_resume_NN" for resumes) and is the single source for this segment's
+    artifact filenames — the `RunLogger`, `log_path`, and `gpu_util_path`
+    all derive from it.
+
     TODO: consider folding the `gpu_util_sidecar` lifecycle in here too —
     it's per-run runtime by the same definition. Currently it's a sibling
-    context manager at the call site because it needs `device` and gets a
-    path-argument signature change in the resume work; revisit then.
+    context manager at the call site because it needs `device`.
     """
 
     run_dir: Path
     ckpt_dir: Path
-    logger: RunLogger
     flops_per_sample: int
     peak_tflops: float | None
+    suffix: str = ""
+    resume_segment: int = 0
+    logger: RunLogger = field(init=False)
+
+    def __post_init__(self) -> None:
+        self.logger = RunLogger(self.run_dir, self.suffix)
+
+    @property
+    def log_path(self) -> Path:
+        return self.run_dir / f"run{self.suffix}.log"
+
+    @property
+    def gpu_util_path(self) -> Path:
+        return self.run_dir / f"gpu_util{self.suffix}.jsonl"
 
     def __enter__(self) -> RunArtifacts:
         self.logger.open()

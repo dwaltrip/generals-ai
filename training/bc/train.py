@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import time
 from pathlib import Path
+from typing import Callable
 
 import torch
 from torch.utils.data import DataLoader
@@ -39,7 +40,6 @@ from bc.eval import run_val
 from bc.loss import LossAccumulator, bc_loss
 from bc.model import BCModel
 from bc.run_dir import RunArtifacts
-from bc.run_logger import RunLogger
 from bc.splits import load_manifest, samples_for_split
 from bc.state import TrainingState
 from bc.train_config import TrainConfig
@@ -237,13 +237,34 @@ def build_dataloader(
 
 
 def bc_run(config: TrainConfig) -> None:
-    """Drive a BC training run end-to-end from a validated config.
+    """Drive a fresh BC training run end-to-end from a validated config.
 
-    Precondition: `config.run_dir` exists. Loads the manifest and builds
-    the train dataset, builds the model + optimizer (`TrainingState.fresh`)
-    and the run artifacts, then drives the epoch loop via `train_loop`.
-    Callable from a notebook or test by constructing a `TrainConfig`
-    directly (after initializing the run dir).
+    The fresh entry point: builds a new `TrainingState` and runs all
+    configured epochs. Resume is the sibling entry (`bc.resume.bc_resume`);
+    both share `run_training`. Precondition: `config.run_dir` exists. Callable
+    from a notebook or test by constructing a `TrainConfig` directly (after
+    initializing the run dir).
+    """
+    run_training(config, suffix="", make_state=lambda dev: TrainingState.fresh(config, dev))
+
+
+def run_training(
+    config: TrainConfig,
+    suffix: str,
+    make_state: Callable[[torch.device], TrainingState],
+) -> None:
+    """Set up a training segment and drive its epoch loop.
+
+    Resume-agnostic core shared by the fresh (`bc_run`) and resume
+    (`bc.resume.bc_resume`) entry points. `suffix` names the segment's
+    artifact files ("" for the original run, "_resume_NN" for resumes);
+    `make_state` builds the `TrainingState` (`TrainingState.fresh` for a fresh
+    run, `TrainingState.from_checkpoint` for a resume), so this function never
+    needs to know which it is.
+
+    Loads the manifest + dataset, builds the model and run-start FLOPs
+    measurements, then hands the epoch loop to `train_loop`. Tees stdout +
+    stderr to `run{suffix}.log` for the duration.
     """
     disable_mps_fallback()
 
@@ -258,13 +279,13 @@ def bc_run(config: TrainConfig) -> None:
     torch.manual_seed(config.seed)
 
     ckpt_dir = config.run_dir / "checkpoints"
-    ckpt_dir.mkdir()
+    ckpt_dir.mkdir(exist_ok=True)
 
     # Tee from here so everything past the run-dir setup — manifest load,
-    # dataset summary, model build, training — lands in run.log. The
+    # dataset summary, model build, training — lands in run{suffix}.log. The
     # "run dir:" line printed by `initialize_run_dir` stays terminal-only;
     # self-reference inside the log would just be noise.
-    with tee_stdio(config.run_dir / "run.log"):
+    with tee_stdio(config.run_dir / f"run{suffix}.log"):
         # --- Manifest + dataset ---
         print(f"loading manifest: {config.manifest}")
         manifest = load_manifest(config.manifest)
@@ -282,7 +303,7 @@ def bc_run(config: TrainConfig) -> None:
 
         # --- Model + optimizer ---
         print(f"building model on {device} (value_head={config.value_head_variant})")
-        state = TrainingState.fresh(config, device)
+        state = make_state(device)
         n_params = sum(p.numel() for p in state.model.parameters())
         print(f"  params: {n_params:,}")
 
@@ -307,9 +328,9 @@ def bc_run(config: TrainConfig) -> None:
         artifacts = RunArtifacts(
             run_dir=config.run_dir,
             ckpt_dir=ckpt_dir,
-            logger=RunLogger(config.run_dir),
             flops_per_sample=flops_per_sample,
             peak_tflops=peak_tflops,
+            suffix=suffix,
         )
         train_loop(state, config, loader, ds, val_samples, device, artifacts)
 
@@ -392,7 +413,7 @@ def train_loop(
     # `RunArtifacts` opens/closes the JSONL writers; the gpu sidecar is a
     # sibling context manager. Both unwind on a mid-epoch raise, flushing
     # the line-buffered records to disk.
-    with artifacts, gpu_util_sidecar(artifacts.run_dir, device):
+    with artifacts, gpu_util_sidecar(artifacts.gpu_util_path, device):
         for epoch in range(state.epoch + 1, config.epochs + 1):
             summary = train_one_epoch(
                 epoch=epoch,

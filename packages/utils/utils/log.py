@@ -80,12 +80,16 @@ class _TimestampedStream:
 
 
 @contextmanager
-def tee_stdio(log_path: Path) -> Iterator[None]:
+def tee_stdio(log_path: Path, mode: str = "x") -> Iterator[None]:
     """Mirror stdout + stderr into `log_path` for the duration of the block.
 
     Output goes to both terminal and file, with each line prefixed by a
     UTC `[HH:MM:SS]` timestamp on both sides. The file is line-buffered
     so `tail -f` sees output live.
+
+    `mode` is the open mode, default `"x"` (exclusive create): teeing into a
+    log that already exists raises `FileExistsError` at startup rather than
+    truncating a prior run's log. Pass `"w"` to deliberately overwrite.
 
     On exception, the traceback is written into the log file (with
     timestamps) before `finally` restores the streams — otherwise
@@ -100,7 +104,7 @@ def tee_stdio(log_path: Path) -> Iterator[None]:
     wrapping their own work; not for library code. Fd-level redirection
     (`os.dup2`) would close that gap but isn't worth the complexity here.
     """
-    log = log_path.open("w", buffering=1)
+    log = log_path.open(mode, buffering=1)
     orig_out, orig_err = sys.stdout, sys.stderr
     # Single timestamper at the top of each chain, fanning out to both
     # terminal and log via `_Tee`. One source of timestamp truth per
