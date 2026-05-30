@@ -7,6 +7,7 @@ members = [
     "eval-bot",
     "eval-tools",
     "game-runner",
+    "game-types",
     "generals-ai-workspace",
     "replay-collector",
     "replay-parser",
@@ -475,6 +476,7 @@ name = "game-runner"
 version = "0.0.1"
 source = { editable = "packages/game-runner" }
 dependencies = [
+    { name = "game-types" },
     { name = "numpy" },
     { name = "replay-collector" },
     { name = "replay-parser" },
@@ -483,11 +485,23 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
+    { name = "game-types", editable = "packages/game-types" },
     { name = "numpy", specifier = ">=2.0" },
     { name = "replay-collector", editable = "replay-collector" },
     { name = "replay-parser", editable = "replay-parser" },
     { name = "sim-core", editable = "sim-core" },
 ]
+
+[[package]]
+name = "game-types"
+version = "0.0.0"
+source = { editable = "packages/game-types" }
+dependencies = [
+    { name = "numpy" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "numpy", specifier = ">=2.0" }]
 
 [[package]]
 name = "generals-ai-workspace"
@@ -497,6 +511,7 @@ dependencies = [
     { name = "eval-bot" },
     { name = "eval-tools" },
     { name = "game-runner" },
+    { name = "game-types" },
     { name = "modal" },
     { name = "replay-collector" },
     { name = "replay-parser" },
@@ -519,6 +534,7 @@ requires-dist = [
     { name = "eval-bot", editable = "packages/eval-bot" },
     { name = "eval-tools", editable = "packages/eval-tools" },
     { name = "game-runner", editable = "packages/game-runner" },
+    { name = "game-types", editable = "packages/game-types" },
     { name = "modal", specifier = ">=1.4.3" },
     { name = "replay-collector", editable = "replay-collector" },
     { name = "replay-parser", editable = "replay-parser" },
@@ -1331,6 +1347,7 @@ version = "0.0.1"
 source = { editable = "packages/self-play" }
 dependencies = [
     { name = "game-runner" },
+    { name = "game-types" },
     { name = "numpy" },
     { name = "replay-collector" },
     { name = "replay-parser" },
@@ -1341,6 +1358,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "game-runner", editable = "packages/game-runner" },
+    { name = "game-types", editable = "packages/game-types" },
     { name = "numpy", specifier = ">=2.0" },
     { name = "replay-collector", editable = "replay-collector" },
     { name = "replay-parser", editable = "replay-parser" },
@@ -1450,6 +1468,7 @@ name = "training"
 version = "0.1.0"
 source = { editable = "training" }
 dependencies = [
+    { name = "game-types" },
     { name = "matplotlib" },
     { name = "numpy" },
     { name = "torch" },
@@ -1458,6 +1477,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
+    { name = "game-types", editable = "packages/game-types" },
     { name = "matplotlib", specifier = ">=3.10.9" },
     { name = "numpy", specifier = ">=2.0" },
     { name = "torch", specifier = ">=2.12" },

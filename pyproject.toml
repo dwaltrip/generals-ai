@@ -8,6 +8,7 @@ dependencies = [
     "eval-bot",
     "eval-tools",
     "game-runner",
+    "game-types",
     "replay-collector",
     "replay-parser",
     "self-play",
@@ -30,6 +31,7 @@ members = [
     "packages/eval-bot",
     "packages/eval-tools",
     "packages/game-runner",
+    "packages/game-types",
     "replay-collector",
     "replay-parser",
     "packages/self-play",
@@ -42,6 +44,7 @@ members = [
 eval-bot = { workspace = true }
 eval-tools = { workspace = true }
 game-runner = { workspace = true }
+game-types = { workspace = true }
 replay-collector = { workspace = true }
 replay-parser = { workspace = true }
 self-play = { workspace = true }

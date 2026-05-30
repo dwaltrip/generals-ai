@@ -5,6 +5,7 @@ description = "Self-play prototype: two model instances play a generals.io game 
 requires-python = ">=3.14"
 dependencies = [
     "game-runner",
+    "game-types",
     "numpy>=2.0",
     "replay-collector",
     "replay-parser",
@@ -21,6 +22,7 @@ packages = ["self_play"]
 
 [tool.uv.sources]
 game-runner = { workspace = true }
+game-types = { workspace = true }
 replay-collector = { workspace = true }
 replay-parser = { workspace = true }
 sim-core = { workspace = true }
