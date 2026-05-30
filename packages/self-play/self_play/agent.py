@@ -29,6 +29,7 @@ from bc import obs as bc_obs
 from bc.constants import H_PADDED, W_PADDED
 from bc.loss import flatten_policy_logits
 from bc.model import BCModel
+from bc.obs import pad_initial_generals
 import numpy as np
 import torch
 
@@ -37,26 +38,6 @@ import sim_core
 
 
 P = 8  # fixed slot count the model + obs encoder were trained on
-
-
-def pad_initial_generals(
-    initial_generals, perspective_slot: int, num_slots: int = P,
-) -> np.ndarray:
-    """Pad initial_generals to `num_slots` length for the obs encoder.
-
-    The BC encoder indexes slots 0..P-1 unconditionally. For <P-player
-    games, unused slots are filled with the perspective's own general cell
-    — idempotent under fancy indexing and safe in step_memory's per-player
-    loop (own general is already known, so padded slots never trigger
-    false sightings).
-    """
-    ig = np.asarray(initial_generals, dtype=np.int32)
-    if len(ig) >= num_slots:
-        return ig
-    own = int(ig[perspective_slot])
-    padded = np.full(num_slots, own, dtype=np.int32)
-    padded[: len(ig)] = ig
-    return padded
 
 
 def default_device() -> torch.device:

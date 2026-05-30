@@ -14,13 +14,12 @@ from typing import Any, NamedTuple
 # fog-tracking module if this coupling becomes painful.
 from bc import obs as bc_obs
 from bc import visibility
-from bc.obs import MemoryState
+from bc.obs import MemoryState, pad_initial_generals
 import numpy as np
 
 from eval_bot.bfs import bfs_distances
 from eval_bot.bot_config import BotConfig
 from game_runner.sim_adapter import capture_events_to_array
-from self_play.agent import pad_initial_generals
 import sim_core
 
 

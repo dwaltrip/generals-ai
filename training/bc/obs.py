@@ -98,6 +98,26 @@ def canonical_slot_order(perspective_slot: int, P: int = 8) -> list[int]:
     return [perspective_slot] + [s for s in range(P) if s != perspective_slot]
 
 
+def pad_initial_generals(
+    initial_generals, perspective_slot: int, num_slots: int = 8,
+) -> np.ndarray:
+    """Pad `initial_generals` to `num_slots` length for the obs encoder.
+
+    The BC encoder indexes slots 0..num_slots-1 unconditionally. For
+    <num_slots-player games, unused slots are filled with the perspective's own
+    general cell — idempotent under fancy indexing (sets an already-set
+    own-general bit) and safe in step_memory's per-player loop (the own general
+    is known from t=0, so padded slots never trigger false sightings).
+    """
+    ig = np.asarray(initial_generals, dtype=np.int32)
+    if len(ig) >= num_slots:
+        return ig
+    own = int(ig[perspective_slot])
+    padded = np.full(num_slots, own, dtype=np.int32)
+    padded[: len(ig)] = ig
+    return padded
+
+
 # ---------------------------------------------------------------------------
 # Perspective-filtered board view
 # ---------------------------------------------------------------------------
