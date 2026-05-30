@@ -11,11 +11,10 @@ sides can depend on them without dragging in each other's deps.
   - ObsBundle   — encoder output: the model input tensor + masks.
   - Decision    — decoder output: the chosen wire move + raw diagnostics.
 
-PlayerView carries the *raw* (un-fogged) per-tick arrays — exactly the fields
-the inference code reads off `sim_core.State` today. Fog-of-war and the
-8-slot general padding are applied model-side in the encoder, so behavior is
-unchanged from the pre-refactor `ModelAgent`. `initial_generals` is the raw
-per-player array (length = num_players); the encoder pads it.
+PlayerView carries the *raw* (un-fogged) per-tick arrays the inference code
+reads off `sim_core.State`. Fog-of-war and the 8-slot general padding are
+applied model-side in the encoder. `initial_generals` is the raw per-player
+array (length = num_players); the encoder pads it.
 """
 
 from __future__ import annotations

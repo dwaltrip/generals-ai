@@ -15,8 +15,8 @@ batch forwards across many perspectives:
     `BFSCache`, decode options, and per-tick diagnostics. `encode(view)` builds
     the obs tensor + masks (CPU numpy); `decode(out_slice)` selects the move.
 
-Fog-of-war and the 8-slot general padding are applied here, exactly as the
-pre-refactor `ModelAgent` did — behavior is unchanged.
+Fog-of-war and the 8-slot general padding are applied here (in the encoder),
+not by the caller.
 """
 
 from __future__ import annotations
@@ -146,7 +146,7 @@ class BCPerspective:
         self._entropy_per_tick: list[float] = []
 
     def reset(self, view: PlayerView) -> None:
-        """Initialize per-game state from the t=0 view (was `init_for_game`)."""
+        """Initialize per-game state from the t=0 view."""
         H, W = view.H, view.W
         self._H, self._W = H, W
         self._ownership = [np.asarray(view.ownership_t, dtype=np.int8)]
@@ -185,8 +185,8 @@ class BCPerspective:
     def encode(self, view: PlayerView) -> ObsBundle:
         """Advance memory and build the obs tensor + masks for tick t.
 
-        Mirrors steps 1-6 of the old `ModelAgent.act`, reading from the neutral
-        `PlayerView` instead of `sim_core.State`.
+        Reads the neutral `PlayerView` (not `sim_core.State`): append the
+        snapshot, refresh dynamic fields, step memory/BFS, build obs + masks.
         """
         assert self._sim is not None, "call reset() first"
         assert self._memory is not None
@@ -236,8 +236,8 @@ class BCPerspective:
 
     def decode(self, out_slice: OutSlice, policy_mask: np.ndarray) -> tuple[int, int, int]:
         """Select a wire move `(source, dest, is50)` from this perspective's
-        model output. `(-1, -1, -1)` means pass. Mirrors step 7 of the old
-        `ModelAgent.act` plus its per-tick diagnostics.
+        model output. `(-1, -1, -1)` means pass. Also records this tick's
+        diagnostics.
         """
         W = self._W
         # flatten_policy_logits wants a batch dim on both logits and mask.
