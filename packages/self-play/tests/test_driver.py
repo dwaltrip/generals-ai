@@ -12,12 +12,12 @@ browser for manual visual check.
 
 from pathlib import Path
 
-from bc.checkpoint import load_bc_model
+from bc.inference import BCModelHandle, default_device
 import pytest
 
 from game_runner import seed_map, viewer
 from replay_collector.config import DB_PATH
-from self_play import agent, driver
+from self_play import driver
 
 
 # packages/self-play/tests/ → repo root is 3 levels up.
@@ -28,16 +28,13 @@ _TMP_DIR = _REPO_ROOT / "packages" / "self-play" / "tmp"
 
 
 @pytest.fixture(scope="module")
-def loaded_model():
+def loaded_handle():
     if not _CHECKPOINT.exists():
         pytest.skip(f"checkpoint not present at {_CHECKPOINT}")
-    device = agent.default_device()
-    model = load_bc_model(_CHECKPOINT, device)
-    return model, device
+    return BCModelHandle.load(_CHECKPOINT, default_device())
 
 
-def test_play_game_terminates_and_renders(loaded_model):
-    model, device = loaded_model
+def test_play_game_terminates_and_renders(loaded_handle):
     if not DB_PATH.exists():
         pytest.skip(f"replay DB not present at {DB_PATH}")
     ids = seed_map.list_two_player_replay_ids(limit=1)
@@ -46,7 +43,7 @@ def test_play_game_terminates_and_renders(loaded_model):
     static = seed_map.load_static_from_db(ids[0])
 
     state, agents = driver.play_game(
-        model, static, device=device, max_turns=200, force_move=True,
+        loaded_handle, static, max_turns=200, force_move=True,
     )
 
     # Termination: either one player won or we hit max_turns.

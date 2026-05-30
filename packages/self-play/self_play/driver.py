@@ -1,38 +1,42 @@
-"""Self-play convenience wrapper: two ModelAgents (same weights) on a 2-player map."""
+"""Self-play convenience wrapper: two NN agents (same weights) on a 2-player map."""
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from bc.model import BCModel
-import torch
+from bc.inference import BCModelHandle, BCPerspective
 
 from game_runner.runner import run_game
-from self_play.agent import ModelAgent
-import sim_core
+from self_play.nn_agent import NNAgent
+
+
+if TYPE_CHECKING:
+    import sim_core
 
 
 def play_game(
-    model: BCModel,
+    handle: BCModelHandle,
     static: Any,
-    device: torch.device,
     max_turns: int = 2000,
     force_move: bool = False,
     sample: bool = False,
     temperature: float = 1.0,
     progress_interval: int = 50,
-) -> tuple[sim_core.State, list[ModelAgent]]:
-    """Play one 2-player self-play game. Returns (State, agents) for
-    backward compatibility with the CLI and tests.
+) -> tuple[sim_core.State, list[NNAgent]]:
+    """Play one 2-player self-play game (both slots driven by `handle`).
+
+    Returns (State, agents) for the CLI and tests.
     """
-    agents: list[ModelAgent] = [
-        ModelAgent(
-            model,
-            perspective_slot=p,
-            device=device,
-            force_move=force_move,
-            sample=sample,
-            temperature=temperature,
+    agents = [
+        NNAgent(
+            handle,
+            BCPerspective(
+                p,
+                handle.device,
+                force_move=force_move,
+                sample=sample,
+                temperature=temperature,
+            ),
         )
         for p in (0, 1)
     ]

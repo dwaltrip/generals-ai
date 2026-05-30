@@ -16,11 +16,11 @@ import argparse
 import datetime as dt
 from pathlib import Path
 
-from bc.checkpoint import load_bc_model
+from bc.inference import BCModelHandle, default_device
 import torch
 
 from game_runner import seed_map, viewer
-from self_play import agent, driver
+from self_play import driver
 
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -29,7 +29,7 @@ _DEFAULT_TMP = _REPO_ROOT / "self-play" / "tmp"
 
 def _resolve_device(name: str) -> torch.device:
     if name == "auto":
-        return agent.default_device()
+        return default_device()
     return torch.device(name)
 
 
@@ -67,7 +67,7 @@ def main() -> int:
 
     device = _resolve_device(args.device)
     print(f"loading checkpoint: {args.checkpoint}")
-    model = load_bc_model(args.checkpoint, device)
+    handle = BCModelHandle.load(args.checkpoint, device)
     print(f"device: {device}")
 
     replay_id = args.replay_id or seed_map.list_two_player_replay_ids(limit=1)[0]
@@ -77,8 +77,7 @@ def main() -> int:
           f"temperature={args.temperature} max_turns={args.max_turns}")
 
     state, agents = driver.play_game(
-        model, static,
-        device=device,
+        handle, static,
         max_turns=args.max_turns,
         sample=args.sample,
         force_move=args.force_move,

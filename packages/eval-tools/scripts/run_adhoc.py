@@ -45,6 +45,7 @@ import sys
 import time
 from typing import Any
 
+from bc.inference import default_device
 import torch
 
 from eval_tools.metrics_collector import MetricsCollector
@@ -53,7 +54,6 @@ from game_runner.policy import GameResult
 from game_runner.runner import run_game
 from game_runner.save import write_eval_game
 from game_runner.seed_map import list_replay_ids_by_player_count, load_static_from_db
-from self_play.agent import default_device
 from utils.log import tee_stdio
 
 

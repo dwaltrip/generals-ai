@@ -15,14 +15,14 @@ from pathlib import Path
 import random
 import time
 
-from bc.checkpoint import load_bc_model
+from bc.inference import BCModelHandle, BCPerspective, default_device
 
 from eval_bot.bot_config import BotConfig
 from eval_bot.eval_bot_agent import EvalBotAgent
 from game_runner.policy import GameResult
 from game_runner.runner import run_game
 from game_runner.seed_map import list_two_player_replay_ids, load_static_from_db
-from self_play.agent import ModelAgent, default_device
+from self_play.nn_agent import NNAgent
 
 
 def run_eval(
@@ -36,7 +36,7 @@ def run_eval(
     seed: int | None,
 ) -> None:
     device = default_device() if device_name == "auto" else __import__("torch").device(device_name)
-    model = load_bc_model(checkpoint, device)
+    handle = BCModelHandle.load(checkpoint, device)
     print(f"checkpoint: {checkpoint}")
     print(f"device: {device}")
     print(f"mode: force_move={force_move} sample={sample} temperature={temperature}")
@@ -56,8 +56,8 @@ def run_eval(
 
         # Model plays slot 0, EvalBot plays slot 1.
         policies = [
-            ModelAgent(model, perspective_slot=0, device=device,
-                       force_move=force_move, sample=sample, temperature=temperature),
+            NNAgent(handle, BCPerspective(0, device, force_move=force_move,
+                                          sample=sample, temperature=temperature)),
             EvalBotAgent(perspective_slot=1, cfg=BotConfig()),
         ]
 

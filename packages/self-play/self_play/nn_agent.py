@@ -63,5 +63,9 @@ class NNAgent:
     def n_passed(self) -> int:
         return self._perspective.n_passed
 
+    @property
+    def n_no_legal(self) -> int:
+        return self._perspective.n_no_legal
+
     def get_diagnostics(self) -> dict[str, Any]:
         return self._perspective.get_diagnostics()
