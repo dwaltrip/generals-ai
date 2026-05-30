@@ -5,7 +5,8 @@ encoder/decoder) behind the game_runner Policy protocol. NNAgent holds no
 knowledge of the model's interiors or the game's mechanics: it extracts a
 neutral view via game_runner, hands observations to the brain, and returns the
 brain's chosen move. Everything model-specific lives in the brain (e.g.
-`bc.inference`'s `BCModelHandle` + `BCPerspective`).
+`bc.inference`'s `BCModelHandle` + `BCPerspective`). The `ModelHandle` and
+`Perspective` protocols below name exactly what a brain must provide.
 
 The build_obs / select_action split is the seam a batched runner needs: many
 agents' `build_obs` outputs can be stacked into one `forward_batch`, then each
@@ -15,7 +16,7 @@ single-game path (one batch=1 forward per tick).
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol
 
 from game_types import ObsBundle, PlayerView
 
@@ -23,11 +24,44 @@ from game_runner.sim_adapter import state_to_view
 
 
 if TYPE_CHECKING:
+    import numpy as np
     import sim_core
 
 
+class ModelHandle(Protocol):
+    """The model side of a brain: runs a (possibly batched) forward over
+    stacked observations and returns one opaque output slice per input row.
+    NNAgent never inspects a slice — it only routes it back to the matching
+    perspective's `decode`.
+    """
+
+    def forward_batch(
+        self, obs_batch: np.ndarray, valid_batch: np.ndarray,
+    ) -> list[Any]: ...
+
+
+class Perspective(Protocol):
+    """The per-(game, slot) side of a brain. `encode` builds the observation
+    the handle consumes; `decode` turns the handle's output slice back into a
+    wire move. The counters and `get_diagnostics` are read by game_runner when
+    it assembles the game result.
+    """
+
+    perspective_slot: int
+
+    def reset(self, view: PlayerView) -> None: ...
+    def encode(self, view: PlayerView) -> ObsBundle: ...
+    def decode(self, out_slice: Any, policy_mask: np.ndarray) -> tuple[int, int, int]: ...
+
+    n_moved: int
+    n_passed: int
+    n_no_legal: int
+
+    def get_diagnostics(self) -> dict[str, Any]: ...
+
+
 class NNAgent:
-    def __init__(self, handle: Any, perspective: Any):
+    def __init__(self, handle: ModelHandle, perspective: Perspective):
         self._handle = handle
         self._perspective = perspective
         self._slot: int = perspective.perspective_slot
