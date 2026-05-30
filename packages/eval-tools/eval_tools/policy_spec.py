@@ -13,29 +13,28 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any
 
-from bc.checkpoint import load_bc_model
+from bc.inference import BCModelHandle, BCPerspective
 import torch
 
 from eval_bot.bot_config import BotConfig
 from eval_bot.eval_bot_agent import EvalBotAgent
 from game_runner.policy import Policy
-from self_play.agent import ModelAgent
+from self_play.nn_agent import NNAgent
 
 
-# Cache loaded models so the same checkpoint isn't loaded twice when used
-# in multiple slots.
-_model_cache: dict[tuple[str, str], Any] = {}
+# Cache loaded model handles so the same checkpoint isn't loaded twice when
+# used in multiple slots.
+_handle_cache: dict[tuple[str, str], BCModelHandle] = {}
 
 
-def _get_or_load_model(
+def _get_or_load_handle(
     path: str, device: torch.device, value_head_variant: str,
-) -> Any:
+) -> BCModelHandle:
     key = (path, str(device))
-    if key not in _model_cache:
-        _model_cache[key] = load_bc_model(path, device, value_head_variant)
-    return _model_cache[key]
+    if key not in _handle_cache:
+        _handle_cache[key] = BCModelHandle.load(path, device, value_head_variant)
+    return _handle_cache[key]
 
 
 def parse_policy_spec(
@@ -58,7 +57,7 @@ def parse_policy_spec(
 
 def _parse_checkpoint_spec(
     opts_str: str, slot: int, device: torch.device,
-) -> ModelAgent:
+) -> NNAgent:
     # First segment is the path, rest are key=value options
     segments = opts_str.split(":")
     if not segments or not segments[0]:
@@ -82,15 +81,15 @@ def _parse_checkpoint_spec(
             f"unknown checkpoint options in slot {slot}: {list(opts.keys())}"
         )
 
-    model = _get_or_load_model(path, device, value_head_variant)
-    return ModelAgent(
-        model,
-        perspective_slot=slot,
-        device=device,
+    handle = _get_or_load_handle(path, device, value_head_variant)
+    perspective = BCPerspective(
+        slot,
+        device,
         force_move=force_move,
         sample=sample,
         temperature=temperature,
     )
+    return NNAgent(handle, perspective)
 
 
 def _parse_evalbot_spec(opts_str: str, slot: int) -> EvalBotAgent:
