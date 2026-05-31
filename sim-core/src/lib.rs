@@ -4,36 +4,44 @@ mod state;
 
 use state::{army_overflow_pyerr, CaptureEvent, DeathEvent, NeutralizeEvent, State};
 
+/// Rust-side mirror of `game_types.StaticMap`. The derived `FromPyObject`
+/// defaults to attribute access, so any object exposing these attributes —
+/// a `StaticMap`, a `GameStatic.map`, or a test mock — extracts cleanly,
+/// preserving the duck-typed boundary.
+#[derive(FromPyObject)]
+struct StaticMapInput {
+    map_width: usize,
+    map_height: usize,
+    usernames: Vec<String>,
+    mountains: Vec<i32>,
+    initial_cities: Vec<i32>,
+    initial_city_armies: Vec<i32>,
+    initial_generals: Vec<i32>,
+    initial_neutrals: Vec<i32>,
+    initial_neutral_armies: Vec<i32>,
+}
+
 /// Build a fresh `State` from a duck-typed static-map record (`StaticMap`).
 ///
-/// Reads the map's attributes (`map_width`, `mountains`, …), calls
+/// Extracts the map's attributes into a `StaticMapInput`, calls
 /// `State::build_initial`, and writes the initial pre-loop snapshot so
 /// snapshot indexing is consistent across `simulate` and `step_tick`
 /// driven loops. `new_state` is handed the `StaticMap` directly; `simulate`
 /// reaches it via `replay.static.map`.
 fn build_state_from_static(py: Python<'_>, map_data: &Bound<'_, PyAny>) -> PyResult<State> {
-    let map_w: usize = map_data.getattr("map_width")?.extract()?;
-    let map_h: usize = map_data.getattr("map_height")?.extract()?;
-    let map_size = map_w * map_h;
-    let usernames: Vec<String> = map_data.getattr("usernames")?.extract()?;
-    let num_players = usernames.len();
-    let mountains: Vec<i32> = map_data.getattr("mountains")?.extract()?;
-    let initial_cities: Vec<i32> = map_data.getattr("initial_cities")?.extract()?;
-    let initial_city_armies: Vec<i32> = map_data.getattr("initial_city_armies")?.extract()?;
-    let initial_generals: Vec<i32> = map_data.getattr("initial_generals")?.extract()?;
-    let initial_neutrals: Vec<i32> = map_data.getattr("initial_neutrals")?.extract()?;
-    let initial_neutral_armies: Vec<i32> =
-        map_data.getattr("initial_neutral_armies")?.extract()?;
+    let m: StaticMapInput = map_data.extract()?;
+    let map_size = m.map_width * m.map_height;
+    let num_players = m.usernames.len();
 
     let mut state = State::build_initial(
         map_size,
         num_players,
-        &mountains,
-        &initial_cities,
-        &initial_city_armies,
-        &initial_generals,
-        &initial_neutrals,
-        &initial_neutral_armies,
+        &m.mountains,
+        &m.initial_cities,
+        &m.initial_city_armies,
+        &m.initial_generals,
+        &m.initial_neutrals,
+        &m.initial_neutral_armies,
     );
     // Initial snapshot — mirrors the pre-loop append in the old Python parser.
     state.snapshot().map_err(|e| army_overflow_pyerr(py, e))?;
