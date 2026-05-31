@@ -128,10 +128,21 @@ def train(*arglist: str) -> None:
     if args.resume:
         run_dir = resume_run_dir(args)
         overlay = load_config_overlay(args)
-        # Card to provision. The effective gpu is resolved remotely (parent ⊕
-        # overlay); locally we can only see the overlay, so fall back to the
-        # default card when it doesn't pin one (gpu is free to change on resume).
-        gpu = overlay.get("gpu", "T4")
+        # Card to provision. `with_options(gpu=...)` is decided *locally* before
+        # the remote can read the parent run's config off the Volume, so the
+        # parent's card is invisible here — only the overlay is. Rather than
+        # silently default (a T4 would OOM a resumed wide run — pyramid+bs=512
+        # doesn't fit T4's 16 GB), require the card to be restated in the resume
+        # overlay. It may still differ from the parent (gpu is free to change on
+        # resume); it just can't be implicit.
+        if "gpu" not in overlay:
+            raise SystemExit(
+                "--resume requires a `gpu` field in the --config overlay: the "
+                "card is provisioned locally before the remote can read the "
+                "parent run's config, so it can't be inferred. Restate it "
+                '(e.g. {"gpu": "L4"}) — it may differ from the parent run\'s card.'
+            )
+        gpu = overlay["gpu"]
         fresh_config: TrainConfig | None = None
         config_input_text: str | None = None
         operational = operational_overrides(args)
