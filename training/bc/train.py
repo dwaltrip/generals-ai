@@ -314,7 +314,7 @@ def run_training(
         ds, loader = build_dataloader(config, train_samples, device)
 
         # --- Model + optimizer ---
-        print(f"building model on {device} (value_head={config.value_head_variant})")
+        print(f"building model on {device} (value_head={config.arch.value_head_variant})")
         state = make_state(device)
         n_params = sum(p.numel() for p in state.model.parameters())
         print(f"  params: {n_params:,}")

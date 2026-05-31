@@ -1,17 +1,17 @@
 """Modal cloud entry point for BC training.
 
-Mirrors `run_bc_local.py` in shape — same `build_arg_parser` /
-`config_from_args` pipeline, plus a `--modal-gpu` cloud-only flag that
-selects the Modal GPU class. The shared training parser remains the
-single source of truth for training flags; cloud-only flags are
-`add_argument`'d to the same parser by this wrapper, so collisions with
-training flags raise `argparse.ArgumentError` at add-time.
+Mirrors `run_bc_local.py` in shape — same `build_arg_parser` / `--config`
+pipeline. The GPU class is sourced from the run config (`config.gpu`, set in the
+`--config` file), so there's no separate `--modal-gpu` flag: each sweep cell
+declares the card it needs in its config. The local entrypoint reads it to apply
+`train_remote.with_options(gpu=...)`; it also rides into the remote as recorded
+provenance.
 
 Run with `--detach` so the spawned training survives the local process —
 without it, Modal stops the ephemeral app when the local entrypoint returns
 and cancels the in-flight run (the function uses `.spawn()`, fire-and-forget):
     uv run modal run --detach training/scripts/run_bc_modal.py \\
-        --modal-gpu T4 --max-batches 5 --epochs 2
+        --config training/configs/my_run.json --max-batches 5
 """
 
 from __future__ import annotations
@@ -24,7 +24,13 @@ import socket
 
 import modal
 
-from bc.train_cli import build_arg_parser, config_from_args, training_overrides
+from bc.train_cli import (
+    build_arg_parser,
+    config_from_args,
+    load_config_overlay,
+    operational_overrides,
+    resume_run_dir,
+)
 from bc.train_config import TrainConfig
 
 
@@ -52,41 +58,48 @@ training_runs_vol = modal.Volume.from_name("generals-ai.training-runs")
     timeout=60 * 60 * 12,
 )
 def train_remote(
-    config: TrainConfig,
-    modal_gpu: str,
-    resume: str | None,
+    fresh_config: TrainConfig | None,
+    config_input_text: str | None,
+    resume_run_dir: str | None,
+    overlay: dict,
+    operational: dict,
+    gpu: str,
     force_config_mismatch: bool,
-    overrides: dict,
     legacy_lr_warmup_batches: int | None,
 ) -> None:
     """Run a fresh or resumed BC training segment on a Modal GPU.
 
-    Fresh: initialize the run dir, drop `args_cloud.json` *before* training
-    starts (so cloud-side provenance is captured even if training raises),
-    then hand off to `bc_run`. Resume: skip init (the dir exists), write the
+    Fresh (`fresh_config` set): initialize the run dir — writing `args.json`,
+    the verbatim `config.input.json`, and `args_cloud.json` — *before* training
+    starts (so cloud-side provenance is captured even if training raises), then
+    hand off to `bc_run`. Resume (`resume_run_dir` set): the effective config is
+    resolved remotely against the parent's `args.json` on the Volume; write the
     segment-suffixed `args_cloud_resume_NN.json`, then `bc_resume`.
-    `args_cloud*.json` sits next to bc's args file and captures what the
-    training contract doesn't know: which GPU class the operator requested,
-    which device CUDA surfaced, the container hostname.
+
+    `args_cloud*.json` sits next to bc's args file and captures what the training
+    contract doesn't know: the GPU class, the device CUDA surfaced, the hostname.
     """
     from bc.resume import bc_resume
     from bc.run_dir import initialize_run_dir, prepare_resume
     from bc.train import bc_run
 
-    if resume:
+    if resume_run_dir is not None:
         # Compute the suffix once so the cloud-only provenance lands on the
         # same segment bc_resume writes; pass `info` through so bc_resume
         # doesn't recompute (and double-count) the suffix.
-        info = prepare_resume(config.run_dir)
-        _write_args_cloud(config.run_dir, modal_gpu, suffix=info.next_suffix)
-        bc_resume(config, force_config_mismatch, overrides, info, legacy_lr_warmup_batches)
+        run_dir = Path(resume_run_dir)
+        info = prepare_resume(run_dir)
+        _write_args_cloud(run_dir, gpu, suffix=info.next_suffix)
+        bc_resume(run_dir, info, overlay, operational, force_config_mismatch,
+                  legacy_lr_warmup_batches)
     else:
-        initialize_run_dir(config)
-        _write_args_cloud(config.run_dir, modal_gpu)
-        bc_run(config)
+        assert fresh_config is not None
+        initialize_run_dir(fresh_config, config_input_text)
+        _write_args_cloud(fresh_config.run_dir, gpu)
+        bc_run(fresh_config)
 
 
-def _write_args_cloud(run_dir: Path, modal_gpu: str, suffix: str = "") -> None:
+def _write_args_cloud(run_dir: Path, gpu: str, suffix: str = "") -> None:
     """Write an `args_cloud{suffix}.json` sibling to bc's args file."""
     import torch
 
@@ -95,7 +108,7 @@ def _write_args_cloud(run_dir: Path, modal_gpu: str, suffix: str = "") -> None:
         cuda_device_name = torch.cuda.get_device_name(0)
 
     args_cloud = {
-        "modal_gpu": modal_gpu,
+        "gpu": gpu,
         "cuda_device_name": cuda_device_name,
         "python": platform.python_version(),
         "hostname": socket.gethostname(),
@@ -107,35 +120,41 @@ def _write_args_cloud(run_dir: Path, modal_gpu: str, suffix: str = "") -> None:
 
 @app.local_entrypoint()
 def train(*arglist: str) -> None:
-    """Parse cloud + training args, run `bc_run` on a Modal GPU."""
+    """Parse args, resolve the GPU class from the config, spawn on a Modal GPU."""
     parser = build_arg_parser()
-    parser.add_argument(
-        "--modal-gpu",
-        required=True,
-        help="Modal GPU class (e.g. T4, A100, A100-80GB, H100, L4, L40S). Cloud-only.",
-    )
-    parser.set_defaults(
-        intermediate=Path("/data/intermediate"),
-        manifest=Path("/data/probe_500.json"),
-        out_dir=Path("/runs"),
-        device="cuda",
-    )
+    parser.set_defaults(out_dir=Path("/runs"), device="cuda")
     args = parser.parse_args(arglist)
-    config = config_from_args(args)
 
-    print(f"modal-gpu: {args.modal_gpu}")
-    print(f"run_dir:   {config.run_dir}")
-    print()
+    if args.resume:
+        run_dir = resume_run_dir(args)
+        overlay = load_config_overlay(args)
+        # Card to provision. The effective gpu is resolved remotely (parent ⊕
+        # overlay); locally we can only see the overlay, so fall back to the
+        # default card when it doesn't pin one (gpu is free to change on resume).
+        gpu = overlay.get("gpu", "T4")
+        fresh_config: TrainConfig | None = None
+        config_input_text: str | None = None
+        operational = operational_overrides(args)
+        resume_run_dir_arg: str | None = str(run_dir)
+    else:
+        fresh_config = config_from_args(args)
+        gpu = fresh_config.gpu
+        config_input_text = Path(args.config).read_text()
+        overlay = {}
+        operational = {}
+        resume_run_dir_arg = None
+        run_dir = fresh_config.run_dir
 
-    # Volume-relative path (no `/runs/` prefix — that's the container mount).
-    run_id = config.run_dir.name
+    print(f"gpu:     {gpu}")
+    print(f"run_dir: {run_dir}")
     print()
     print("Once the run is done, pull artifacts:")
-    print(f"  uv run modal volume get generals-ai.training-runs /{run_id} training/data/runs-cloud")
+    print(f"  uv run modal volume get generals-ai.training-runs /{run_dir.name} training/data/runs-cloud")
 
-    train_remote.with_options(gpu=args.modal_gpu).spawn(
-        config, args.modal_gpu, args.resume, args.force_config_mismatch,
-        training_overrides(args), args.legacy_lr_warmup_batches,
+    train_remote.with_options(gpu=gpu).spawn(
+        fresh_config, config_input_text, resume_run_dir_arg,
+        overlay, operational, gpu, args.force_config_mismatch,
+        args.legacy_lr_warmup_batches,
     )
 
     print()

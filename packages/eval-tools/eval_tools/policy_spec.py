@@ -24,19 +24,26 @@ from self_play.nn_agent import NNAgent
 
 
 # Cache loaded model handles so the same checkpoint isn't loaded twice when
-# used in multiple slots. Keyed by (path, device, value_head_variant) to match
-# BCModelHandle.model_key — two specs differing only by variant are distinct
-# handles (and group into separate batches).
-_handle_cache: dict[tuple[str, str, str], BCModelHandle] = {}
+# used in multiple slots. Deduped by `BCModelHandle.model_key`, so two specs
+# that resolve to the same model (e.g. an arch-bearing checkpoint loaded under
+# different — ignored — fallback variants) share one handle and group into one
+# batched forward. `_spec_seen` short-circuits a repeated identical spec so it
+# doesn't reload just to recompute the key.
+_handle_cache: dict[str, BCModelHandle] = {}
+_spec_seen: dict[tuple[str, str, str], BCModelHandle] = {}
 
 
 def _get_or_load_handle(
     path: str, device: torch.device, value_head_variant: str,
 ) -> BCModelHandle:
-    key = (path, str(device), value_head_variant)
-    if key not in _handle_cache:
-        _handle_cache[key] = BCModelHandle.load(path, device, value_head_variant)
-    return _handle_cache[key]
+    spec_key = (path, str(device), value_head_variant)
+    cached = _spec_seen.get(spec_key)
+    if cached is not None:
+        return cached
+    handle = BCModelHandle.load(path, device, value_head_variant)
+    handle = _handle_cache.setdefault(handle.model_key, handle)
+    _spec_seen[spec_key] = handle
+    return handle
 
 
 def parse_policy_spec(

@@ -1,0 +1,5 @@
+{
+  "manifest": "training/data/splits/probe.json",
+  "intermediate": "replay-parser/data/intermediate",
+  "epochs": 2
+}

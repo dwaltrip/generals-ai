@@ -63,6 +63,18 @@ def is_legacy_checkpoint(path: str | Path, device: str | torch.device = "cpu") -
     return not is_combined_checkpoint(obj)
 
 
+def is_arch_bearing(path: str | Path, device: str | torch.device = "cpu") -> bool:
+    """True if the checkpoint records its architecture (the `arch` key).
+
+    Arch-bearing checkpoints reconstruct authoritatively, so the load-time
+    `value_head_variant` arg is ignored — it must not enter the inference
+    `model_key` / handle-cache key. A combined checkpoint written before the
+    `arch` key existed is *not* arch-bearing and falls back to `LEGACY_ARCH`.
+    """
+    obj = torch.load(path, map_location=device, weights_only=True)
+    return is_combined_checkpoint(obj) and "arch" in obj
+
+
 def _arch_for_load(obj: object, value_head_variant: str) -> ModelConfig:
     """The `ModelConfig` to reconstruct a loaded checkpoint with.
 

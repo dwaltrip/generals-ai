@@ -35,7 +35,7 @@ from bc import actions, visibility
 from bc import bfs as bc_bfs
 from bc import mask as bc_mask
 from bc import obs as bc_obs
-from bc.checkpoint import load_bc_model
+from bc.checkpoint import is_arch_bearing, load_bc_model
 from bc.constants import H_PADDED, W_PADDED
 from bc.loss import flatten_policy_logits
 from bc.model import BCModel
@@ -99,8 +99,21 @@ class BCModelHandle:
     def load(
         cls, path: str | Path, device: torch.device, value_head_variant: str = "direct",
     ) -> BCModelHandle:
+        """Load a checkpoint into a handle. `value_head_variant` is a legacy-only
+        fallback — used when the checkpoint has no `arch` key, ignored otherwise.
+
+        The `model_key` (which a batched runner groups by) drops the variant for
+        arch-bearing checkpoints — the arch is authoritative, so two loads under
+        different fallback variants are the same model and should share a forward.
+        Legacy checkpoints keep the variant: the same path loaded under different
+        fallback variants is a different model, and the keys must not collide.
+        """
         model = load_bc_model(path, device, value_head_variant)
-        return cls(model, device, model_key=f"{path}|{device}|{value_head_variant}")
+        if is_arch_bearing(path, device):
+            model_key = f"{path}|{device}"
+        else:
+            model_key = f"{path}|{device}|{value_head_variant}"
+        return cls(model, device, model_key=model_key)
 
     def forward_batch(
         self, obs_batch: np.ndarray, valid_batch: np.ndarray,
