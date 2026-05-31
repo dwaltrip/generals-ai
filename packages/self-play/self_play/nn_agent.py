@@ -5,8 +5,9 @@ encoder/decoder) behind the game_runner Policy protocol. NNAgent holds no
 knowledge of the model's interiors or the game's mechanics: it extracts a
 neutral view via game_runner, hands observations to the brain, and returns the
 brain's chosen move. Everything model-specific lives in the brain (e.g.
-`bc.inference`'s `BCModelHandle` + `BCPerspective`). The `ModelHandle` and
-`Perspective` protocols below name exactly what a brain must provide.
+`bc.inference`'s `BCModelHandle` + `BCPerspective`). `ModelHandle` (in
+`game_runner.brain`) and the `Perspective` protocol below name exactly what a
+brain must provide.
 
 The build_obs / select_action split is the seam a batched runner needs: many
 agents' `build_obs` outputs can be stacked into one `forward_batch`, then each
@@ -20,24 +21,14 @@ from typing import TYPE_CHECKING, Any, Protocol
 
 from game_types import ObsBundle, PlayerView, StaticMap
 
+from game_runner.brain import ModelHandle
 from game_runner.sim_adapter import state_to_view
 
 
 if TYPE_CHECKING:
     import numpy as np
+
     import sim_core
-
-
-class ModelHandle(Protocol):
-    """The model side of a brain: runs a (possibly batched) forward over
-    stacked observations and returns one opaque output slice per input row.
-    NNAgent never inspects a slice — it only routes it back to the matching
-    perspective's `decode`.
-    """
-
-    def forward_batch(
-        self, obs_batch: np.ndarray, valid_batch: np.ndarray,
-    ) -> list[Any]: ...
 
 
 class Perspective(Protocol):
@@ -66,6 +57,10 @@ class NNAgent:
         self._perspective = perspective
         self._slot: int = perspective.perspective_slot
         self._pending: ObsBundle | None = None
+
+    @property
+    def model_handle(self) -> ModelHandle:
+        return self._handle
 
     def init_for_game(self, state: sim_core.State, map_data: StaticMap) -> None:
         self._perspective.reset(state_to_view(state, map_data, self._slot))
