@@ -26,23 +26,23 @@ from game_runner.sim_adapter import state_to_view
 
 
 if TYPE_CHECKING:
-    import numpy as np
-
     import sim_core
 
 
 class Perspective(Protocol):
-    """The per-(game, slot) side of a brain. `encode` builds the observation
-    the handle consumes; `decode` turns the handle's output slice back into a
-    wire move. The counters and `get_diagnostics` are read by game_runner when
-    it assembles the game result.
+    """The per-(game, slot) side of a brain. `encode` builds the observation the
+    handle consumes; `select_action` turns the handle's decoded row back into a
+    wire move and records this tick's diagnostics; `decode_config` supplies the
+    per-row options the handle's `decode_batch` branches on. The counters and
+    `get_diagnostics` are read by game_runner when it assembles the game result.
     """
 
     perspective_slot: int
+    decode_config: Any
 
     def reset(self, view: PlayerView) -> None: ...
     def encode(self, view: PlayerView) -> ObsBundle: ...
-    def decode(self, out_slice: Any, policy_mask: np.ndarray) -> tuple[int, int, int]: ...
+    def select_action(self, decision: Any) -> tuple[int, int, int]: ...
 
     n_moved: int
     n_passed: int
@@ -56,32 +56,34 @@ class NNAgent:
         self._handle = handle
         self._perspective = perspective
         self._slot: int = perspective.perspective_slot
-        self._pending: ObsBundle | None = None
 
     @property
     def model_handle(self) -> ModelHandle:
         return self._handle
 
+    @property
+    def decode_config(self) -> Any:
+        return self._perspective.decode_config
+
     def init_for_game(self, state: sim_core.State, map_data: StaticMap) -> None:
         self._perspective.reset(state_to_view(state, map_data, self._slot))
 
-    # --- batchable interface: build observations / consume model output ---
+    # --- batchable interface: a runner stacks build_obs across slots, runs one
+    # forward_batch + decode_batch per model, then routes each row here. ---
     def build_obs(self, view: PlayerView) -> ObsBundle:
-        bundle: ObsBundle = self._perspective.encode(view)
-        self._pending = bundle
-        return bundle
+        return self._perspective.encode(view)
 
-    def select_action(self, out_slice: Any) -> tuple[int, int, int]:
-        assert self._pending is not None, "build_obs must precede select_action"
-        move = self._perspective.decode(out_slice, self._pending.policy_mask)
-        self._pending = None
-        return move
+    def select_action(self, decision: Any) -> tuple[int, int, int]:
+        return self._perspective.select_action(decision)
 
-    # --- single-game Policy.act: compose build -> forward(batch=1) -> select ---
+    # --- single-game Policy.act: the batched spine at batch-of-1. ---
     def act(self, state: sim_core.State, map_data: StaticMap) -> tuple[int, int, int]:
         bundle = self.build_obs(state_to_view(state, map_data, self._slot))
-        out_slices = self._handle.forward_batch(bundle.obs[None], bundle.valid_mask[None])
-        return self.select_action(out_slices[0])
+        out = self._handle.forward_batch(bundle.obs[None], bundle.valid_mask[None])
+        decisions = self._handle.decode_batch(
+            out, bundle.policy_mask[None], [self._perspective.decode_config],
+        )
+        return self.select_action(decisions[0])
 
     # Read by game_runner._build_result via getattr.
     @property

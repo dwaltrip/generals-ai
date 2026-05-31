@@ -24,14 +24,16 @@ from self_play.nn_agent import NNAgent
 
 
 # Cache loaded model handles so the same checkpoint isn't loaded twice when
-# used in multiple slots.
-_handle_cache: dict[tuple[str, str], BCModelHandle] = {}
+# used in multiple slots. Keyed by (path, device, value_head_variant) to match
+# BCModelHandle.model_key — two specs differing only by variant are distinct
+# handles (and group into separate batches).
+_handle_cache: dict[tuple[str, str, str], BCModelHandle] = {}
 
 
 def _get_or_load_handle(
     path: str, device: torch.device, value_head_variant: str,
 ) -> BCModelHandle:
-    key = (path, str(device))
+    key = (path, str(device), value_head_variant)
     if key not in _handle_cache:
         _handle_cache[key] = BCModelHandle.load(path, device, value_head_variant)
     return _handle_cache[key]

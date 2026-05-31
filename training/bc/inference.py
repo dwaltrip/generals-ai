@@ -6,14 +6,16 @@ observation encoder it depends on. It consumes the neutral
 so this module — and therefore `training/bc` — has no dependency on the game
 engine. The `State -> PlayerView` translation lives in `game-runner`.
 
-Two pieces, split at the forward-pass seam so a future vectorized runner can
-batch forwards across many perspectives:
+Two pieces, split at the GPU/CPU sync boundary so a vectorized runner can batch
+forwards across many perspectives and pay a single sync per tick:
 
-  - `BCModelHandle`: shared per checkpoint. Owns the model + device and runs
-    the (batched) forward. `forward_batch` runs batch=1 today.
+  - `BCModelHandle`: shared per checkpoint. Owns the model + device. `forward_batch`
+    runs the batched forward; `decode_batch` does all the policy/pass/value math
+    for the batch and pulls the per-row results to CPU in one sync.
   - `BCPerspective`: one (game, slot). Owns the growing sim dict, `MemoryState`,
     `BFSCache`, decode options, and per-tick diagnostics. `encode(view)` builds
-    the obs tensor + masks (CPU numpy); `decode(out_slice)` selects the move.
+    the obs tensor + masks (CPU numpy); `select_action(decision)` consumes a
+    decoded row (already off-GPU) — sync-free.
 
 Fog-of-war and the 8-slot general padding are applied here (in the encoder),
 not by the caller.
@@ -21,6 +23,7 @@ not by the caller.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -51,10 +54,34 @@ def default_device() -> torch.device:
     return torch.device("cpu")
 
 
-# A single perspective's slice of one batched forward: the model output dict
-# indexed to one row (no batch dim). Opaque to the generic agent; produced and
-# consumed within this module.
-OutSlice = dict[str, torch.Tensor]
+# One batched forward's raw output (batch dim intact). Opaque to the generic
+# runner, which only shuttles it from forward_batch into decode_batch.
+ModelOutput = dict[str, torch.Tensor]
+
+
+@dataclass(frozen=True, slots=True)
+class DecodeConfig:
+    """Per-perspective decode options, gathered by the runner and handed to
+    `decode_batch` so the batched math can branch per row. `generator` is the
+    per-game RNG for reproducible sampling (None → global torch RNG); the runner
+    seeds it per game.
+    """
+
+    force_move: bool
+    sample: bool
+    temperature: float
+    generator: torch.Generator | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class RowDecision:
+    """`decode_batch` output for one row — plain CPU data, no GPU tensors. The
+    GPU→CPU sync already happened; `select_action` just files it.
+    """
+
+    flat_idx: int                 # chosen action index, or -1 for pass/no-legal
+    category: str                 # "moved" | "passed" | "no_legal"
+    diag: dict[str, float]        # this tick's diagnostic scalars
 
 
 class BCModelHandle:
@@ -77,24 +104,101 @@ class BCModelHandle:
 
     def forward_batch(
         self, obs_batch: np.ndarray, valid_batch: np.ndarray,
-    ) -> list[OutSlice]:
-        """Run one forward over a stacked batch and return per-row output slices.
+    ) -> ModelOutput:
+        """Run one forward over a stacked batch; return the raw batched output.
 
         obs_batch:   float32 [B, OBS_CHANNELS, H_PADDED, W_PADDED]
         valid_batch: bool    [B, 1, H_PADDED, W_PADDED]
+        Returns {policy_logits [B,8,H,W], pass_logit [B], value_logits [B,8]}.
         """
         obs_t = torch.from_numpy(obs_batch).to(self.device)
         valid_t = torch.from_numpy(valid_batch).to(self.device)
         with torch.no_grad():
-            out = self.model(obs_t, valid_t)
-        return [
-            {
-                "policy_logits": out["policy_logits"][i],  # [8, H, W]
-                "pass_logit": out["pass_logit"][i],        # scalar
-                "value_logits": out["value_logits"][i],    # [8]
+            return self.model(obs_t, valid_t)
+
+    def decode_batch(
+        self, out: ModelOutput, mask_batch: np.ndarray, configs: list[DecodeConfig],
+    ) -> list[RowDecision]:
+        """Turn a batched forward output into one `RowDecision` per row, paying a
+        single GPU→CPU sync. All policy/pass/value math is batched; per-row
+        sampling (multinomial/bernoulli) draws stay on-GPU so the bulk pull is
+        still one sync. The CPU half (category + bookkeeping) is `select_action`.
+
+        mask_batch: bool [B, H, W, 8] per-cell legality (stacked policy masks).
+        """
+        device = self.device
+        B = out["pass_logit"].shape[0]
+        mask_t = torch.from_numpy(mask_batch).to(device)               # [B,H,W,8]
+        masked = flatten_policy_logits(out["policy_logits"], mask_t)   # [B, H*W*8]
+        has_legal = mask_t.reshape(B, -1).any(dim=1)                   # [B]
+
+        # Value head: categorical placement over 8 classes (0=1st … 7=8th).
+        value_probs = torch.softmax(out["value_logits"], dim=1)        # [B,8]
+        placements = torch.arange(
+            value_probs.shape[1], dtype=value_probs.dtype, device=device,
+        )
+        exp_placement = (value_probs * placements).sum(dim=1) + 1.0    # [B], 1..8
+        value_top = value_probs.max(dim=1).values
+        value_entropy = -(value_probs * (value_probs + 1e-12).log()).sum(dim=1)
+
+        # Pass head.
+        pass_prob = torch.sigmoid(out["pass_logit"])                   # [B]
+        hard_pass = out["pass_logit"] > 0                              # [B] (argmax path)
+
+        # Policy head diagnostics (untempered, masked).
+        pol_probs = torch.softmax(masked, dim=1)                       # [B, H*W*8]
+        top_k = torch.topk(pol_probs, k=min(3, pol_probs.shape[1]), dim=1).values
+        policy_top1 = top_k[:, 0]
+        policy_top3 = top_k.sum(dim=1)
+        policy_entropy = -(pol_probs * (pol_probs + 1e-12).log()).sum(dim=1)
+
+        # Move + pass decision: batched argmax / hard-threshold by default;
+        # sampling rows overwrite their own slot (draws stay on-GPU).
+        move_idx = masked.argmax(dim=1)                                # [B] long
+        pass_says_pass = hard_pass.clone()
+        for i, cfg in enumerate(configs):
+            if cfg.sample:
+                probs_i = torch.softmax(masked[i] / cfg.temperature, dim=0)
+                move_idx[i] = torch.multinomial(probs_i, 1, generator=cfg.generator)[0]
+                pass_says_pass[i] = (
+                    torch.bernoulli(pass_prob[i], generator=cfg.generator) > 0.5
+                )
+
+        # ONE bulk sync: every per-row scalar pulled together.
+        cols = torch.stack(
+            [
+                exp_placement, value_top, value_entropy, pass_prob,
+                policy_top1, policy_top3, policy_entropy,
+                move_idx.to(value_probs.dtype),
+                has_legal.to(value_probs.dtype),
+                pass_says_pass.to(value_probs.dtype),
+            ],
+            dim=1,
+        ).cpu().numpy()                                                # [B, 10]
+
+        decisions: list[RowDecision] = []
+        for i, cfg in enumerate(configs):
+            r = cols[i]
+            legal = bool(r[8])
+            diag: dict[str, float] = {
+                "value_exp_placement": float(r[0]),
+                "value_top_prob": float(r[1]),
+                "value_entropy": float(r[2]),
+                "pass_prob": float(r[3]),
             }
-            for i in range(obs_batch.shape[0])
-        ]
+            if legal:
+                diag["policy_top1"] = float(r[4])
+                diag["policy_top3"] = float(r[5])
+                diag["policy_entropy"] = float(r[6])
+
+            if not legal:
+                category, flat_idx = "no_legal", -1
+            elif (not cfg.force_move) and bool(r[9]):
+                category, flat_idx = "passed", -1
+            else:
+                category, flat_idx = "moved", int(r[7])
+            decisions.append(RowDecision(flat_idx=flat_idx, category=category, diag=diag))
+        return decisions
 
 
 class BCPerspective:
@@ -234,76 +338,47 @@ class BCPerspective:
 
         return ObsBundle(obs=obs_np, policy_mask=mask_np, valid_mask=valid_np)
 
-    def decode(self, out_slice: OutSlice, policy_mask: np.ndarray) -> tuple[int, int, int]:
-        """Select a wire move `(source, dest, is50)` from this perspective's
-        model output. `(-1, -1, -1)` means pass. Also records this tick's
-        diagnostics.
+    @property
+    def decode_config(self) -> DecodeConfig:
+        """The per-row options `decode_batch` branches on for this perspective."""
+        return DecodeConfig(
+            force_move=self.force_move,
+            sample=self.sample,
+            temperature=self.temperature,
+            generator=None,  # per-game seeding wired by the runner (fork #4)
+        )
+
+    def select_action(self, decision: RowDecision) -> tuple[int, int, int]:
+        """Consume this perspective's decoded row (already off-GPU): record its
+        diagnostics, bump the decision counter, and return the wire move.
+        `(-1, -1, -1)` means pass / no legal move. Sync-free.
         """
-        W = self._W
-        # flatten_policy_logits wants a batch dim on both logits and mask.
-        policy_logits = out_slice["policy_logits"].unsqueeze(0)            # [1, 8, H, W]
-        mask_t = torch.from_numpy(policy_mask).unsqueeze(0).to(self.device)  # [1, H, W, 8]
-        masked_logits = flatten_policy_logits(policy_logits, mask_t)      # [1, H*W*8]
+        self._record_diag(decision.diag, has_legal=decision.category != "no_legal")
 
-        has_legal = bool(mask_t.any())
-        self._record_tick_diagnostics(out_slice, masked_logits, has_legal)
-
-        if not has_legal:
-            # No legal move (e.g. very early game, all owned tiles army<2). Pass.
+        if decision.category == "no_legal":
             self.n_no_legal += 1
             return -1, -1, -1
-
-        # Pass decision (unless force_move): sample bernoulli(sigmoid(logit))
-        # under `sample`, else hard threshold logit > 0.
-        if not self.force_move:
-            if self.sample:
-                p_pass = torch.sigmoid(out_slice["pass_logit"])
-                pass_head_says_pass = bool(torch.bernoulli(p_pass).item())
-            else:
-                pass_head_says_pass = bool((out_slice["pass_logit"] > 0).item())
-            if pass_head_says_pass:
-                self.n_passed += 1
-                return -1, -1, -1
-
-        if self.sample:
-            probs = torch.softmax(masked_logits / self.temperature, dim=1)
-            flat_idx = int(torch.multinomial(probs, num_samples=1).item())
-        else:
-            flat_idx = int(masked_logits.argmax(dim=1).item())
+        if decision.category == "passed":
+            self.n_passed += 1
+            return -1, -1, -1
 
         self.n_moved += 1
         return actions.decode(
-            is_pass=False, flat_idx=flat_idx, W_unpadded=W, W_padded=W_PADDED,
+            is_pass=False, flat_idx=decision.flat_idx,
+            W_unpadded=self._W, W_padded=W_PADDED,
         )
 
-    def _record_tick_diagnostics(
-        self, out_slice: OutSlice, masked_logits: torch.Tensor, has_legal: bool,
-    ) -> None:
-        # Value head: categorical placement over 8 classes (0=1st, 7=8th).
-        value_probs = torch.softmax(out_slice["value_logits"], dim=0)
-        placements = torch.arange(
-            value_probs.size(0), dtype=value_probs.dtype, device=value_probs.device,
-        )
-        exp_placement = float((value_probs * placements).sum().item()) + 1.0  # 1..8
-        top_prob = float(value_probs.max().item())
-        value_entropy = float(-(value_probs * (value_probs + 1e-12).log()).sum().item())
-        self._value_exp_placement_per_tick.append(exp_placement)
-        self._value_top_prob_per_tick.append(top_prob)
-        self._value_entropy_per_tick.append(value_entropy)
-
-        # Pass head: sigmoid of scalar logit.
-        self._pass_prob_per_tick.append(float(torch.sigmoid(out_slice["pass_logit"]).item()))
-
-        # Policy head: only meaningful when at least one legal slot exists.
+    def _record_diag(self, diag: dict[str, float], has_legal: bool) -> None:
+        # Value + pass diagnostics are recorded every tick; policy diagnostics
+        # only when at least one legal slot exists (matches the decoder's mask).
+        self._value_exp_placement_per_tick.append(diag["value_exp_placement"])
+        self._value_top_prob_per_tick.append(diag["value_top_prob"])
+        self._value_entropy_per_tick.append(diag["value_entropy"])
+        self._pass_prob_per_tick.append(diag["pass_prob"])
         if has_legal:
-            probs = torch.softmax(masked_logits[0], dim=0)
-            k = min(3, probs.size(0))
-            top_k = torch.topk(probs, k=k).values
-            self._top1_prob_per_tick.append(float(top_k[0].item()))
-            self._top3_prob_per_tick.append(float(top_k.sum().item()))
-            self._entropy_per_tick.append(
-                float(-(probs * (probs + 1e-12).log()).sum().item())
-            )
+            self._top1_prob_per_tick.append(diag["policy_top1"])
+            self._top3_prob_per_tick.append(diag["policy_top3"])
+            self._entropy_per_tick.append(diag["policy_entropy"])
 
     def get_diagnostics(self) -> dict[str, Any]:
         """Per-game diagnostic summary (picked up by `MetricsCollector` via

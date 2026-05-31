@@ -26,11 +26,11 @@ from pathlib import Path
 
 from bc.inference import BCModelHandle, BCPerspective
 from bc.loss import flatten_policy_logits
-from game_runner.sim_adapter import state_to_view
-from game_runner.seed_map import list_replay_ids_by_player_count, load_static_from_db
 import numpy as np
 import torch
 
+from game_runner.seed_map import list_replay_ids_by_player_count, load_static_from_db
+from game_runner.sim_adapter import state_to_view
 import sim_core
 
 
@@ -61,11 +61,18 @@ def _collect_real_obs(handle: BCModelHandle, device: torch.device):
             bundle = persp.encode(view)
             bundles.append(bundle)
             out = handle.forward_batch(bundle.obs[None], bundle.valid_mask[None])
-            move = persp.decode(out[0], bundle.policy_mask)
+            decisions = handle.decode_batch(
+                out, bundle.policy_mask[None], [persp.decode_config],
+            )
+            move = persp.select_action(decisions[0])
             if move[0] != -1:
                 moves.append((p, *move))
         state.step_tick(moves=moves, afks=[])
     return bundles
+
+
+def _maxabs(a: torch.Tensor, b: torch.Tensor) -> float:
+    return float((a - b).abs().max().item())
 
 
 def _argmax_idx(out_slice, policy_mask, device: torch.device) -> tuple[int, float]:
@@ -85,10 +92,9 @@ def _run_device(name: str) -> None:
     n = min(_BATCH, len(bundles))
     batch = bundles[:n]
 
-    obs_stack = torch.from_numpy(np.stack([b.obs for b in batch])).to(device)
-    valid_stack = torch.from_numpy(np.stack([b.valid_mask for b in batch])).to(device)
-    with torch.no_grad():
-        out_batched = handle.model(obs_stack, valid_stack)
+    obs_stack = np.stack([b.obs for b in batch])
+    valid_stack = np.stack([b.valid_mask for b in batch])
+    out_batched = handle.forward_batch(obs_stack, valid_stack)
     batched_rows = [
         {
             "policy_logits": out_batched["policy_logits"][i],
@@ -102,11 +108,12 @@ def _run_device(name: str) -> None:
     argmax_disagree = pass_disagree = 0
     gaps = []
     for i, b in enumerate(batch):
-        solo = handle.forward_batch(b.obs[None], b.valid_mask[None])[0]
+        solo_out = handle.forward_batch(b.obs[None], b.valid_mask[None])
+        solo = {k: solo_out[k][0] for k in ("policy_logits", "pass_logit", "value_logits")}
         bat = batched_rows[i]
-        max_dp = max(max_dp, float((bat["policy_logits"] - solo["policy_logits"]).abs().max().item()))
-        max_dpass = max(max_dpass, float((bat["pass_logit"] - solo["pass_logit"]).abs().item()))
-        max_dv = max(max_dv, float((bat["value_logits"] - solo["value_logits"]).abs().max().item()))
+        max_dp = max(max_dp, _maxabs(bat["policy_logits"], solo["policy_logits"]))
+        max_dpass = max(max_dpass, _maxabs(bat["pass_logit"], solo["pass_logit"]))
+        max_dv = max(max_dv, _maxabs(bat["value_logits"], solo["value_logits"]))
 
         ai_b, gap = _argmax_idx(bat, b.policy_mask, device)
         ai_s, _ = _argmax_idx(solo, b.policy_mask, device)

@@ -31,16 +31,21 @@ class ModelHandle(Protocol):
     model_key: str
 
     def forward_batch(self, obs_batch: np.ndarray, valid_batch: np.ndarray) -> Any: ...
+    def decode_batch(
+        self, out: Any, mask_batch: np.ndarray, configs: list[Any],
+    ) -> list[Any]: ...
 
 
 class BatchablePolicy(Protocol):
     """A `Policy` whose per-tick decision splits around a (batchable) forward:
     `build_obs` produces the observation to stack, `select_action` consumes the
-    matching decoded row. A runner detects these by duck-typing — a `Policy`
-    without `build_obs` is treated as a CPU policy and driven via `act`.
+    matching decoded row, and `decode_config` supplies the per-row options the
+    handle's `decode_batch` branches on. A runner detects these by duck-typing —
+    a `Policy` without `build_obs` is treated as a CPU policy and driven via `act`.
     """
 
     model_handle: ModelHandle
+    decode_config: Any
 
     def build_obs(self, view: PlayerView) -> ObsBundle: ...
     def select_action(self, decision: Any) -> tuple[int, int, int]: ...
