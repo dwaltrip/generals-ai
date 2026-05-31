@@ -50,7 +50,7 @@ def extract(replay_id: str, conn: sqlite3.Connection | None = None) -> dict:
 
 
 def _build_payload(replay_id: str, state: sim_core.State, replay) -> dict:
-    s = replay.static
+    s = replay.static.map
     initial_generals = list(s.initial_generals)
 
     # City-birth stream: every capture and neutralize event converts the

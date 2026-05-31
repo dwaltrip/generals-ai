@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from bc.inference import BCModelHandle, BCPerspective
 
@@ -11,12 +11,14 @@ from self_play.nn_agent import NNAgent
 
 
 if TYPE_CHECKING:
+    from game_types import StaticMap
+
     import sim_core
 
 
 def play_game(
     handle: BCModelHandle,
-    static: Any,
+    map_data: StaticMap,
     max_turns: int = 2000,
     force_move: bool = False,
     sample: bool = False,
@@ -41,7 +43,7 @@ def play_game(
         for p in (0, 1)
     ]
     result = run_game(
-        agents, static,
+        agents, map_data,
         max_turns=max_turns,
         progress_interval=progress_interval,
     )

@@ -340,6 +340,7 @@ version = "0.0.1"
 source = { editable = "packages/eval-bot" }
 dependencies = [
     { name = "game-runner" },
+    { name = "game-types" },
     { name = "numpy" },
     { name = "self-play" },
     { name = "sim-core" },
@@ -349,6 +350,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "game-runner", editable = "packages/game-runner" },
+    { name = "game-types", editable = "packages/game-types" },
     { name = "numpy", specifier = ">=2.0" },
     { name = "self-play", editable = "packages/self-play" },
     { name = "sim-core", editable = "sim-core" },
@@ -362,6 +364,7 @@ source = { editable = "packages/eval-tools" }
 dependencies = [
     { name = "eval-bot" },
     { name = "game-runner" },
+    { name = "game-types" },
     { name = "numpy" },
     { name = "self-play" },
     { name = "sim-core" },
@@ -372,6 +375,7 @@ dependencies = [
 requires-dist = [
     { name = "eval-bot", editable = "packages/eval-bot" },
     { name = "game-runner", editable = "packages/game-runner" },
+    { name = "game-types", editable = "packages/game-types" },
     { name = "numpy", specifier = ">=2.0" },
     { name = "self-play", editable = "packages/self-play" },
     { name = "sim-core", editable = "sim-core" },
@@ -1291,6 +1295,7 @@ name = "replay-parser"
 version = "0.1.0"
 source = { editable = "replay-parser" }
 dependencies = [
+    { name = "game-types" },
     { name = "numpy" },
     { name = "replay-collector" },
     { name = "sim-core" },
@@ -1298,6 +1303,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
+    { name = "game-types", editable = "packages/game-types" },
     { name = "numpy", specifier = ">=2.0" },
     { name = "replay-collector", editable = "replay-collector" },
     { name = "sim-core", editable = "sim-core" },

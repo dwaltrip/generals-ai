@@ -48,11 +48,11 @@ def main() -> int:
         print(f"seed={args.seed} picked replay {replay_id}")
     else:
         replay_id = list_two_player_replay_ids(limit=1)[0]
-    static = load_static_from_db(replay_id)
-    print(f"seed: replay_id={replay_id} map={static.map_width}x{static.map_height}")
+    map_data = load_static_from_db(replay_id)
+    print(f"seed: replay_id={replay_id} map={map_data.map_width}x{map_data.map_height}")
 
     state, bots = play_game(
-        static,
+        map_data,
         max_ticks=args.max_ticks,
         progress_interval=args.progress_interval,
     )
@@ -72,7 +72,7 @@ def main() -> int:
     label = f"evalbot-{ts}"
     out_path = Path(args.out) if args.out else _DEFAULT_TMP / f"{label}.html"
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_text(build_html_from_state(label, state, static))
+    out_path.write_text(build_html_from_state(label, state, map_data))
     print(f"\nwrote: {out_path}")
     return 0
 

@@ -6,6 +6,10 @@ generic driver (`game-runner`) hand observations to a model without importing
 the model package. They are deliberately dependency-light (numpy only) so both
 sides can depend on them without dragging in each other's deps.
 
+  - StaticMap   — the unchanging board spec (dims, mountains, initial cities /
+                  generals / neutrals) that `sim_core.new_state` consumes. The
+                  game side reads it directly; the replay parser produces it
+                  inside its richer `GameStatic` record.
   - PlayerView  — produced by `game_runner.state_to_view`, consumed by the
                   model encoder. One perspective's raw game state at tick t.
   - ObsBundle   — encoder output: the model input tensor + masks.
@@ -22,6 +26,28 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import numpy as np
+
+
+@dataclass(frozen=True, slots=True)
+class StaticMap:
+    """A game's static map spec — the unchanging inputs `sim_core.new_state`
+    consumes to build a board, and that the runner / agents / save / viewer
+    read while a game plays out.
+
+    Tile arrays are flat cell indices in unpadded `row*W + col` order.
+    `initial_generals` is the raw per-player array (length = num_players),
+    with a `-1` sentinel for any null slot.
+    """
+
+    map_width: int
+    map_height: int
+    usernames: list[str]
+    mountains: list[int]                # flat cell indices
+    initial_cities: list[int]           # flat cell indices
+    initial_city_armies: list[int]
+    initial_generals: list[int]         # flat cell index per player (-1 = null slot)
+    initial_neutrals: list[int]         # flat cell indices
+    initial_neutral_armies: list[int]
 
 
 @dataclass(frozen=True, eq=False)

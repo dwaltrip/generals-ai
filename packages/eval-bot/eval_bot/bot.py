@@ -1,13 +1,13 @@
 """EvalBot — hand-coded greedy agent for evaluating NN training progress.
 
 Same duck-typed interface as ModelAgent in self_play.agent:
-  - init_for_game(state, static) — called once per game
+  - init_for_game(state, map_data) — called once per game
   - act(view) — called once per tick with the current PlayerView
 """
 
 from __future__ import annotations
 
-from typing import Any
+from game_types import StaticMap
 
 from eval_bot.attack import should_clear_attack, try_attack
 from eval_bot.bot_config import BotConfig
@@ -71,8 +71,8 @@ class EvalBot:
         self.n_explore = 0
         self.n_no_move = 0
 
-    def init_for_game(self, state: sim_core.State, static: Any) -> None:
-        self.world.init_for_game(state, static)
+    def init_for_game(self, state: sim_core.State, map_data: StaticMap) -> None:
+        self.world.init_for_game(state, map_data)
         self._active_plan = None
         self._idle_ticks = 0
 

@@ -5,6 +5,7 @@ description = "Hand-coded greedy bot for evaluating NN training progress"
 requires-python = ">=3.14"
 dependencies = [
     "game-runner",
+    "game-types",
     "numpy>=2.0",
     "sim-core",
     "self-play",
@@ -24,6 +25,7 @@ packages = ["eval_bot"]
 
 [tool.uv.sources]
 game-runner = { workspace = true }
+game-types = { workspace = true }
 self-play = { workspace = true }
 sim-core = { workspace = true }
 training = { workspace = true }

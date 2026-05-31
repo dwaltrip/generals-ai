@@ -1,5 +1,6 @@
 import sqlite3
 
+from game_types import StaticMap
 import numpy as np
 import pytest
 
@@ -35,6 +36,7 @@ def test_decode_wire_returns_replay_data(sample_wire):
     rd = decode_wire(sample_wire)
     assert isinstance(rd, ReplayData)
     assert isinstance(rd.static, GameStatic)
+    assert isinstance(rd.static.map, StaticMap)
     assert isinstance(rd.moves, Moves)
     assert isinstance(rd.afks, Afks)
 
@@ -42,11 +44,12 @@ def test_decode_wire_returns_replay_data(sample_wire):
 def test_static_shape(sample_wire):
     rd = decode_wire(sample_wire)
     s = rd.static
+    m = s.map
     assert s.version >= 1
-    assert s.map_width > 0 and s.map_height > 0
-    assert len(s.usernames) == len(s.stars) == len(s.initial_generals)
-    assert len(s.initial_cities) == len(s.initial_city_armies)
-    assert len(s.initial_neutrals) == len(s.initial_neutral_armies)
+    assert m.map_width > 0 and m.map_height > 0
+    assert len(m.usernames) == len(s.stars) == len(m.initial_generals)
+    assert len(m.initial_cities) == len(m.initial_city_armies)
+    assert len(m.initial_neutrals) == len(m.initial_neutral_armies)
 
 
 def test_moves_columnar_dtypes_and_length(sample_wire):

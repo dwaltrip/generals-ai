@@ -18,20 +18,21 @@ import sim_core
 
 def write_sim_output(state: sim_core.State, replay: ReplayData, out_path: Path) -> None:
     static = replay.static
+    map_data = static.map
     snaps_own = state.snapshots_ownership
     snaps_arm = state.snapshots_armies
 
     payload = {
         "replay_id": np.asarray(static.id, dtype="<U16"),
         "version": np.asarray(static.version, dtype=np.int32),
-        "map_width": np.asarray(static.map_width, dtype=np.int32),
-        "map_height": np.asarray(static.map_height, dtype=np.int32),
-        "mountains": np.asarray(static.mountains, dtype=np.int32),
-        "initial_cities": np.asarray(static.initial_cities, dtype=np.int32),
-        "initial_city_armies": np.asarray(static.initial_city_armies, dtype=np.int32),
-        "initial_neutrals": np.asarray(static.initial_neutrals, dtype=np.int32),
-        "initial_neutral_armies": np.asarray(static.initial_neutral_armies, dtype=np.int32),
-        "initial_generals": np.asarray(static.initial_generals, dtype=np.int32),
+        "map_width": np.asarray(map_data.map_width, dtype=np.int32),
+        "map_height": np.asarray(map_data.map_height, dtype=np.int32),
+        "mountains": np.asarray(map_data.mountains, dtype=np.int32),
+        "initial_cities": np.asarray(map_data.initial_cities, dtype=np.int32),
+        "initial_city_armies": np.asarray(map_data.initial_city_armies, dtype=np.int32),
+        "initial_neutrals": np.asarray(map_data.initial_neutrals, dtype=np.int32),
+        "initial_neutral_armies": np.asarray(map_data.initial_neutral_armies, dtype=np.int32),
+        "initial_generals": np.asarray(map_data.initial_generals, dtype=np.int32),
         "ownership": np.stack(snaps_own, axis=0).astype(np.int8, copy=False),
         "armies": np.stack(snaps_arm, axis=0).astype(np.int16, copy=False),
         "cities": np.asarray(state.cities, dtype=np.int32),

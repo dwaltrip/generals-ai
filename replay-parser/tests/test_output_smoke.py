@@ -97,9 +97,9 @@ def _check_sim_output(name: str, state, replay, sim: dict) -> None:
 
     P = state.num_players
     T = state.snapshots_len
-    HW = replay.static.map_width * replay.static.map_height
+    HW = replay.static.map.map_width * replay.static.map.map_height
     C_final = len(state.cities)
-    C0 = len(replay.static.initial_cities)
+    C0 = len(replay.static.map.initial_cities)
 
     assert sim["ownership"].shape == (T, HW)
     assert sim["ownership"].dtype == np.int8
@@ -183,8 +183,9 @@ def _check_meta(meta: dict, replay, P: int) -> None:
     assert meta["perspective_player_ids"].shape == (K,)
     assert meta["perspective_usernames"].shape == (K,)
     assert meta["perspective_usernames"].dtype.kind == "U"
-    # Usernames round-trip from wire.static.usernames via perspective_player_ids.
-    expected_names = [replay.static.usernames[p] for p in meta["perspective_player_ids"].tolist()]
+    # Usernames round-trip from static.map.usernames via perspective_player_ids.
+    usernames = replay.static.map.usernames
+    expected_names = [usernames[p] for p in meta["perspective_player_ids"].tolist()]
     assert meta["perspective_usernames"].tolist() == expected_names
     assert meta["placement"].shape == (K,)
     assert meta["stars_at_start"].shape == (K,)

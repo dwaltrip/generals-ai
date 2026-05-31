@@ -1,30 +1,30 @@
 """Save an eval game to a compressed .npz file.
 
-Modeled on replay_parser.output.write_sim_output but takes a raw static
-object (from seed_map or sim_core) instead of a ReplayData. Produces the
-same array layout so existing viewers/tools can read the output.
+Modeled on replay_parser.output.write_sim_output but takes a `StaticMap`
+(from seed_map) instead of a ReplayData. Produces the same array layout
+so existing viewers/tools can read the output.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
 
+from game_types import StaticMap
 import numpy as np
 
 import sim_core
 
 
-def write_eval_game(state: sim_core.State, static: Any, out_path: Path) -> None:
+def write_eval_game(state: sim_core.State, map_data: StaticMap, out_path: Path) -> None:
     payload = {
-        "map_width": np.asarray(static.map_width, dtype=np.int32),
-        "map_height": np.asarray(static.map_height, dtype=np.int32),
-        "mountains": np.asarray(static.mountains, dtype=np.int32),
-        "initial_cities": np.asarray(static.initial_cities, dtype=np.int32),
-        "initial_city_armies": np.asarray(static.initial_city_armies, dtype=np.int32),
-        "initial_neutrals": np.asarray(static.initial_neutrals, dtype=np.int32),
-        "initial_neutral_armies": np.asarray(static.initial_neutral_armies, dtype=np.int32),
-        "initial_generals": np.asarray(static.initial_generals, dtype=np.int32),
+        "map_width": np.asarray(map_data.map_width, dtype=np.int32),
+        "map_height": np.asarray(map_data.map_height, dtype=np.int32),
+        "mountains": np.asarray(map_data.mountains, dtype=np.int32),
+        "initial_cities": np.asarray(map_data.initial_cities, dtype=np.int32),
+        "initial_city_armies": np.asarray(map_data.initial_city_armies, dtype=np.int32),
+        "initial_neutrals": np.asarray(map_data.initial_neutrals, dtype=np.int32),
+        "initial_neutral_armies": np.asarray(map_data.initial_neutral_armies, dtype=np.int32),
+        "initial_generals": np.asarray(map_data.initial_generals, dtype=np.int32),
         "ownership": np.stack(state.snapshots_ownership, axis=0).astype(np.int8, copy=False),
         "armies": np.stack(state.snapshots_armies, axis=0).astype(np.int16, copy=False),
         "cities": np.asarray(state.cities, dtype=np.int32),

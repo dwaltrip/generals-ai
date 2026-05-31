@@ -35,7 +35,7 @@ WINDOW_END_MS = 1764547200000    # 2025-12-01 00:00 UTC
 
 
 def classify(state, replay, listings) -> str:
-    usernames = replay.static.usernames
+    usernames = replay.static.map.usernames
     try:
         listings_slots = [usernames.index(name) for (name,) in listings]
     except ValueError:

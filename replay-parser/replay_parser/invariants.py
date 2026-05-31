@@ -21,7 +21,7 @@ class Violation:
 
 def check_invariants(state: sim_core.State, replay: ReplayData) -> list[Violation]:
     v: list[Violation] = []
-    s = replay.static
+    s = replay.static.map
     initial_generals = list(s.initial_generals)
     map_size = s.map_width * s.map_height
 

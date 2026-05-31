@@ -6,7 +6,7 @@ and uses EvalBot instead of ModelAgent.
 
 from __future__ import annotations
 
-from typing import Any
+from game_types import StaticMap
 
 from eval_bot.bot import EvalBot
 from eval_bot.bot_config import BotConfig
@@ -14,7 +14,7 @@ import sim_core
 
 
 def play_game(
-    static: Any,
+    map_data: StaticMap,
     cfg: BotConfig | None = None,
     max_ticks: int = 2000,
     progress_interval: int = 50,
@@ -22,7 +22,7 @@ def play_game(
     """Play one game with EvalBots on every slot. Returns the final state
     and the list of bots (for diagnostics).
     """
-    state = sim_core.new_state(static)
+    state = sim_core.new_state(map_data)
     num_players = state.num_players
 
     bot_cfg = cfg or BotConfig()
@@ -31,14 +31,14 @@ def play_game(
         for p in range(num_players)
     ]
     for bot in bots:
-        bot.init_for_game(state, static)
+        bot.init_for_game(state, map_data)
 
     while state.alive_count > 1 and state.timestep < max_ticks:
         moves: list[tuple[int, int, int, int]] = []
         for p, bot in enumerate(bots):
             if not state.alive[p]:
                 continue
-            view = bot.world.update(state, static)
+            view = bot.world.update(state, map_data)
             src, dst, is50 = bot.act(view)
             if src == -1:
                 continue

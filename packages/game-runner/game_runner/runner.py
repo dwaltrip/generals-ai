@@ -16,8 +16,8 @@ of the per-tick moves list rather than submitting them to step_tick.
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
-from typing import Any
 
+from game_types import StaticMap
 import numpy as np
 
 from game_runner.policy import GameResult, PlayerStats, Policy
@@ -30,12 +30,12 @@ OnTickCallback = Callable[[sim_core.State, list[tuple[int, int, int, int]], Sequ
 
 def run_game(
     policies: Sequence[Policy],
-    static: Any,
+    map_data: StaticMap,
     max_turns: int = 2000,
     progress_interval: int = 0,
     on_tick: OnTickCallback | None = None,
 ) -> GameResult:
-    state = sim_core.new_state(static)
+    state = sim_core.new_state(map_data)
     num_players = state.num_players
     if len(policies) != num_players:
         raise ValueError(
@@ -43,14 +43,14 @@ def run_game(
         )
 
     for policy in policies:
-        policy.init_for_game(state, static)
+        policy.init_for_game(state, map_data)
 
     while state.alive_count > 1 and state.timestep < max_turns:
         moves: list[tuple[int, int, int, int]] = []
         for p, policy in enumerate(policies):
             if not state.alive[p]:
                 continue
-            src, dst, is50 = policy.act(state, static)
+            src, dst, is50 = policy.act(state, map_data)
             if src == -1:
                 continue
             moves.append((p, src, dst, is50))

@@ -8,32 +8,30 @@ keeps the model package free of any `sim_core` dependency.
 
 from __future__ import annotations
 
-from typing import Any
-
-from game_types import PlayerView
+from game_types import PlayerView, StaticMap
 import numpy as np
 
 import sim_core
 
 
-def state_to_view(state: sim_core.State, static: Any, slot: int) -> PlayerView:
+def state_to_view(state: sim_core.State, map_data: StaticMap, slot: int) -> PlayerView:
     """Extract one perspective's raw observation of the current tick.
 
-    Reads exactly the `State`/`static` fields the model encoder needs; fog and
-    the 8-slot general padding are applied downstream in the encoder, so the
+    Reads exactly the `State` / `StaticMap` fields the model encoder needs; fog
+    and the 8-slot general padding are applied downstream in the encoder, so the
     view carries the raw board arrays.
     """
     t = state.timestep
     return PlayerView(
         slot=slot,
         timestep=t,
-        H=static.map_height,
-        W=static.map_width,
+        H=map_data.map_height,
+        W=map_data.map_width,
         ownership_t=np.asarray(state.snapshots_ownership[t], dtype=np.int8),
         armies_t=np.asarray(state.snapshots_armies[t], dtype=np.int16),
-        mountains=np.asarray(static.mountains, dtype=np.int32),
-        initial_cities=np.asarray(static.initial_cities, dtype=np.int32),
-        initial_generals=np.asarray(static.initial_generals, dtype=np.int32),
+        mountains=np.asarray(map_data.mountains, dtype=np.int32),
+        initial_cities=np.asarray(map_data.initial_cities, dtype=np.int32),
+        initial_generals=np.asarray(map_data.initial_generals, dtype=np.int32),
         cities=np.asarray(state.cities, dtype=np.int32),
         cities_present_at=np.asarray(state.cities_present_at, dtype=np.int32),
         capture_events=capture_events_to_array(state.capture_events),

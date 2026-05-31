@@ -4,25 +4,26 @@ mod state;
 
 use state::{army_overflow_pyerr, CaptureEvent, DeathEvent, NeutralizeEvent, State};
 
-/// Build a fresh `State` from a duck-typed static-map record.
+/// Build a fresh `State` from a duck-typed static-map record (`StaticMap`).
 ///
-/// Reads the same `static.*` attributes that `simulate` does, calls
+/// Reads the map's attributes (`map_width`, `mountains`, …), calls
 /// `State::build_initial`, and writes the initial pre-loop snapshot so
 /// snapshot indexing is consistent across `simulate` and `step_tick`
-/// driven loops.
-fn build_state_from_static(py: Python<'_>, static_data: &Bound<'_, PyAny>) -> PyResult<State> {
-    let map_w: usize = static_data.getattr("map_width")?.extract()?;
-    let map_h: usize = static_data.getattr("map_height")?.extract()?;
+/// driven loops. `new_state` is handed the `StaticMap` directly; `simulate`
+/// reaches it via `replay.static.map`.
+fn build_state_from_static(py: Python<'_>, map_data: &Bound<'_, PyAny>) -> PyResult<State> {
+    let map_w: usize = map_data.getattr("map_width")?.extract()?;
+    let map_h: usize = map_data.getattr("map_height")?.extract()?;
     let map_size = map_w * map_h;
-    let usernames: Vec<String> = static_data.getattr("usernames")?.extract()?;
+    let usernames: Vec<String> = map_data.getattr("usernames")?.extract()?;
     let num_players = usernames.len();
-    let mountains: Vec<i32> = static_data.getattr("mountains")?.extract()?;
-    let initial_cities: Vec<i32> = static_data.getattr("initial_cities")?.extract()?;
-    let initial_city_armies: Vec<i32> = static_data.getattr("initial_city_armies")?.extract()?;
-    let initial_generals: Vec<i32> = static_data.getattr("initial_generals")?.extract()?;
-    let initial_neutrals: Vec<i32> = static_data.getattr("initial_neutrals")?.extract()?;
+    let mountains: Vec<i32> = map_data.getattr("mountains")?.extract()?;
+    let initial_cities: Vec<i32> = map_data.getattr("initial_cities")?.extract()?;
+    let initial_city_armies: Vec<i32> = map_data.getattr("initial_city_armies")?.extract()?;
+    let initial_generals: Vec<i32> = map_data.getattr("initial_generals")?.extract()?;
+    let initial_neutrals: Vec<i32> = map_data.getattr("initial_neutrals")?.extract()?;
     let initial_neutral_armies: Vec<i32> =
-        static_data.getattr("initial_neutral_armies")?.extract()?;
+        map_data.getattr("initial_neutral_armies")?.extract()?;
 
     let mut state = State::build_initial(
         map_size,
@@ -42,8 +43,8 @@ fn build_state_from_static(py: Python<'_>, static_data: &Bound<'_, PyAny>) -> Py
 /// Build a fresh `State` ready for stepwise driving via `State.step_tick`.
 /// Companion to `simulate`: same construction, just no moves array.
 #[pyfunction]
-fn new_state(py: Python<'_>, static_data: &Bound<'_, PyAny>) -> PyResult<State> {
-    build_state_from_static(py, static_data)
+fn new_state(py: Python<'_>, map_data: &Bound<'_, PyAny>) -> PyResult<State> {
+    build_state_from_static(py, map_data)
 }
 
 /// Run the full simulator on a Python `ReplayData`. Returns a finished
@@ -52,8 +53,8 @@ fn new_state(py: Python<'_>, static_data: &Bound<'_, PyAny>) -> PyResult<State> 
 fn simulate(py: Python<'_>, replay: &Bound<'_, PyAny>) -> PyResult<State> {
     use numpy::PyReadonlyArray1;
 
-    let static_data = replay.getattr("static")?;
-    let mut state = build_state_from_static(py, &static_data)?;
+    let map_data = replay.getattr("static")?.getattr("map")?;
+    let mut state = build_state_from_static(py, &map_data)?;
 
     let moves = replay.getattr("moves")?;
     let m_timestep: PyReadonlyArray1<i32> = moves.getattr("timestep")?.extract()?;

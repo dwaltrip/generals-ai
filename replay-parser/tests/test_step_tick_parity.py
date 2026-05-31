@@ -66,7 +66,7 @@ def test_step_tick_matches_simulate(spec):
     )
     afks_by_tick = _group_afks_by_tick(replay.afks.timestep, replay.afks.index)
 
-    live = sim_core.new_state(replay.static)
+    live = sim_core.new_state(replay.static.map)
     # Hard cap as a runaway-loop guard; canonical.timestep is the real ceiling
     # but we don't want to trust it for the termination condition.
     max_iters = canonical.timestep + 10

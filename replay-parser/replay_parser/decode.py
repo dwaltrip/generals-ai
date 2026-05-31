@@ -1,9 +1,9 @@
 from dataclasses import dataclass
 
+from game_types import StaticMap
 import numpy as np
 
 from replay_parser._collector.wire import decode as _decompress
-from replay_parser.types import TileIndex
 
 
 # Wire field name mapping (per docs/replay-format.md and plan §3.2):
@@ -29,19 +29,14 @@ class Afks:
 
 @dataclass(frozen=True, slots=True)
 class GameStatic:
+    """A replay's static record: the `StaticMap` the sim consumes plus the
+    replay-only bookkeeping (id, version, stars, modifiers) the parser carries.
+    Game-side code wants `.map` and nothing else here."""
+
+    map: StaticMap
     id: str
     version: int
-    map_width: int
-    map_height: int
-    usernames: list[str]
     stars: list[float]
-    initial_cities: list[TileIndex]
-    initial_city_armies: list[int]
-    # initial_generals -1 sentinel for any null slot (empirically never in filtered FFA)
-    initial_generals: list[TileIndex]
-    mountains: list[TileIndex]
-    initial_neutrals: list[TileIndex]
-    initial_neutral_armies: list[int]
     modifiers: list[int]
 
 
@@ -66,18 +61,20 @@ def decode_wire_array(wire: list) -> ReplayData:
 
 def _decode_static(wire: list) -> GameStatic:
     return GameStatic(
-        version=wire[0],
+        map=StaticMap(
+            map_width=wire[2],
+            map_height=wire[3],
+            usernames=list(wire[4]),
+            mountains=list(wire[9]),
+            initial_cities=list(wire[6]),
+            initial_city_armies=list(wire[7]),
+            initial_generals=[g if g is not None else -1 for g in wire[8]],
+            initial_neutrals=list(wire[14]),
+            initial_neutral_armies=list(wire[15]),
+        ),
         id=wire[1],
-        map_width=wire[2],
-        map_height=wire[3],
-        usernames=list(wire[4]),
+        version=wire[0],
         stars=list(wire[5]),
-        initial_cities=list(wire[6]),
-        initial_city_armies=list(wire[7]),
-        initial_generals=[g if g is not None else -1 for g in wire[8]],
-        mountains=list(wire[9]),
-        initial_neutrals=list(wire[14]),
-        initial_neutral_armies=list(wire[15]),
         modifiers=list(wire[21]),
     )
 

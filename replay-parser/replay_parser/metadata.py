@@ -32,7 +32,7 @@ def build_metadata(
         raise ValueError(f"placement length {len(placement)} != K={K}")
 
     stars_at_start = [replay.static.stars[p] for p in perspective_player_ids]
-    perspective_usernames = [replay.static.usernames[p] for p in perspective_player_ids]
+    perspective_usernames = [replay.static.map.usernames[p] for p in perspective_player_ids]
 
     death_by_player: dict[int, int] = {e.player: e.timestep for e in state.death_events}
     elim_timestep = [death_by_player.get(p, -1) for p in perspective_player_ids]

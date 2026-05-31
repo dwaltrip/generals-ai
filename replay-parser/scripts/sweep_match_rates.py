@@ -240,7 +240,7 @@ def main():
             continue
 
         listings_names = data.listings_by_id.get(replay_id, [])
-        usernames = replay.static.usernames
+        usernames = replay.static.map.usernames
         try:
             listings_slots = [usernames.index(name) for name in listings_names]
         except ValueError:

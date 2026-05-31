@@ -170,7 +170,7 @@ def _process_replay_inner(
     rolling_for_replay = _rolling.by_replay.get(replay_id, {})
 
     survivors: list[tuple[int, str, int, RollingStat]] = []  # (slot, name, placement, stat)
-    for slot, name in enumerate(replay.static.usernames):
+    for slot, name in enumerate(replay.static.map.usernames):
         if name not in _curated:
             continue
         stat = rolling_for_replay.get(name)

@@ -223,7 +223,7 @@ def main() -> int:
                 skipped["overflow"] += 1
                 continue
 
-            s = replay.static
+            s = replay.static.map
             # Bind once: getter clones the full snapshot list per access.
             snaps_own_list = state.snapshots_ownership
             own_all = np.stack(snaps_own_list, axis=0)

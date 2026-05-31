@@ -15,6 +15,7 @@ from typing import Any, NamedTuple
 from bc import obs as bc_obs
 from bc import visibility
 from bc.obs import MemoryState, pad_initial_generals
+from game_types import StaticMap
 import numpy as np
 
 from eval_bot.bfs import bfs_distances
@@ -91,8 +92,8 @@ class WorldModel:
         # that player's threat window opens; used to detect tile ownership flips for IncursionThreat
         self._eating_baselines: dict[int, np.ndarray] = {}
 
-    def init_for_game(self, state: sim_core.State, static: Any) -> None:
-        H, W = static.map_height, static.map_width
+    def init_for_game(self, state: sim_core.State, map_data: StaticMap) -> None:
+        H, W = map_data.map_height, map_data.map_width
 
         self._H, self._W = H, W
 
@@ -100,16 +101,16 @@ class WorldModel:
         self._armies = [np.asarray(state.snapshots_armies[0], dtype=np.int16)]
 
         ig_padded = pad_initial_generals(
-            static.initial_generals, self.perspective_slot,
+            map_data.initial_generals, self.perspective_slot,
         )
         self._gen_flat = int(ig_padded[self.perspective_slot])
 
         self._sim = {
             "ownership": self._ownership,
             "armies": self._armies,
-            "mountains": np.asarray(static.mountains, dtype=np.int32),
+            "mountains": np.asarray(map_data.mountains, dtype=np.int32),
             "initial_cities": np.asarray(
-                static.initial_cities, dtype=np.int32,
+                map_data.initial_cities, dtype=np.int32,
             ),
             "initial_generals": ig_padded,
             "cities": np.asarray(state.cities, dtype=np.int32),
@@ -125,7 +126,7 @@ class WorldModel:
         self._threat_windows = {}
         self._eating_baselines = {}
 
-    def update(self, state: sim_core.State, static: Any) -> PlayerView:
+    def update(self, state: sim_core.State, map_data: StaticMap) -> PlayerView:
         assert self._sim is not None, "call init_for_game first"
         assert self._memory is not None
         assert self._ownership is not None

@@ -6,6 +6,7 @@ requires-python = ">=3.14"
 dependencies = [
     "eval-bot",
     "game-runner",
+    "game-types",
     "numpy>=2.0",
     "self-play",
     "sim-core",
@@ -22,6 +23,7 @@ packages = ["eval_tools"]
 [tool.uv.sources]
 eval-bot = { workspace = true }
 game-runner = { workspace = true }
+game-types = { workspace = true }
 self-play = { workspace = true }
 sim-core = { workspace = true }
 utils = { workspace = true }

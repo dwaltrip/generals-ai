@@ -131,11 +131,11 @@ def main():
                 continue
             deduced_slots = deduce_ranking_for_replay(state, started)
             has_kill = apply_surrender_bonus(state)
-            deduced_names = [replay.static.usernames[p] for p in deduced_slots]
+            deduced_names = [replay.static.map.usernames[p] for p in deduced_slots]
             deduced_has_kill = [has_kill[p] for p in deduced_slots]
             render(replay_id, started, version, listings_names, deduced_names, deduced_has_kill)
             if args.damage:
-                render_damage(state, replay.static.usernames)
+                render_damage(state, replay.static.map.usernames)
     finally:
         conn.close()
 

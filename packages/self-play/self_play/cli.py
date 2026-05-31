@@ -71,13 +71,13 @@ def main() -> int:
     print(f"device: {device}")
 
     replay_id = args.replay_id or seed_map.list_two_player_replay_ids(limit=1)[0]
-    static = seed_map.load_static_from_db(replay_id)
-    print(f"seed: replay_id={replay_id} map={static.map_width}x{static.map_height}")
+    map_data = seed_map.load_static_from_db(replay_id)
+    print(f"seed: replay_id={replay_id} map={map_data.map_width}x{map_data.map_height}")
     print(f"mode: sample={args.sample} force_move={args.force_move} "
           f"temperature={args.temperature} max_turns={args.max_turns}")
 
     state, agents = driver.play_game(
-        handle, static,
+        handle, map_data,
         max_turns=args.max_turns,
         sample=args.sample,
         force_move=args.force_move,
@@ -95,7 +95,7 @@ def main() -> int:
     label = args.replay_id_label or f"selfplay-{dt.datetime.now():%Y%m%dT%H%M%S}"
     out_path = _resolve_out_path(args.out)
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_text(viewer.build_html_from_state(label, state, static))
+    out_path.write_text(viewer.build_html_from_state(label, state, map_data))
     print(f"\nwrote: {out_path}")
     return 0
 

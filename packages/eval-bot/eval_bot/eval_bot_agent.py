@@ -6,7 +6,7 @@ run_game without changing EvalBot's own interface.
 
 from __future__ import annotations
 
-from typing import Any
+from game_types import StaticMap
 
 from eval_bot.bot import EvalBot
 from eval_bot.bot_config import BotConfig
@@ -25,12 +25,12 @@ class EvalBotAgent:
         self._bot = EvalBot(perspective_slot=perspective_slot, cfg=self.cfg)
         self._world = WorldModel(perspective_slot=perspective_slot, cfg=self.cfg)
 
-    def init_for_game(self, state: sim_core.State, static: Any) -> None:
-        self._world.init_for_game(state, static)
-        self._bot.init_for_game(state, static)
+    def init_for_game(self, state: sim_core.State, map_data: StaticMap) -> None:
+        self._world.init_for_game(state, map_data)
+        self._bot.init_for_game(state, map_data)
 
-    def act(self, state: sim_core.State, static: Any) -> tuple[int, int, int]:
-        view = self._world.update(state, static)
+    def act(self, state: sim_core.State, map_data: StaticMap) -> tuple[int, int, int]:
+        view = self._world.update(state, map_data)
         return self._bot.act(view)
 
     @property

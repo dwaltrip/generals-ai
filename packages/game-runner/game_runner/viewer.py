@@ -5,9 +5,9 @@ instead of `extract(replay_id)` (which looks up wire_data, parses, and
 re-simulates), we hand the already-finished sim State directly to
 `_build_payload(replay_id, state, fake_replay)`.
 
-`fake_replay` only needs a `.static` attribute — that's the full read
-surface `_build_payload` touches. We pass the same static we used to
-seed the game via `sim_core.new_state(...)`.
+`_build_payload` reads the map spec off `fake_replay.static.map`, so we
+wrap the `StaticMap` we seeded the game with (via `sim_core.new_state`)
+in a matching `.static.map` shape.
 
 `timestep_viewer` lives under `replay-parser/tools/` and isn't a Python
 package (no `__init__.py`, not in the replay-parser wheel build). We
@@ -24,6 +24,8 @@ import re
 import sys
 from types import SimpleNamespace
 from typing import Any
+
+from game_types import StaticMap
 
 import replay_parser
 import sim_core
@@ -64,7 +66,7 @@ def _safe_json(payload: dict) -> str:
 def build_html_from_state(
     replay_id: str,
     state: sim_core.State,
-    static: Any,
+    map_data: StaticMap,
 ) -> str:
     """Render a finished self-play State as a viewer HTML string.
 
@@ -72,14 +74,14 @@ def build_html_from_state(
     the embedded payload's static record). For self-play games a value
     like `"selfplay-<timestamp>"` works.
 
-    `static` must be the same static-map record used to build `state` —
-    the payload pulls map dims, usernames, mountains, initial cities,
-    and initial generals off it, so any divergence would render a board
-    that doesn't match the snapshots.
+    `map_data` must be the same `StaticMap` used to build `state` — the
+    payload pulls map dims, usernames, mountains, initial cities, and
+    initial generals off it, so any divergence would render a board that
+    doesn't match the snapshots.
     """
     fake_static = dataclasses.replace(
-        static,
-        usernames=[f"Player {i+1}" for i, _ in enumerate(static.usernames)],
+        map_data,
+        usernames=[f"Player {i+1}" for i, _ in enumerate(map_data.usernames)],
     )
     return render_viewer_html(replay_id, state, fake_static)
 
@@ -95,7 +97,7 @@ def render_viewer_html(
     static — the caller is responsible for providing the right usernames.
     Works with SimpleNamespace mocks (e.g. from loading a saved .npz).
     """
-    fake_replay = SimpleNamespace(static=static)
+    fake_replay = SimpleNamespace(static=SimpleNamespace(map=static))
     payload = _build_payload(label, state, fake_replay)
 
     template = _TEMPLATE_PATH.read_text()

@@ -1,14 +1,16 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Protocol
+from typing import Protocol
+
+from game_types import StaticMap
 
 import sim_core
 
 
 class Policy(Protocol):
-    def init_for_game(self, state: sim_core.State, static: Any) -> None: ...
-    def act(self, state: sim_core.State, static: Any) -> tuple[int, int, int]: ...
+    def init_for_game(self, state: sim_core.State, map_data: StaticMap) -> None: ...
+    def act(self, state: sim_core.State, map_data: StaticMap) -> tuple[int, int, int]: ...
 
 
 @dataclass

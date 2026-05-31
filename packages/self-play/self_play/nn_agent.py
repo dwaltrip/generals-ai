@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Protocol
 
-from game_types import ObsBundle, PlayerView
+from game_types import ObsBundle, PlayerView, StaticMap
 
 from game_runner.sim_adapter import state_to_view
 
@@ -67,8 +67,8 @@ class NNAgent:
         self._slot: int = perspective.perspective_slot
         self._pending: ObsBundle | None = None
 
-    def init_for_game(self, state: sim_core.State, static: Any) -> None:
-        self._perspective.reset(state_to_view(state, static, self._slot))
+    def init_for_game(self, state: sim_core.State, map_data: StaticMap) -> None:
+        self._perspective.reset(state_to_view(state, map_data, self._slot))
 
     # --- batchable interface: build observations / consume model output ---
     def build_obs(self, view: PlayerView) -> ObsBundle:
@@ -83,8 +83,8 @@ class NNAgent:
         return move
 
     # --- single-game Policy.act: compose build -> forward(batch=1) -> select ---
-    def act(self, state: sim_core.State, static: Any) -> tuple[int, int, int]:
-        bundle = self.build_obs(state_to_view(state, static, self._slot))
+    def act(self, state: sim_core.State, map_data: StaticMap) -> tuple[int, int, int]:
+        bundle = self.build_obs(state_to_view(state, map_data, self._slot))
         out_slices = self._handle.forward_batch(bundle.obs[None], bundle.valid_mask[None])
         return self.select_action(out_slices[0])
 

@@ -43,9 +43,9 @@ from pathlib import Path
 import random
 import sys
 import time
-from typing import Any
 
 from bc.inference import default_device
+from game_types import StaticMap
 import torch
 
 from eval_tools.metrics_collector import MetricsCollector
@@ -190,7 +190,7 @@ def _play_and_record_game(
     ctx: _RunCtx,
     game_idx: int,
     replay_id: str,
-    static: Any,
+    map_data: StaticMap,
     slot_map: list[int],
     swapped: bool,
 ) -> _GameOutcome:
@@ -207,7 +207,7 @@ def _play_and_record_game(
         sample_interval=ctx.sample_interval,
     )
     result = run_game(
-        policies, static,
+        policies, map_data,
         max_turns=ctx.max_turns,
         on_tick=collector.on_tick,
     )
@@ -216,7 +216,7 @@ def _play_and_record_game(
     winner_policy = _winning_policy(result.winner, slot_map)
 
     assert result.state is not None
-    write_eval_game(result.state, static, ctx.games_dir / f"{label}.npz")
+    write_eval_game(result.state, map_data, ctx.games_dir / f"{label}.npz")
     meta = _build_game_meta(
         game_idx, replay_id, ctx.policy_specs, ctx.max_turns, slot_map,
     )
@@ -281,8 +281,8 @@ def run(args: argparse.Namespace) -> None:
     total_games = len(replay_ids) * rounds_per_map
 
     import sim_core
-    static_check = load_static_from_db(replay_ids[0])
-    state_check = sim_core.new_state(static_check)
+    map_check = load_static_from_db(replay_ids[0])
+    state_check = sim_core.new_state(map_check)
     if state_check.num_players != num_players:
         print(
             f"\nerror: map has {state_check.num_players} player slots but "
@@ -359,13 +359,13 @@ def _run_games(
     swap_rounds = [False, True] if swap_slots else [False]
 
     for replay_id in replay_ids:
-        static = load_static_from_db(replay_id)
+        map_data = load_static_from_db(replay_id)
         for _rep in range(args.games_per_map):
             for swapped in swap_rounds:
                 game_idx += 1
                 slot_map = _make_slot_map(num_players, swapped)
                 outcome = _play_and_record_game(
-                    ctx, game_idx, replay_id, static, slot_map, swapped,
+                    ctx, game_idx, replay_id, map_data, slot_map, swapped,
                 )
                 total_length += outcome.game_length
                 if outcome.winner_policy is not None:

@@ -16,19 +16,20 @@ the parsed static).
 """
 
 import sqlite3
-from typing import Any
+
+from game_types import StaticMap
 
 from replay_collector.config import DB_PATH
 from replay_parser.decode import decode_wire
 
 
-def load_static_from_db(replay_id: str) -> Any:
-    """Fetch a replay's wire blob and return its decoded `.static`.
+def load_static_from_db(replay_id: str) -> StaticMap:
+    """Fetch a replay's wire blob and return its `StaticMap`.
 
-    The returned object is a `ReplayStatic` record with the fields
-    `sim_core.new_state` consumes: map_width, map_height, usernames,
-    mountains, initial_cities, initial_city_armies, initial_generals,
-    initial_neutrals, initial_neutral_armies.
+    Unwraps the decoded `GameStatic.map` — the game side wants only the
+    board spec `sim_core.new_state` consumes (map_width, map_height,
+    usernames, mountains, initial cities / generals / neutrals), not the
+    replay bookkeeping (id, version, stars, modifiers).
     """
     with sqlite3.connect(DB_PATH) as conn:
         row = conn.execute(
@@ -40,7 +41,7 @@ def load_static_from_db(replay_id: str) -> Any:
     wire = row[0]
     if wire is None:
         raise LookupError(f"replay {replay_id!r} has no wire_data (metadata-only row)")
-    return decode_wire(wire).static
+    return decode_wire(wire).static.map
 
 
 def list_replay_ids_by_player_count(

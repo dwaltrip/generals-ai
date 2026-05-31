@@ -135,7 +135,7 @@ def _ts_2on1_general(state, replay, own_stack) -> set[int]:
     moves = replay.moves
     if len(moves.timestep) == 0:
         return set()
-    initial_generals = list(replay.static.initial_generals)
+    initial_generals = list(replay.static.map.initial_generals)
     best_e = None
     best_count = 0
     for ce in state.capture_events:
@@ -222,7 +222,7 @@ def _ts_3way_action(state, replay, own_stack) -> set[int]:
     """Within the peak (region, time-bucket), pick up to 4 high-action ticks
     (most ownership changes within the region between consecutive snapshots),
     each as a triplet [a, a+1, a+2]. Min-gap enforced to avoid overlap."""
-    s = replay.static
+    s = replay.static.map
     H, W = s.map_height, s.map_width
     T = own_stack.shape[0]
     n_ry, n_rx = H // REGION, W // REGION
