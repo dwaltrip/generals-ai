@@ -17,6 +17,17 @@ this list is the one place to edit — and the assembly code's named-var
 stack should be reordered to match.
 """
 
+# TODO(config): not everything here is a true invariant. The model arch is now
+# self-describing via `ModelConfig` (bc/model_config.py); the obs-encoder
+# hyperparameters below that *change the input tensor* (hence model quality) are
+# the next candidates to surface into config — deferred to the obs-encoder pass
+# because moving them changes the input shape, not just the model:
+#   - DENSE_HISTORY_N             (history-window depth)
+#   - CITY_TRAVERSABILITY_FACTOR  (BFS passability threshold)
+# Both already carry "tune post-spike" comments. Genuine invariants that stay
+# fixed (sim/data structure, not knobs): H_PADDED/W_PADDED, ELIGIBLE_PLAYER_COUNT,
+# MAX_BOARD_SIDE.
+
 H_PADDED = 32
 W_PADDED = 32
 
