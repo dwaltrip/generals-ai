@@ -20,6 +20,7 @@ import torch
 
 from bc.constants import H_PADDED, OBS_CHANNELS, W_PADDED
 from bc.model import BCModel, PassHead, ValueHead
+from bc.model_config import ModelConfig
 
 
 def test_pass_head_full_board_matches_plain_global_pool() -> None:
@@ -82,8 +83,8 @@ def test_value_head_variant_direct_is_default_and_baseline() -> None:
 
 def test_value_head_variant_pyramid_adds_expected_capacity() -> None:
     """'pyramid' variant constructs, runs forward, and adds ~0.82M params."""
-    m_direct = BCModel(value_head_variant="direct")
-    m_pyr = BCModel(value_head_variant="pyramid")
+    m_direct = BCModel(ModelConfig(value_head_variant="direct"))
+    m_pyr = BCModel(ModelConfig(value_head_variant="pyramid"))
     assert m_pyr.value_head.variant == "pyramid"
 
     n_direct = sum(p.numel() for p in m_direct.parameters())

@@ -13,13 +13,14 @@ it is deliberately not part of the checkpoint.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import Path
 
 import torch
 
 from bc.checkpoint import ckpt_name, is_combined_checkpoint, load_bc_model
 from bc.model import BCModel
+from bc.model_config import ModelConfig
 from bc.resume_warmup import WarmupSchedule
 from bc.train_config import TrainConfig
 from shared.device import resolve_precision
@@ -64,7 +65,7 @@ class TrainingState:
     @classmethod
     def fresh(cls, config: TrainConfig, device: torch.device) -> TrainingState:
         """Build a brand-new state: fresh model/optim/scaler, epoch 0."""
-        model = BCModel(value_head_variant=config.value_head_variant).to(device)
+        model = BCModel(ModelConfig(value_head_variant=config.value_head_variant)).to(device)
         return cls(
             model=model,
             optim=_build_optim(model, config),
@@ -121,6 +122,7 @@ class TrainingState:
         torch.save(
             {
                 "model": self.model.state_dict(),
+                "arch": asdict(self.model.cfg),  # self-describes the architecture
                 "optim": self.optim.state_dict(),
                 "scaler": self.scaler.state_dict(),
                 "epoch": self.epoch,

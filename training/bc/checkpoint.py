@@ -8,11 +8,26 @@ lives in one module rather than being duplicated across call sites.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 
 import torch
 
 from bc.model import BCModel
+from bc.model_config import ModelConfig
+
+
+# Describes every checkpoint written before the `arch` key existed. DO NOT EDIT
+# — these are historical facts about on-disk checkpoints, NOT live defaults.
+# Kept separate from ModelConfig's field defaults on purpose: the day we change
+# the default width, aliasing legacy = ModelConfig() would silently mis-load
+# every old checkpoint. They're equal today and allowed to diverge — hence the
+# literals below rather than OBS_CHANNELS/H_PADDED/W_PADDED references.
+LEGACY_ARCH = ModelConfig(
+    outer_width=128, middle_width=128, inner_width=160,
+    n_outer=2, m_middle=2, m_inner=2,
+    in_ch=96, H=32, W=32,
+)
 
 
 def ckpt_name(epoch: int) -> str:
@@ -48,6 +63,19 @@ def is_legacy_checkpoint(path: str | Path, device: str | torch.device = "cpu") -
     return not is_combined_checkpoint(obj)
 
 
+def _arch_for_load(obj: object, value_head_variant: str) -> ModelConfig:
+    """The `ModelConfig` to reconstruct a loaded checkpoint with.
+
+    `arch` present → authoritative (the load-time `value_head_variant` arg is
+    ignored). Absent (legacy) → `LEGACY_ARCH` widths + the load-time variant,
+    since legacy checkpoints don't record their variant (it lived in the run
+    dir's `args.json`, and the ones on disk are a mix of direct/pyramid).
+    """
+    if is_combined_checkpoint(obj) and "arch" in obj:
+        return ModelConfig(**obj["arch"])
+    return replace(LEGACY_ARCH, value_head_variant=value_head_variant)
+
+
 def load_bc_model(
     path: str | Path,
     device: torch.device,
@@ -56,18 +84,19 @@ def load_bc_model(
     """Construct a BCModel and load weights from a `.pt` checkpoint.
 
     Handles both checkpoint layouts: the combined dict written by
-    `TrainingState.save` (`{"model": ..., "optim": ..., ...}`) and the
-    legacy bare `state_dict` (a flat map of parameter tensors). The two
-    are distinguished by the presence of a top-level `"model"` key — a
-    bare state_dict's keys are parameter names like `trunk.0.weight`.
+    `TrainingState.save` (`{"model": ..., "arch": ..., ...}`) and the legacy
+    bare `state_dict` (a flat map of parameter tensors). The two are
+    distinguished by the presence of a top-level `"model"` key — a bare
+    state_dict's keys are parameter names like `trunk.0.weight`.
 
-    `value_head_variant` must match the variant the checkpoint was trained
-    with — otherwise `load_state_dict(strict=True)` raises on mismatched
-    keys, surfacing checkpoint/architecture drift loudly. Returns the model
-    on `device` in eval mode.
+    Architecture comes from the checkpoint's `arch` key when present; otherwise
+    `LEGACY_ARCH` + the `value_head_variant` arg (a legacy-only fallback,
+    ignored for arch-bearing checkpoints). `load_state_dict(strict=True)`
+    remains the backstop: any arch↔weights drift still raises on mismatched
+    keys. Returns the model on `device` in eval mode.
     """
-    model = BCModel(value_head_variant=value_head_variant)
     obj = torch.load(path, map_location=device, weights_only=True)
+    model = BCModel(_arch_for_load(obj, value_head_variant))
     state_dict = obj["model"] if is_combined_checkpoint(obj) else obj
     model.load_state_dict(state_dict)
     model.to(device)

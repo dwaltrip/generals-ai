@@ -44,14 +44,15 @@ def test_training_state_round_trip(tmp_path):
     src.epoch = 3
     path = src.save(ckpt_dir)
 
-    # On-disk combined format.
+    # On-disk combined format — self-describing via the `arch` key.
     raw = torch.load(path, weights_only=True)
-    assert set(raw) >= {"model", "optim", "scaler", "epoch"}
+    assert set(raw) >= {"model", "arch", "optim", "scaler", "epoch"}
     assert raw["epoch"] == 3
     assert path.name == "epoch_003.pt"
 
     restored = TrainingState.from_checkpoint(path, config, device)
     assert restored.epoch == 3
+    assert restored.model.cfg == src.model.cfg  # arch round-trips
 
     # Model weights round-trip exactly.
     s, r = src.model.state_dict(), restored.model.state_dict()
@@ -75,7 +76,7 @@ def test_from_checkpoint_legacy_uses_fallback_epoch(tmp_path):
     device = torch.device("cpu")
     config = _config(tmp_path)
     ckpt = tmp_path / "epoch_007.pt"
-    torch.save(BCModel(value_head_variant="direct").state_dict(), ckpt)
+    torch.save(BCModel().state_dict(), ckpt)
 
     restored = TrainingState.from_checkpoint(ckpt, config, device, fallback_epoch=7)
     assert restored.epoch == 7      # from the filename, not the 0 default

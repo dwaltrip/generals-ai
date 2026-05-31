@@ -29,19 +29,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from bc.constants import H_PADDED, OBS_CHANNELS, W_PADDED
+from bc.model_config import VALUE_HEAD_VARIANTS, ModelConfig
 
-
-# Half-width variant from `network-architecture-design.md` §3.3
-# (the "0.5×" multiplier of DeepNash's 256/256/320 inherited baseline).
-# Picked for the v1 spike to keep M1 iteration fast; widen post-spike if
-# eval signal warrants.
-OUTER_WIDTH = 128
-MIDDLE_WIDTH = 128
-INNER_WIDTH = 160
-N_OUTER = 2
-M_MIDDLE = 2
-M_INNER = 2
 
 # GroupNorm preferred group count. The trunk uses {64, 80, 128, 160}-channel
 # tensors; 80 doesn't divide by 32, so `_gn` falls to 16 there. See `_gn`.
@@ -445,9 +434,6 @@ class PassHead(nn.Module):
         return self.linear(pooled).squeeze(-1)          # [B]
 
 
-VALUE_HEAD_VARIANTS = ("direct", "pyramid")
-
-
 class ValueHead(nn.Module):
     """
     Categorical placement value head (8-way: 1st through 8th).
@@ -528,25 +514,22 @@ class BCModel(nn.Module):
     harness can log per-component losses.
     """
 
-    def __init__(
-        self,
-        in_ch: int = OBS_CHANNELS,
-        H: int = H_PADDED,
-        W: int = W_PADDED,
-        value_head_variant: str = "direct",
-    ):
+    def __init__(self, cfg: ModelConfig = ModelConfig()):
         super().__init__()
+        # Plain attribute (not a submodule/buffer/param), so it adds no
+        # state_dict keys — the checkpoint's `arch` key is written from it.
+        self.cfg = cfg
         self.trunk = PyramidModule(
-            in_ch=in_ch,
-            n_outer=N_OUTER,
-            m_middle=M_MIDDLE,
-            m_inner=M_INNER,
-            widths=(OUTER_WIDTH, MIDDLE_WIDTH, INNER_WIDTH),
+            in_ch=cfg.in_ch,
+            n_outer=cfg.n_outer,
+            m_middle=cfg.m_middle,
+            m_inner=cfg.m_inner,
+            widths=(cfg.outer_width, cfg.middle_width, cfg.inner_width),
         )
-        self.policy_head = PolicyHead(in_ch=OUTER_WIDTH)
-        self.pass_head = PassHead(in_ch=OUTER_WIDTH)
+        self.policy_head = PolicyHead(in_ch=cfg.outer_width)
+        self.pass_head = PassHead(in_ch=cfg.outer_width)
         self.value_head = ValueHead(
-            in_ch=OUTER_WIDTH, H=H, W=W, variant=value_head_variant,
+            in_ch=cfg.outer_width, H=cfg.H, W=cfg.W, variant=cfg.value_head_variant,
         )
 
     def forward(

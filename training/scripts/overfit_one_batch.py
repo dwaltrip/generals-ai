@@ -29,6 +29,7 @@ from bc.dataset import IterableDataset
 from bc.filters import eligible_perspectives
 from bc.loss import bc_loss
 from bc.model import BCModel
+from bc.model_config import ModelConfig
 from bc.splits import load_curated_names
 from bc.utils import list_sim_paths, meta_path_for
 from shared.device import disable_mps_fallback, move_batch, pick_device
@@ -132,7 +133,7 @@ def main() -> None:
 
     # --- Model + optimizer ---
     print(f"building model on {device}...")
-    model = BCModel(value_head_variant=args.value_head).to(device)
+    model = BCModel(ModelConfig(value_head_variant=args.value_head)).to(device)
     optim = torch.optim.AdamW(
         model.parameters(),
         lr=args.lr,
