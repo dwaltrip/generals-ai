@@ -12,12 +12,11 @@ from bc.train_config import TrainConfig
 
 def _config(tmp_path):
     # Paths are unused by fresh()/save()/from_checkpoint() and not existence-
-    # checked at construction, so dummy values are fine.
+    # checked at construction, so dummy values are fine. Default arch (direct).
     return TrainConfig(
         manifest=tmp_path / "m.json",
         intermediate=tmp_path / "i",
         run_dir=tmp_path / "run",
-        value_head_variant="direct",
     )
 
 

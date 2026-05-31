@@ -15,6 +15,7 @@ from pathlib import Path
 import pytest
 import torch
 
+from bc.model_config import ModelConfig
 from bc.resume import _resume_config, bc_resume
 from bc.run_dir import ResumeInfo, check_drift, prepare_resume
 from bc.train_config import TrainConfig, json_default
@@ -110,13 +111,54 @@ def test_check_drift_lr_locked_even_with_force() -> None:
 
 def test_resume_config_overlay() -> None:
     parent = asdict(_config(batch_size=128, lr=1e-4, seed=7, epochs=5))
-    base = _config(run_dir=Path("runs/resumed"))  # env paths + the resume dir
-    effective = _resume_config(base, parent, overrides={"epochs": 10})
+    effective = _resume_config(
+        Path("runs/resumed"), parent, overlay={"epochs": 10}, operational={},
+    )
     assert effective.batch_size == 128             # carried from parent
     assert effective.lr == 1e-4                    # carried from parent
     assert effective.seed == 7                     # carried from parent
-    assert effective.epochs == 10                  # explicit override wins
-    assert effective.run_dir == Path("runs/resumed")  # path from base
+    assert effective.epochs == 10                  # --config overlay wins
+    assert effective.manifest == Path("m.json")    # data paths carry from parent
+    assert effective.run_dir == Path("runs/resumed")  # the resume target
+
+
+def test_resume_operational_overlay_over_parent() -> None:
+    """An explicit operational flag overrides the parent; unset ones carry."""
+    parent = asdict(_config(num_workers=4, epochs=5))
+    effective = _resume_config(
+        Path("runs/r"), parent, overlay={}, operational={"num_workers": 0},
+    )
+    assert effective.num_workers == 0              # explicit operational override
+    assert effective.epochs == 5                   # carried from parent
+
+
+def test_resume_arch_carries_and_change_is_locked() -> None:
+    """Arch carries from the parent untouched; a net arch change via the overlay
+    is checkpoint-owned — check_drift aborts even with --force-config-mismatch."""
+    half = ModelConfig(outer_width=64, middle_width=64, inner_width=96)
+    parent = asdict(_config(arch=half, epochs=5))
+    carried = _resume_config(Path("runs/r"), parent, overlay={}, operational={})
+    assert carried.arch == half                    # arch carried, weights match
+
+    changed = _resume_config(
+        Path("runs/r"), parent,
+        overlay={"arch": {"outer_width": 128, "middle_width": 128, "inner_width": 160}},
+        operational={},
+    )
+    assert changed.arch.outer_width == 128         # overlay deep-merges over parent
+    with pytest.raises(SystemExit):
+        check_drift(changed, parent, force_config_mismatch=True)  # locked even w/ force
+
+
+def test_resume_legacy_parent_skips_arch_drift() -> None:
+    """A pre-`arch` parent (top-level value_head_variant, no arch key) resumes
+    without a spurious arch-drift abort; the variant folds into the arch."""
+    parent = asdict(_config(epochs=5))
+    parent.pop("arch")
+    parent["value_head_variant"] = "pyramid"       # old top-level field
+    effective = _resume_config(Path("runs/r"), parent, overlay={}, operational={})
+    assert effective.arch.value_head_variant == "pyramid"
+    check_drift(effective, parent, force_config_mismatch=False)  # no abort
 
 
 # --- legacy cold-restart gate (bc_resume) ---
@@ -124,13 +166,13 @@ def test_resume_config_overlay() -> None:
 # (parent-args load, drift, epoch target) are arranged to pass so the abort is
 # attributable to the legacy/flag mismatch, not an unrelated failure.
 
-def _gate_run(tmp_path: Path) -> tuple[TrainConfig, Path]:
-    """A run dir with a non-drifting parent args.json + a config to resume it
-    (parent_epoch 2, epochs 5 → past the epoch-target check)."""
+def _gate_run(tmp_path: Path) -> Path:
+    """A run dir with a non-drifting parent args.json (parent_epoch 2, epochs 5
+    → past the epoch-target check, so a later abort is attributable to the gate)."""
     run = tmp_path
     parent = _config(run_dir=run, epochs=5)
     (run / "args.json").write_text(json.dumps(asdict(parent), default=json_default))
-    return _config(run_dir=run, epochs=5), run
+    return run
 
 
 def _info(run: Path, *, legacy: bool) -> ResumeInfo:
@@ -144,14 +186,14 @@ def _info(run: Path, *, legacy: bool) -> ResumeInfo:
 
 
 def test_bc_resume_aborts_on_legacy_without_flag(tmp_path: Path) -> None:
-    config, run = _gate_run(tmp_path)
+    run = _gate_run(tmp_path)
     with pytest.raises(SystemExit, match="legacy"):
-        bc_resume(config, force_config_mismatch=False, overrides={},
-                  info=_info(run, legacy=True), legacy_lr_warmup_batches=None)
+        bc_resume(run, _info(run, legacy=True), overlay={}, operational={},
+                  force_config_mismatch=False, legacy_lr_warmup_batches=None)
 
 
 def test_bc_resume_aborts_on_combined_with_flag(tmp_path: Path) -> None:
-    config, run = _gate_run(tmp_path)
+    run = _gate_run(tmp_path)
     with pytest.raises(SystemExit, match="combined-format"):
-        bc_resume(config, force_config_mismatch=False, overrides={},
-                  info=_info(run, legacy=False), legacy_lr_warmup_batches=500)
+        bc_resume(run, _info(run, legacy=False), overlay={}, operational={},
+                  force_config_mismatch=False, legacy_lr_warmup_batches=500)
