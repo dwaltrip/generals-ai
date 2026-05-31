@@ -36,6 +36,7 @@ Output structure:
 from __future__ import annotations
 
 import argparse
+from collections.abc import Iterator
 from dataclasses import dataclass
 import datetime as dt
 import json
@@ -50,11 +51,17 @@ import torch
 
 from eval_tools.metrics_collector import MetricsCollector
 from eval_tools.policy_spec import build_policy_names, parse_policy_spec
+from game_runner.batched import FinishedGame, PendingGame, run_batched
 from game_runner.policy import GameResult
-from game_runner.runner import run_game
 from game_runner.save import write_eval_game
 from game_runner.seed_map import list_replay_ids_by_player_count, load_static_from_db
 from utils.log import tee_stdio
+
+
+# Default GPU batch width to aim for when --concurrent-games is auto: the pool
+# size is derived so concurrent_games × NN-per-game ≈ this. ~24-32 is the M1
+# sweet spot; a cloud GPU's optimum is far larger (set --concurrent-games).
+_TARGET_NN_ROWS = 32
 
 
 def _resolve_device(name: str) -> torch.device:
@@ -102,6 +109,7 @@ def _build_run_config(args: argparse.Namespace) -> dict:
         "max_turns": args.max_turns,
         "device": args.device,
         "sample_interval": args.sample_interval,
+        "concurrent_games": args.concurrent_games,
         "timestamp": dt.datetime.now().isoformat(),
     }
 
@@ -186,68 +194,86 @@ class _GameOutcome:
     game_length: int
 
 
-def _play_and_record_game(
-    ctx: _RunCtx,
-    game_idx: int,
-    replay_id: str,
-    map_data: StaticMap,
-    slot_map: list[int],
-    swapped: bool,
-) -> _GameOutcome:
-    """Play one configured game, save its artifacts, print a progress line."""
-    label = f"game_{game_idx:03d}"
+@dataclass
+class _GameCtx:
+    """Per-game payload carried on a PendingGame and handed back on the matching
+    FinishedGame, so we can record artifacts once the batched runner finishes it."""
+    replay_id: str
+    slot_map: list[int]
+    swapped: bool
+    collector: MetricsCollector
+    map_data: StaticMap
 
-    policies = [
-        parse_policy_spec(ctx.policy_specs[slot_map[s]], slot=s, device=ctx.device)
-        for s in range(ctx.num_players)
-    ]
 
-    collector = MetricsCollector(
-        num_players=ctx.num_players,
-        sample_interval=ctx.sample_interval,
-    )
-    result = run_game(
-        policies, map_data,
-        max_turns=ctx.max_turns,
-        on_tick=collector.on_tick,
-    )
-    metrics = collector.finalize(result, policies)
+def _resolve_pool_size(concurrent_games: int, policy_specs: list[str]) -> int:
+    """Concurrent games in the pool. 0 → auto: aim for ~_TARGET_NN_ROWS NN rows,
+    i.e. pool × (NN policies per game) ≈ target."""
+    if concurrent_games > 0:
+        return concurrent_games
+    nn_per_game = sum(1 for s in policy_specs if not s.lower().startswith("evalbot"))
+    return max(1, round(_TARGET_NN_ROWS / max(1, nn_per_game)))
 
-    winner_policy = _winning_policy(result.winner, slot_map)
+
+def _pending_games(
+    ctx: _RunCtx, replay_ids: list[str], games_per_map: int, swap_rounds: list[bool],
+) -> Iterator[PendingGame]:
+    """Yield one PendingGame per (map, rep, swap), building fresh policies + a
+    MetricsCollector lazily as the runner pulls each into the pool. game_id is
+    the enumeration order (stable per spec, independent of completion order)."""
+    game_idx = 0
+    for replay_id in replay_ids:
+        map_data = load_static_from_db(replay_id)
+        for _rep in range(games_per_map):
+            for swapped in swap_rounds:
+                game_idx += 1
+                slot_map = _make_slot_map(ctx.num_players, swapped)
+                policies = [
+                    parse_policy_spec(ctx.policy_specs[slot_map[s]], slot=s, device=ctx.device)
+                    for s in range(ctx.num_players)
+                ]
+                collector = MetricsCollector(
+                    num_players=ctx.num_players, sample_interval=ctx.sample_interval,
+                )
+                yield PendingGame(
+                    game_id=game_idx,
+                    map_data=map_data,
+                    policies=policies,
+                    on_tick=collector.on_tick,
+                    ctx=_GameCtx(replay_id, slot_map, swapped, collector, map_data),
+                )
+
+
+def _record_finished(ctx: _RunCtx, fin: FinishedGame) -> _GameOutcome:
+    """Save one finished game's artifacts, print a progress line, return stats."""
+    g: _GameCtx = fin.ctx
+    label = f"game_{fin.game_id:03d}"
+    result = fin.result
+    metrics = g.collector.finalize(result, fin.policies)
+    winner_policy = _winning_policy(result.winner, g.slot_map)
 
     assert result.state is not None
-    write_eval_game(result.state, map_data, ctx.games_dir / f"{label}.npz")
+    write_eval_game(result.state, g.map_data, ctx.games_dir / f"{label}.npz")
     meta = _build_game_meta(
-        game_idx, replay_id, ctx.policy_specs, ctx.max_turns, slot_map,
+        fin.game_id, g.replay_id, ctx.policy_specs, ctx.max_turns, g.slot_map,
     )
     (ctx.games_dir / f"{label}.meta.json").write_text(json.dumps(meta, indent=2))
     (ctx.games_dir / f"{label}.metrics.json").write_text(json.dumps(metrics, indent=2))
 
     row = _build_results_row(
-        game_idx, replay_id, result, slot_map=slot_map, metrics=metrics,
+        fin.game_id, g.replay_id, result, slot_map=g.slot_map, metrics=metrics,
     )
     with open(ctx.results_path, "a") as f:
         f.write(json.dumps(row) + "\n")
 
-    slot_names = _names_for_slots(ctx.policy_names, slot_map)
-    if winner_policy is not None:
-        winner_str = ctx.policy_names[winner_policy]
-    else:
-        winner_str = "draw"
-    swap_tag = " [swapped]" if swapped else ""
+    slot_names = _names_for_slots(ctx.policy_names, g.slot_map)
+    winner_str = ctx.policy_names[winner_policy] if winner_policy is not None else "draw"
+    swap_tag = " [swapped]" if g.swapped else ""
     lands = " ".join(
-        f"{slot_names[s]}={ps.land:3d}"
-        for s, ps in enumerate(result.player_stats)
+        f"{slot_names[s]}={ps.land:3d}" for s, ps in enumerate(result.player_stats)
     )
-    print(
-        f"  {label}: {winner_str:12s}  len={result.game_length:4d}"
-        f"  {lands}{swap_tag}"
-    )
+    print(f"  {label}: {winner_str:12s}  len={result.game_length:4d}  {lands}{swap_tag}")
 
-    return _GameOutcome(
-        winner_policy=winner_policy,
-        game_length=result.game_length,
-    )
+    return _GameOutcome(winner_policy=winner_policy, game_length=result.game_length)
 
 
 def run(args: argparse.Namespace) -> None:
@@ -329,6 +355,9 @@ def _run_games(
     out_dir: Path,
     games_dir: Path,
 ) -> None:
+    pool_size = _resolve_pool_size(args.concurrent_games, policy_specs)
+    nn_per_game = sum(1 for s in policy_specs if not s.lower().startswith("evalbot"))
+
     print(f"device: {device}")
     print(f"policies ({num_players} players):")
     for i, name in enumerate(policy_names):
@@ -336,6 +365,7 @@ def _run_games(
     print(f"maps: {len(replay_ids)} unique, {args.games_per_map} games each"
           f"{' (x2 with slot swap)' if swap_slots else ''} = {total_games} total")
     print(f"max_turns: {args.max_turns}")
+    print(f"pool: {pool_size} concurrent games (~{pool_size * nn_per_game} NN rows/forward)")
     print(f"output: {out_dir}")
     print()
 
@@ -353,38 +383,33 @@ def _run_games(
     win_counts = [0] * num_players
     draw_count = 0
     total_length = 0
+    n_done = 0
     t0 = time.perf_counter()
-    game_idx = 0
 
     swap_rounds = [False, True] if swap_slots else [False]
-
-    for replay_id in replay_ids:
-        map_data = load_static_from_db(replay_id)
-        for _rep in range(args.games_per_map):
-            for swapped in swap_rounds:
-                game_idx += 1
-                slot_map = _make_slot_map(num_players, swapped)
-                outcome = _play_and_record_game(
-                    ctx, game_idx, replay_id, map_data, slot_map, swapped,
-                )
-                total_length += outcome.game_length
-                if outcome.winner_policy is not None:
-                    win_counts[outcome.winner_policy] += 1
-                else:
-                    draw_count += 1
+    pending = _pending_games(ctx, replay_ids, args.games_per_map, swap_rounds)
+    # Games finish out of order; each results.jsonl row carries game_index.
+    for fin in run_batched(pending, pool_size=pool_size, max_turns=args.max_turns):
+        outcome = _record_finished(ctx, fin)
+        n_done += 1
+        total_length += outcome.game_length
+        if outcome.winner_policy is not None:
+            win_counts[outcome.winner_policy] += 1
+        else:
+            draw_count += 1
 
     elapsed = time.perf_counter() - t0
 
     # Summary
     print()
-    print(f"completed {game_idx} games in {elapsed:.1f}s")
+    print(f"completed {n_done} games in {elapsed:.1f}s")
     for p in range(num_players):
         print(f"  {policy_names[p]:20s}: "
-              f"{win_counts[p]:3d} wins ({win_counts[p]/game_idx:.0%})")
+              f"{win_counts[p]:3d} wins ({win_counts[p]/n_done:.0%})")
     if draw_count:
-        print(f"  {'draws':20s}: {draw_count:3d}     ({draw_count/game_idx:.0%})")
+        print(f"  {'draws':20s}: {draw_count:3d}     ({draw_count/n_done:.0%})")
 
-    print(f"  avg game length: {total_length / game_idx:.0f} ticks")
+    print(f"  avg game length: {total_length / n_done:.0f} ticks")
     print(f"\nresults: {results_path}")
     print(f"replays: {games_dir}")
 
@@ -413,6 +438,9 @@ def main() -> int:
                         choices=["auto", "cpu", "mps", "cuda"])
     parser.add_argument("--sample-interval", type=int, default=25,
                         help="Sample land/army curves every N ticks (0 to disable)")
+    parser.add_argument("--concurrent-games", type=int, default=0,
+                        help="Games run concurrently in the batched pool. "
+                             "0 = auto (~32 NN rows/forward). GPU batch ≈ this × NN-per-game.")
     args = parser.parse_args()
 
     run(args)
