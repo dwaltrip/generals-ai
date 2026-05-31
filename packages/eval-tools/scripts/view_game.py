@@ -19,15 +19,18 @@ import subprocess
 import sys
 from types import SimpleNamespace
 
+from game_types import StaticMap
 import numpy as np
 
 from game_runner.viewer import render_viewer_html
 
 
-# TODO: Replace SimpleNamespace mocks with proper dataclasses
-# (SavedGameState, SavedGameStatic, CaptureEvent, DeathEvent, etc.).
-# The current duck-typed approach works but is untyped and fragile —
-# field name typos are silent.
+# TODO(viewer overhaul): the `state` arg below is a SimpleNamespace faking
+# the narrow slice of sim_core.State the renderer reads. The overhauled
+# renderer should take a focused input type (its read surface, not a whole
+# State), with each caller (live State, saved .npz) a thin adapter into it.
+# We chose to defer improving this type in the meanwhile. It would have been
+# a bit finicky to do properly, and future viewer improvements make it moot.
 
 def _load_usernames(npz_path: Path, num_players: int) -> list[str]:
     """Derive display names from the sibling .meta.json if it exists."""
@@ -53,9 +56,11 @@ def _load_usernames(npz_path: Path, num_players: int) -> list[str]:
     return names[:num_players]
 
 
-def _load_game(npz_path: Path) -> tuple[SimpleNamespace, SimpleNamespace]:
-    """Load a .npz and return (mock_state, mock_static) objects that
-    satisfy the viewer's read surface."""
+def _load_game(npz_path: Path) -> tuple[SimpleNamespace, StaticMap]:
+    """Load a .npz into the (state, static) pair the viewer consumes.
+
+    `static` is a real `StaticMap`; `state` is a duck-typed mock pending
+    the module TODO."""
     data = np.load(npz_path)
 
     map_width = int(data["map_width"])
@@ -99,15 +104,16 @@ def _load_game(npz_path: Path) -> tuple[SimpleNamespace, SimpleNamespace]:
         snapshots_armies=[armies[t] for t in range(num_timesteps)],
     )
 
-    initial_generals = data["initial_generals"].tolist()
-    static = SimpleNamespace(
+    static = StaticMap(
         map_width=map_width,
         map_height=map_height,
         usernames=_load_usernames(npz_path, num_players),
         mountains=data["mountains"].tolist(),
         initial_cities=data["initial_cities"].tolist(),
         initial_city_armies=data["initial_city_armies"].tolist(),
-        initial_generals=initial_generals,
+        initial_generals=data["initial_generals"].tolist(),
+        initial_neutrals=data["initial_neutrals"].tolist(),
+        initial_neutral_armies=data["initial_neutral_armies"].tolist(),
     )
 
     return state, static
