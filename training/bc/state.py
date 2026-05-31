@@ -20,7 +20,6 @@ import torch
 
 from bc.checkpoint import ckpt_name, is_combined_checkpoint, load_bc_model
 from bc.model import BCModel
-from bc.model_config import ModelConfig
 from bc.resume_warmup import WarmupSchedule
 from bc.train_config import TrainConfig
 from shared.device import resolve_precision
@@ -65,7 +64,7 @@ class TrainingState:
     @classmethod
     def fresh(cls, config: TrainConfig, device: torch.device) -> TrainingState:
         """Build a brand-new state: fresh model/optim/scaler, epoch 0."""
-        model = BCModel(ModelConfig(value_head_variant=config.value_head_variant)).to(device)
+        model = BCModel(config.arch).to(device)
         return cls(
             model=model,
             optim=_build_optim(model, config),
@@ -97,13 +96,23 @@ class TrainingState:
         `load_bc_model` reads it for the weights — a one-time cost paid
         only at resume startup.
         """
-        model = load_bc_model(path, device, config.value_head_variant)
+        # Arch comes from the checkpoint (you can't reshape restored weights);
+        # `config.arch.value_head_variant` is only the legacy fallback, used
+        # when the checkpoint has no `arch` key.
+        model = load_bc_model(path, device, config.arch.value_head_variant)
         optim = _build_optim(model, config)
         scaler = _build_scaler(config, device)
         epoch = fallback_epoch
 
         obj = torch.load(path, map_location=device, weights_only=True)
         if is_combined_checkpoint(obj):
+            if "arch" in obj:
+                # Redundant second guard — the real gate is run_dir.check_drift
+                # (arch is checkpoint-owned). An arch-bearing checkpoint's
+                # recorded arch must match the resume config's arch.
+                assert model.cfg == config.arch, (
+                    f"checkpoint arch {model.cfg} != resume config arch {config.arch}"
+                )
             if "optim" in obj:
                 optim.load_state_dict(obj["optim"])
             if "scaler" in obj:

@@ -22,12 +22,16 @@ from bc.train_config import TrainConfig, json_default
 from utils.log import abort
 
 
-def initialize_run_dir(config: TrainConfig) -> None:
+def initialize_run_dir(config: TrainConfig, config_input_text: str | None = None) -> None:
     """Create `config.run_dir` and persist run provenance.
 
     Mkdirs the run dir with `exist_ok=False` so two runs landing in the
-    same wall-clock second collide explicitly. Writes `args.json` (full
-    `TrainConfig` as JSON) and announces the path. Call before `bc_run`.
+    same wall-clock second collide explicitly. Writes `args.json` (the fully
+    resolved `TrainConfig` as JSON) and announces the path. When given, the
+    verbatim `--config` input text (possibly partial) is preserved as
+    `config.input.json` — provenance distinct from the resolved merge. (Text,
+    not a path, so the cloud entry can pass it across the spawn boundary.) Call
+    before `bc_run`.
 
     Split out from `bc_run` so cloud callers can drop sibling provenance
     files (e.g. `args_cloud.json`) into the run dir *before* training
@@ -37,6 +41,8 @@ def initialize_run_dir(config: TrainConfig) -> None:
     print(f"run dir: {config.run_dir}")
     with (config.run_dir / "args.json").open("x") as fp:
         json.dump(asdict(config), fp, default=json_default, indent=2)
+    if config_input_text is not None:
+        (config.run_dir / "config.input.json").write_text(config_input_text)
 
 
 @dataclass
@@ -106,10 +112,14 @@ class ResumeInfo:
 
 # Drift buckets (design doc §--force-config-mismatch). Excluded fields are
 # always free to change on resume; checkpoint-owned fields can never change
-# (the restored optimizer state pins them); everything else is
-# trajectory-critical and gated by --force-config-mismatch.
-_DRIFT_EXCLUDED = frozenset({"epochs", "run_dir", "manifest", "intermediate"})
-_CHECKPOINT_OWNED = frozenset({"lr", "weight_decay"})
+# (the restored weights/optimizer state pin them — not even
+# --force-config-mismatch overrides); everything else is trajectory-critical
+# and gated by --force-config-mismatch.
+#   - `arch` is pinned by the restored weights (you can't reshape them).
+#   - `lr`/`weight_decay` are pinned by the restored optimizer state.
+#   - `gpu` is recorded provenance only; the card may change freely on resume.
+_DRIFT_EXCLUDED = frozenset({"epochs", "run_dir", "manifest", "intermediate", "gpu"})
+_CHECKPOINT_OWNED = frozenset({"lr", "weight_decay", "arch"})
 
 _RESUME_SUFFIX_RE = re.compile(r"_resume_(\d{2})\.")
 
@@ -163,22 +173,33 @@ def load_parent_config(parent_args_path: Path) -> dict:
 def check_drift(config: TrainConfig, parent: dict, force_config_mismatch: bool) -> None:
     """Abort on disallowed config drift between a resume config and its parent.
 
-    `lr`/`weight_decay` are checkpoint-owned — the restored optimizer state
-    overwrites them, so a change is silently ineffective and always aborts.
-    Other non-excluded fields are trajectory-critical: they abort unless
-    `--force-config-mismatch`. Excluded fields (epochs target, paths) are free.
+    Checkpoint-owned fields (`arch`, `lr`, `weight_decay`) are pinned by the
+    restored weights/optimizer state — a change is silently ineffective and
+    always aborts. Other non-excluded fields are trajectory-critical: they abort
+    unless `--force-config-mismatch`. Excluded fields (epochs target, paths,
+    gpu) are free.
+
+    Legacy-parent edge: a pre-`arch` parent config has no `arch` key, so a naive
+    compare (`None` vs the default arch dict) would spuriously abort an
+    unchanged resume. Skip arch-drift in that case (the bare state_dict
+    reconstructs via `LEGACY_ARCH` regardless) and warn.
     """
     cfg = asdict(config)
     locked, trajectory = [], []
     for name, new_val in cfg.items():
         if name in _DRIFT_EXCLUDED or parent.get(name) == new_val:
             continue
+        if name == "arch" and "arch" not in parent:
+            print("--resume: parent predates the `arch` key; skipping arch-drift "
+                  "check (weights reconstruct via LEGACY_ARCH).")
+            continue
         bucket = locked if name in _CHECKPOINT_OWNED else trajectory
         bucket.append(f"{name} {parent.get(name)!r}->{new_val!r}")
     if locked:
         abort(
-            f"--resume: lr/weight_decay are checkpoint-owned and cannot change on "
-            f"resume ({', '.join(locked)}); the restored optimizer state pins them."
+            f"--resume: arch/lr/weight_decay are checkpoint-owned and cannot change "
+            f"on resume ({', '.join(locked)}); the restored weights/optimizer state "
+            f"pin them."
         )
     if trajectory and not force_config_mismatch:
         abort(

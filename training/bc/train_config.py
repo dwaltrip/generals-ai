@@ -11,33 +11,67 @@ where to look on the outputs Volume.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+import json
 from datetime import UTC, datetime
 from pathlib import Path
+
+from bc.model_config import ModelConfig
 
 
 @dataclass(frozen=True)
 class TrainConfig:
     """Inputs to a BC training run. Structural invariants checked at
     construction; existence checks for `manifest`/`intermediate` happen
-    in `bc_run` (so cloud runs check after the Volume is mounted)."""
+    in `bc_run` (so cloud runs check after the Volume is mounted).
 
-    # Required — no default that makes sense across environments.
+    Fields fall into three groups that decide how they're supplied:
+      - `arch` (model design) — from the `--config` file; recorded in the
+        checkpoint's `arch` key so a checkpoint self-describes its model.
+      - recipe (`lr`, `batch_size`, `epochs`, `seed`, `precision`,
+        `shuffle_buffer_size`, `gpu`, `manifest`, `intermediate`) — from the
+        `--config` file; the run's reproducible identity, not in the checkpoint.
+      - operational / invocation-local (`run_dir`, `device`, `num_workers`,
+        `pin_memory`, `prefetch_factor`, `log_every`, `skip_val`,
+        `max_batches`) — from CLI flags; where/how this invocation runs.
+    The config-file fields (arch + recipe) and the operational CLI fields are
+    disjoint domains, so `from_file` (file) + the CLI overrides merge as a plain
+    union.
+    """
+
+    # --- recipe: required paths (no default that makes sense across envs) ---
     manifest: Path
     intermediate: Path
+    # --- operational: required ---
     # Full path to this run's directory. `bc_run` creates it with
     # `exist_ok=False`, so two runs landing in the same wall-clock
     # second still collide explicitly. Wrappers usually compute this
     # as `<parent>/<make_run_id()>`.
     run_dir: Path
-    # Optional — sensible defaults independent of environment.
+    # --- arch: model design ---
+    # Self-describing architecture. Recorded in each checkpoint's `arch` key;
+    # validated by `ModelConfig.__post_init__`.
+    arch: ModelConfig = field(default_factory=ModelConfig)
+    # --- recipe (optional — env-independent defaults) ---
     epochs: int = 1
     batch_size: int = 64
     lr: float = 3e-4
     weight_decay: float = 1e-4
-    device: str = "auto"
     seed: int = 0
     shuffle_buffer_size: int = 2048
+    # Modal GPU class for the run. Recorded provenance that rides into the
+    # remote inertly; the Modal launcher reads it locally for
+    # `with_options(gpu=...)`. Inert on local runs. In `_DRIFT_EXCLUDED` —
+    # the card may change freely on resume.
+    gpu: str = "T4"
+    # --- Mixed-precision knob ---
+    # "auto" picks fp16 on CUDA (engages tensor cores), fp32 elsewhere.
+    # Explicit "fp32" or "fp16" overrides. fp16 on a non-CUDA device is
+    # allowed but unlikely to win much — autocast still runs, but the
+    # tensor-core ceiling that motivates AMP is CUDA-only.
+    precision: str = "auto"
+    # --- operational / invocation-local (optional) ---
+    device: str = "auto"
     log_every: int = 50
     max_batches: int | None = None
     # --- DataLoader knobs ---
@@ -79,23 +113,11 @@ class TrainConfig:
     # Number of batches each worker prefetches ahead of the consumer.
     # PyTorch's default is 2; ignored when num_workers == 0.
     prefetch_factor: int = 2
-    # --- Mixed-precision knob ---
-    # "auto" picks fp16 on CUDA (engages tensor cores), fp32 elsewhere.
-    # Explicit "fp32" or "fp16" overrides. fp16 on a non-CUDA device is
-    # allowed but unlikely to win much — autocast still runs, but the
-    # tensor-core ceiling that motivates AMP is CUDA-only.
-    precision: str = "auto"
     # Skip the per-epoch val pass entirely. For perf-testing runs where
     # val cost dominates wall time (val sweeps the full val split and
     # can be ~10x slower than a short train segment) and we don't care
     # about val metrics. Off by default — val is wanted for real runs.
     skip_val: bool = False
-    # Value-head architecture variant. "direct" is the thin v1 spike head
-    # (Conv→ReLU→flatten→Linear); "pyramid" inserts a shape-preserving
-    # PyramidModule before the projection, adding ~+0.82M params and
-    # multi-scale receptive field via a strided down/up structure.
-    # See `bc.model.ValueHead` for the full architectural framing.
-    value_head_variant: str = "direct"
 
     def __post_init__(self) -> None:
         valid_devices = ("auto", "cuda", "mps", "cpu")
@@ -122,12 +144,27 @@ class TrainConfig:
             raise ValueError(f"num_workers must be >= 0; got {self.num_workers}")
         if self.prefetch_factor < 1:
             raise ValueError(f"prefetch_factor must be >= 1; got {self.prefetch_factor}")
-        from bc.model import VALUE_HEAD_VARIANTS
-        if self.value_head_variant not in VALUE_HEAD_VARIANTS:
-            raise ValueError(
-                f"value_head_variant must be one of {VALUE_HEAD_VARIANTS}; "
-                f"got {self.value_head_variant!r}"
-            )
+        # `arch` validates itself in `ModelConfig.__post_init__`.
+
+    @classmethod
+    def from_file(cls, path: str | Path, **overrides: object) -> TrainConfig:
+        """Build a `TrainConfig` from a `--config` JSON file plus invocation-local
+        overrides.
+
+        The file supplies the arch + recipe (`arch` as a nested object, plus the
+        recipe knobs + `manifest`/`intermediate` paths) and may be partial —
+        unset fields fall through to the dataclass / `ModelConfig` defaults.
+        `overrides` supplies operational (invocation-local) fields (`run_dir`,
+        `device`, `num_workers`, …). The two domains are disjoint, so this is a
+        plain union; an unknown file key or a field set in both surfaces as a
+        `TypeError` from the constructor.
+        """
+        data = json.loads(Path(path).read_text())
+        arch = ModelConfig(**data.pop("arch", {}))
+        for path_field in ("manifest", "intermediate"):
+            if path_field in data:
+                data[path_field] = Path(data[path_field])
+        return cls(arch=arch, **data, **overrides)
 
 
 def make_run_id() -> str:
