@@ -85,7 +85,7 @@ class NNAgent:
         )
         return self.select_action(decisions[0])
 
-    # Read by game_runner._build_result via getattr.
+    # Read by game_runner.build_result via getattr.
     @property
     def n_moved(self) -> int:
         return self._perspective.n_moved

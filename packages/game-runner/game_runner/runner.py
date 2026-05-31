@@ -62,10 +62,10 @@ def run_game(
         if progress_interval > 0 and state.timestep % progress_interval == 0:
             _print_progress(state, policies)
 
-    return _build_result(state, policies)
+    return build_result(state, policies)
 
 
-def _build_result(
+def build_result(
     state: sim_core.State, policies: Sequence[Policy],
 ) -> GameResult:
     own = np.asarray(state.ownership)
