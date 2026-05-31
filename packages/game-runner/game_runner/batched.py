@@ -27,6 +27,7 @@ from game_runner.brain import BatchablePolicy
 from game_runner.policy import GameResult, Policy
 from game_runner.runner import OnTickCallback, build_result
 from game_runner.sim_adapter import state_to_view
+from game_runner.tick_timing import TickTiming, timing_enabled
 import sim_core
 
 
@@ -82,6 +83,7 @@ def run_batched(
     if pool_size < 1:
         raise ValueError(f"pool_size must be >= 1, got {pool_size}")
 
+    timing = TickTiming(enabled=timing_enabled())
     pending_iter = iter(pending)
     live: list[_LiveGame | None] = [None] * pool_size
 
@@ -104,6 +106,8 @@ def run_batched(
         _fill(slot)
 
     while any(g is not None for g in live):
+        timing.tick()
+
         # 1. Gather: per game, NN cells -> rows to batch; CPU cells -> act now.
         rows: list[_Row] = []
         moves: dict[int, list[tuple[int, int, int, int]]] = {}
@@ -115,14 +119,21 @@ def run_batched(
                 if not g.state.alive[p]:
                     continue
                 if _is_batchable(policy):
+                    timing.start()
                     view = state_to_view(g.state, g.spec.map_data, p)
-                    rows.append(_Row(slot, p, policy, policy.build_obs(view)))
+                    timing.lap("state_to_view")
+                    bundle = policy.build_obs(view)
+                    timing.lap("build_obs")
+                    rows.append(_Row(slot, p, policy, bundle))
                 else:
+                    timing.start()
                     src, dst, is50 = policy.act(g.state, g.spec.map_data)
+                    timing.lap("cpu_act")
                     if src != -1:
                         moves[slot].append((p, src, dst, is50))
 
         # 2. Forward + decode, grouped by model so each model runs once/tick.
+        timing.start()
         groups: dict[str, list[_Row]] = {}
         for row in rows:
             groups.setdefault(row.policy.model_handle.model_key, []).append(row)
@@ -141,6 +152,7 @@ def run_batched(
                 src, dst, is50 = row.policy.select_action(decision)
                 if src != -1:
                     moves[row.slot].append((row.player, src, dst, is50))
+        timing.lap("fwd_decode")
 
         # 3. Step every live game; fire on_tick; yield + refill on termination.
         for slot, g in enumerate(live):
@@ -148,9 +160,11 @@ def run_batched(
                 continue
             game_moves = moves[slot]
             game_moves.sort(key=lambda m: m[0])  # slot order, matching run_game
+            timing.start()
             g.state.step_tick(moves=game_moves, afks=[])
             if g.spec.on_tick is not None:
                 g.spec.on_tick(g.state, game_moves, g.spec.policies)
+            timing.lap("step")
             if g.state.alive_count <= 1 or g.state.timestep >= max_turns:
                 yield FinishedGame(
                     game_id=g.spec.game_id,
@@ -159,3 +173,5 @@ def run_batched(
                     ctx=g.spec.ctx,
                 )
                 _fill(slot)
+
+    timing.report()
