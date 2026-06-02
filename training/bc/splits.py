@@ -241,6 +241,7 @@ def samples_for_split(
     out: list[tuple[Path, int]] = []
     for rid, k in manifest[split]:
         actual_prefix = shard_case_map.get(rid[:2].lower(), rid[:2])
+        assert actual_prefix is not None, f"bad prefix for {rid}"
         sim_path = intermediate_root / actual_prefix / f"{rid}.npz"
         out.append((sim_path, int(k)))
     return out

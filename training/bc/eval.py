@@ -192,7 +192,7 @@ def run_val(
 
     duration_sec = time.perf_counter() - val_start
     s = acc.summary()
-    n_non_pass = s["n_non_pass"]
+    n_non_pass = int(s["n_non_pass"])  # a count; summary() widens it to float | int
     n_samples = s["n_samples"]
     top1_acc = n_top1_correct / n_non_pass if n_non_pass > 0 else None
     top3_acc = n_top3_correct / n_non_pass if n_non_pass > 0 else None

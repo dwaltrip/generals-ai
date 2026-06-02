@@ -56,6 +56,7 @@ from bc.dataset import IterableDataset
 from bc.obs_config import OBS_CONFIG_DEFAULTS
 from bc.splits import load_manifest, samples_for_split
 from shared.device import disable_mps_fallback, pick_device
+from utils.docstring import doc_summary
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -800,7 +801,7 @@ def run_probe_mode(
 
 
 def _build_arg_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    parser = argparse.ArgumentParser(description=doc_summary(__doc__))
     parser.add_argument("--checkpoint", type=Path, required=True)
     parser.add_argument("--manifest", type=Path, required=True)
     parser.add_argument("--intermediate", type=Path, default=DEFAULT_INTERMEDIATE)

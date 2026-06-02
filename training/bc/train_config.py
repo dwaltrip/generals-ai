@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 import json
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 from bc.model_config import ModelConfig
 
@@ -147,7 +148,17 @@ class TrainConfig:
         # `arch` validates itself in `ModelConfig.__post_init__`.
 
     @classmethod
-    def from_file(cls, path: str | Path, **overrides: object) -> TrainConfig:
+    def from_file(
+        cls,
+        path: str | Path,
+        # `overrides` is `Any` rather than PEP 692 `Unpack[_Overrides]`. The
+        # precise form would type-check each override key, but only by
+        # duplicating the operational-field list in a TypedDict and keeping it
+        # in sync with the fields above — drift risk not worth the boundary
+        # check, since these kwargs forward straight into the type-checked
+        # constructor below.
+        **overrides: Any,
+    ) -> TrainConfig:
         """Build a `TrainConfig` from a `--config` JSON file plus invocation-local
         overrides.
 

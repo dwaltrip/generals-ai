@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 from pathlib import Path
+from typing import Any, TypeGuard
 
 import torch
 
@@ -46,7 +47,7 @@ def ckpt_name(epoch: int) -> str:
     return f"epoch_{epoch:03d}.pt"
 
 
-def is_combined_checkpoint(obj: object) -> bool:
+def is_combined_checkpoint(obj: object) -> TypeGuard[dict[str, Any]]:
     """True if a loaded checkpoint object is the combined dict format.
 
     The combined format (written by `TrainingState.save`) is a dict carrying a

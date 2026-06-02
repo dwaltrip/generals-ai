@@ -31,6 +31,8 @@ import matplotlib
 matplotlib.use("Agg")  # headless; must precede pyplot import
 import matplotlib.pyplot as plt
 
+from utils.docstring import doc_summary
+
 
 LOSS_COMPONENTS = ("policy", "value", "pass", "total")
 ACTION_BUCKETS = (
@@ -192,7 +194,7 @@ def plot_per_epoch_action_dist(epochs: list[dict], out: Path) -> None:
 
 
 def main() -> None:
-    p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    p = argparse.ArgumentParser(description=doc_summary(__doc__))
     p.add_argument("run_dir", type=Path, help="Path to training run dir")
     p.add_argument("--out", type=Path, default=None,
                    help="Output dir for PNGs (default: <run_dir>/plots/)")

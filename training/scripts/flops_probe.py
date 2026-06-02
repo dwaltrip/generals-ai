@@ -26,10 +26,11 @@ from bc.constants import H_PADDED, W_PADDED
 from bc.model import BCModel
 from bc.model_config import ModelConfig
 from shared.perf import measure_total_flops
+from utils.docstring import doc_summary
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    parser = argparse.ArgumentParser(description=doc_summary(__doc__))
     parser.add_argument(
         "--value-head", choices=("direct", "pyramid"), default="direct",
         help="Value-head variant to probe.",

@@ -25,6 +25,7 @@ from pathlib import Path
 import numpy as np
 
 from bc.splits import load_manifest, samples_for_split
+from utils.docstring import doc_summary
 
 
 N_CLASSES = 8  # FFA placement: 1..8 → class index 0..7
@@ -85,7 +86,7 @@ def summarize(name: str, samples: list[tuple[Path, int]]) -> None:
 
 
 def main() -> None:
-    p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    p = argparse.ArgumentParser(description=doc_summary(__doc__))
     p.add_argument("manifest", type=Path)
     p.add_argument(
         "--intermediate", type=Path,

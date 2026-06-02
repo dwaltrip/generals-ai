@@ -22,6 +22,7 @@ import math
 from math import comb
 from pathlib import Path
 import statistics
+from typing import Any
 
 
 def policy_kind(spec: str) -> str:
@@ -177,7 +178,7 @@ def diag_field_mean(games: list[dict], policy_idx: int, path: list[str]) -> floa
         d = get_diag_for_policy(g, policy_idx)
         if d is None:
             continue
-        node = d
+        node: Any = d  # untyped nested-dict walk; leaf validated by the try/except
         try:
             for k in path:
                 node = node[k]

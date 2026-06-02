@@ -20,13 +20,19 @@
     // torch's stubs don't explicitly re-export its C-level symbols (device, zeros, Tensor, ...),
     // so reportPrivateImportUsage fires on every use. Scope the rule off in the torch-using roots
     // only; it stays an error everywhere else.
-    { "root": "training",            "reportPrivateImportUsage": "none" },
+    // extraPath lets training/investigations scripts sibling-import `_helpers`.
+    { "root": "training", "reportPrivateImportUsage": "none", "extraPaths": ["training/investigations"] },
     { "root": "packages/self-play",  "reportPrivateImportUsage": "none" },
     { "root": "packages/eval-tools", "reportPrivateImportUsage": "none" },
     { "root": "replay-parser/scripts", "extraPaths": ["replay-parser/scripts"] },
     { "root": "replay-parser/tests",   "extraPaths": ["replay-parser/tests"] },
     {
       "root": "replay-parser/tools/timestep_viewer",
+      "extraPaths": ["replay-parser/tools/timestep_viewer"]
+    },
+    // viewer.py injects timestep_viewer onto sys.path at runtime to import `constants`/`extract`.
+    {
+      "root": "packages/game-runner",
       "extraPaths": ["replay-parser/tools/timestep_viewer"]
     }
   ]

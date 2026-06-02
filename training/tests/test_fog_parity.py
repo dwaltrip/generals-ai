@@ -158,8 +158,8 @@ def sim() -> dict[str, np.ndarray]:
         "cities": cities,
         "cities_present_at": cities_present_at,
         "capture_events": capture_events,
-        "map_width": np.int32(W),
-        "map_height": np.int32(H),
+        "map_width": np.asarray(W, dtype=np.int32),
+        "map_height": np.asarray(H, dtype=np.int32),
     }
 
 
