@@ -15,7 +15,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from bc.model_config import ModelConfig
+from bc.model_config import build_model_cfg
 from bc.resume_warmup import WarmupSchedule
 from bc.run_dir import (
     ResumeInfo,
@@ -60,7 +60,7 @@ def _resume_config(
     merged = {**parent, **overlay, **operational}
     merged["manifest"] = Path(merged["manifest"])
     merged["intermediate"] = Path(merged["intermediate"])
-    arch = ModelConfig(**{**parent_arch, **overlay_arch})
+    arch = build_model_cfg(**{**parent_arch, **overlay_arch})
     return TrainConfig(arch=arch, run_dir=run_dir, **merged)
 
 

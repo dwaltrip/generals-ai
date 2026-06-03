@@ -5,10 +5,15 @@
 model AND the obs encoding that produced its inputs. Two differently-configured
 models can therefore coexist in one process (the head-to-head eval sweeps need).
 
-The obs-encoder config nests here as `obs: ObsConfig`; `in_ch` is *derived* from
-it (the obs channel count), not a free knob. Nesting keeps the input contract
-and the trunk in one self-describing unit, traveling under the single `arch`
-checkpoint key — no separate serialization path.
+The obs-encoder config nests here as `obs: ObsConfig`; `in_ch` is a derived
+property (the obs channel count), not a stored field or a free knob. Nesting
+keeps the input contract and the trunk in one self-describing unit, traveling
+under the single `arch` checkpoint key — no separate serialization path.
+
+Default policy lives in `MODEL_CONFIG_DEFAULTS` (a named instance), not as inline
+field defaults — symmetric with `obs_config.OBS_CONFIG_DEFAULTS`. Build a
+customized config via `build_model_cfg(**overrides)`, which fills the policy
+defaults; the bare class carries only the structural `H`/`W` defaults.
 
 Deliberately **torch-free**: imports only `bc.constants` + `bc.obs_config`
 (pure ints / dataclass), so `train_config`, `checkpoint`, and `inference` can
@@ -20,7 +25,8 @@ dance.
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
+from typing import Any
 
 from bc.constants import H_PADDED, W_PADDED
 from bc.obs_config import OBS_CONFIG_DEFAULTS, ObsConfig
@@ -33,31 +39,38 @@ VALUE_HEAD_VARIANTS = ("direct", "pyramid")
 class ModelConfig:
     """The BC model's full spec — obs encoding + trunk widths/depths + value head.
 
-    Trunk defaults are the current half-width `128/128/160` trunk: the "0.5×" of
-    DeepNash's `256/256/320` (1/4 the params -> theoretically faster compute for
-    the proof-of-concept phase while still possibly viable).
+    Policy fields carry no inline defaults — the live defaults live in
+    `MODEL_CONFIG_DEFAULTS`; construct via `build_model_cfg` (or explicit fields).
+    The default `128/128/160` trunk is the "0.5×" of DeepNash's `256/256/320`
+    (1/4 the params -> theoretically faster compute for the proof-of-concept
+    phase while still possibly viable).
     """
 
     # --- swept: the trunk's design ---
-    outer_width: int = 128
-    middle_width: int = 128
-    inner_width: int = 160
-    n_outer: int = 2
-    m_middle: int = 2
-    m_inner: int = 2
-    value_head_variant: str = "direct"
-    # --- obs encoding: determines in_ch ---
-    obs: ObsConfig = OBS_CONFIG_DEFAULTS
-    # --- derived: recorded for self-description, not a free knob ---
-    # in_ch is the obs channel count (= obs.obs_channels). -1 is the "derive from
-    # obs" sentinel; an explicit value (e.g. from a checkpoint's arch dict) is
-    # validated against the derived count, so a channel-count change fails load
-    # with a clear arch-mismatch instead of a cryptic state_dict error. Resolved
-    # to the real positive count in __post_init__ (never stays -1), so readers
-    # can rely on `int`.
-    in_ch: int = -1
+    outer_width: int
+    middle_width: int
+    inner_width: int
+    n_outer: int
+    m_middle: int
+    m_inner: int
+    value_head_variant: str
+    # --- obs encoding (determines in_ch) ---
+    obs: ObsConfig
+    # --- structural constants ---
     H: int = H_PADDED
     W: int = W_PADDED
+
+    @property
+    def in_ch(self) -> int:
+        """The trunk's input channel count = the obs channel count.
+
+        Derived from `obs`, not a dataclass field: it enters the network only at
+        the trunk's first conv, so `obs` fully determines it. Checkpoints still
+        record it as a checksum (`TrainingState.save`) and validate it on load
+        (`checkpoint._arch_for_load`), turning an obs-channel-formula change into
+        a clear error rather than a cryptic state_dict shape mismatch.
+        """
+        return self.obs.obs_channels
 
     def __post_init__(self) -> None:
         # Coerce a dict-valued `obs` (asdict round-trip / config JSON), filling
@@ -65,15 +78,6 @@ class ModelConfig:
         if isinstance(self.obs, dict):
             merged = {**asdict(OBS_CONFIG_DEFAULTS), **self.obs}
             object.__setattr__(self, "obs", ObsConfig(**merged))
-        # Derive in_ch from the obs config (or validate an explicit value).
-        derived_in_ch = self.obs.obs_channels
-        if self.in_ch == -1:
-            object.__setattr__(self, "in_ch", derived_in_ch)
-        elif self.in_ch != derived_in_ch:
-            raise ValueError(
-                f"in_ch={self.in_ch} contradicts dense_history_n="
-                f"{self.obs.dense_history_n} (→ {derived_in_ch} channels)"
-            )
         # Widths required-even: the bottleneck ResBlock's `C/2` intermediate
         # floors on odd channel counts, a silent asymmetry. (GroupNorm
         # divisibility is handled separately by `_gn`'s fallback ladder.)
@@ -92,3 +96,31 @@ class ModelConfig:
             )
         if self.H < 1 or self.W < 1:
             raise ValueError("H/W must be positive")
+
+
+# Live default policy — the single home for the default trunk/obs/value-head
+# spec. Referenced by `build_model_cfg` and as `BCModel`'s default arg.
+MODEL_CONFIG_DEFAULTS = ModelConfig(
+    outer_width=128,
+    middle_width=128,
+    inner_width=160,
+    n_outer=2,
+    m_middle=2,
+    m_inner=2,
+    value_head_variant="direct",
+    obs=OBS_CONFIG_DEFAULTS,
+)
+
+
+def build_model_cfg(**overrides: Any) -> ModelConfig:
+    """Build a `ModelConfig`, filling unset fields from `MODEL_CONFIG_DEFAULTS`.
+
+    The single construction path for partial configs — app code
+    (`build_model_cfg(value_head_variant=...)`) and dict-bearing loaders (config
+    files, checkpoint arch dicts, resume overlays) alike.
+    """
+    # in_ch is a derived property, not a field — but checkpoint arch dicts carry
+    # it as a recorded checksum, so drop it rather than letting it hit replace().
+    # The checksum is validated in checkpoint._arch_for_load, not here.
+    overrides.pop("in_ch", None)
+    return replace(MODEL_CONFIG_DEFAULTS, **overrides)

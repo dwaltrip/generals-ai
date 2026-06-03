@@ -17,7 +17,7 @@ import pytest
 import torch
 
 from bc.model import BCModel
-from bc.model_config import ModelConfig
+from bc.model_config import ModelConfig, build_model_cfg
 
 
 def _save_arch_checkpoint(path: Path, cfg: ModelConfig) -> None:
@@ -47,8 +47,8 @@ def test_two_widths_coexist_and_play_head_to_head(tmp_path: Path) -> None:
     from self_play.nn_agent import NNAgent
 
     device = torch.device("cpu")
-    wide = ModelConfig()  # default 128/128/160
-    narrow = ModelConfig(outer_width=64, middle_width=64, inner_width=96)
+    wide = build_model_cfg()  # default 128/128/160
+    narrow = build_model_cfg(outer_width=64, middle_width=64, inner_width=96)
     wide_ckpt, narrow_ckpt = tmp_path / "wide.pt", tmp_path / "narrow.pt"
     _save_arch_checkpoint(wide_ckpt, wide)
     _save_arch_checkpoint(narrow_ckpt, narrow)

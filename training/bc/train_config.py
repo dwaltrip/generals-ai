@@ -17,7 +17,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from bc.model_config import ModelConfig
+from bc.model_config import ModelConfig, build_model_cfg
 
 
 @dataclass(frozen=True)
@@ -52,7 +52,7 @@ class TrainConfig:
     # --- arch: model design ---
     # Self-describing architecture. Recorded in each checkpoint's `arch` key;
     # validated by `ModelConfig.__post_init__`.
-    arch: ModelConfig = field(default_factory=ModelConfig)
+    arch: ModelConfig = field(default_factory=build_model_cfg)
     # --- recipe (optional — env-independent defaults) ---
     epochs: int = 1
     batch_size: int = 64
@@ -164,14 +164,15 @@ class TrainConfig:
 
         The file supplies the arch + recipe (`arch` as a nested object, plus the
         recipe knobs + `manifest`/`intermediate` paths) and may be partial —
-        unset fields fall through to the dataclass / `ModelConfig` defaults.
+        unset recipe fields fall through to this dataclass's defaults, unset arch
+        fields to `build_model_cfg`'s (`MODEL_CONFIG_DEFAULTS`).
         `overrides` supplies operational (invocation-local) fields (`run_dir`,
         `device`, `num_workers`, …). The two domains are disjoint, so this is a
         plain union; an unknown file key or a field set in both surfaces as a
         `TypeError` from the constructor.
         """
         data = json.loads(Path(path).read_text())
-        arch = ModelConfig(**data.pop("arch", {}))
+        arch = build_model_cfg(**data.pop("arch", {}))
         for path_field in ("manifest", "intermediate"):
             if path_field in data:
                 data[path_field] = Path(data[path_field])

@@ -50,7 +50,9 @@ class ObsConfig:
 
 # Live default policy — the single home for the current default `n`. Referenced
 # by `ModelConfig.obs`'s default and by every "I want the defaults" call site.
-OBS_CONFIG_DEFAULTS = ObsConfig(dense_history_n=5)
+OBS_CONFIG_DEFAULTS = ObsConfig(
+    dense_history_n=5,
+)
 
 # Default obs channel count (n=5 → 96). Convenience alias for code that builds a
 # default-config model/tensor; config-aware sites should read `model.cfg.in_ch`

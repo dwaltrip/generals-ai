@@ -30,7 +30,7 @@ from bc.constants import H_PADDED, OBS_CHANNELS, W_PADDED
 from bc.inference import default_device
 from bc.loss import flatten_policy_logits
 from bc.model import BCModel
-from bc.model_config import ModelConfig
+from bc.model_config import build_model_cfg
 import torch
 
 
@@ -127,7 +127,7 @@ def _timeit(fn, *args, device: torch.device, iters: int = 50, warmup: int = 10) 
 
 def main() -> int:
     device = default_device()
-    model = BCModel(ModelConfig(value_head_variant="direct")).to(device).eval()
+    model = BCModel(build_model_cfg(value_head_variant="direct")).to(device).eval()
     batches = [1, 8, 16, 24, 32, 48]
 
     print(f"device={device}  value_head=direct  (random init; timing only)")

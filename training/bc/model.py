@@ -29,7 +29,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from bc.model_config import VALUE_HEAD_VARIANTS, ModelConfig
+from bc.model_config import MODEL_CONFIG_DEFAULTS, VALUE_HEAD_VARIANTS, ModelConfig
 
 
 # GroupNorm preferred group count. The trunk uses {64, 80, 128, 160}-channel
@@ -514,7 +514,7 @@ class BCModel(nn.Module):
     harness can log per-component losses.
     """
 
-    def __init__(self, cfg: ModelConfig = ModelConfig()):
+    def __init__(self, cfg: ModelConfig = MODEL_CONFIG_DEFAULTS):
         super().__init__()
         # Plain attribute (not a submodule/buffer/param), so it adds no
         # state_dict keys — the checkpoint's `arch` key is written from it.

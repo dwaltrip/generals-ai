@@ -15,7 +15,7 @@ from pathlib import Path
 import pytest
 import torch
 
-from bc.model_config import ModelConfig
+from bc.model_config import build_model_cfg
 from bc.resume import _resume_config, bc_resume
 from bc.run_dir import ResumeInfo, check_drift, prepare_resume
 from bc.train_config import TrainConfig, json_default
@@ -135,7 +135,7 @@ def test_resume_operational_overlay_over_parent() -> None:
 def test_resume_arch_carries_and_change_is_locked() -> None:
     """Arch carries from the parent untouched; a net arch change via the overlay
     is checkpoint-owned — check_drift aborts even with --force-config-mismatch."""
-    half = ModelConfig(outer_width=64, middle_width=64, inner_width=96)
+    half = build_model_cfg(outer_width=64, middle_width=64, inner_width=96)
     parent = asdict(_config(arch=half, epochs=5))
     carried = _resume_config(Path("runs/r"), parent, overlay={}, operational={})
     assert carried.arch == half                    # arch carried, weights match

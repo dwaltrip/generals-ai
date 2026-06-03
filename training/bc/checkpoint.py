@@ -15,13 +15,13 @@ from typing import Any, TypeGuard
 import torch
 
 from bc.model import BCModel
-from bc.model_config import ModelConfig
+from bc.model_config import ModelConfig, build_model_cfg
 from bc.obs_config import ObsConfig
 
 
 # Historical facts about on-disk checkpoints, NOT live defaults. DO NOT EDIT.
 # Kept separate from the live defaults on purpose: the day we change the default
-# width or dense_history_n, aliasing legacy = ModelConfig() / OBS_CONFIG_DEFAULTS
+# width or dense_history_n, aliasing legacy = MODEL_CONFIG_DEFAULTS / OBS_CONFIG_DEFAULTS
 # would silently mis-load every old checkpoint. They're equal today and allowed
 # to diverge — hence the literals here rather than default references.
 #
@@ -32,7 +32,7 @@ LEGACY_OBS_CFG = ObsConfig(dense_history_n=5)
 LEGACY_ARCH = ModelConfig(
     outer_width=128, middle_width=128, inner_width=160,
     n_outer=2, m_middle=2, m_inner=2,
-    in_ch=96, H=32, W=32,
+    value_head_variant="direct", H=32, W=32,
     obs=LEGACY_OBS_CFG,
 )
 
@@ -97,7 +97,18 @@ def _arch_for_load(obj: object, value_head_variant: str) -> ModelConfig:
     if is_combined_checkpoint(obj) and "arch" in obj:
         arch_dict = dict(obj["arch"])
         arch_dict.setdefault("obs", LEGACY_OBS_CFG)
-        return ModelConfig(**arch_dict)
+        # in_ch is a recorded checksum (TrainingState.save), derived from obs.
+        # Validate it here — the one place a count baked into trained weights
+        # meets a possibly-changed obs-channel formula — for a clear error rather
+        # than a cryptic state_dict shape mismatch.
+        stored_in_ch = arch_dict.pop("in_ch", None)
+        cfg = build_model_cfg(**arch_dict)
+        if stored_in_ch is not None and stored_in_ch != cfg.in_ch:
+            raise ValueError(
+                f"checkpoint in_ch={stored_in_ch} contradicts obs "
+                f"(dense_history_n={cfg.obs.dense_history_n} → {cfg.in_ch} channels)"
+            )
+        return cfg
     return replace(LEGACY_ARCH, value_head_variant=value_head_variant)
 
 

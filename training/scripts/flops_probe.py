@@ -24,7 +24,7 @@ import torch
 
 from bc.constants import H_PADDED, W_PADDED
 from bc.model import BCModel
-from bc.model_config import ModelConfig
+from bc.model_config import build_model_cfg
 from shared.perf import measure_total_flops
 from utils.docstring import doc_summary
 
@@ -37,7 +37,7 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    model = BCModel(ModelConfig(value_head_variant=args.value_head))
+    model = BCModel(build_model_cfg(value_head_variant=args.value_head))
     in_ch = model.cfg.in_ch
     print(f"value_head variant: {args.value_head}")
     n_params = sum(p.numel() for p in model.parameters())
