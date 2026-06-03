@@ -3,6 +3,8 @@ line-length = 100
 [lint]
 select = ["F", "E", "W", "I", "B", "UP", "TID"]
 
+ignore = ["B028"]
+
 [lint.isort]
 force-sort-within-sections = true
 known-first-party = [

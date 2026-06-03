@@ -160,7 +160,10 @@ def train(*arglist: str) -> None:
     print(f"run_dir: {run_dir}")
     print()
     print("Once the run is done, pull artifacts:")
-    print(f"  uv run modal volume get generals-ai.training-runs /{run_dir.name} training/data/runs-cloud")
+    print(
+        "  uv run modal volume get generals-ai.training-runs",
+        f"/{run_dir.name} training/data/runs-cloud",
+    )
 
     train_remote.with_options(gpu=gpu).spawn(
         fresh_config, config_input_text, resume_run_dir_arg,

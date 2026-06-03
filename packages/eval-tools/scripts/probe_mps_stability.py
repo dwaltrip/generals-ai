@@ -23,10 +23,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import torch
+
 from eval_tools.policy_spec import parse_policy_spec
 from game_runner.runner import run_game
 from game_runner.seed_map import list_replay_ids_by_player_count, load_static_from_db
-import torch
 
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
