@@ -35,6 +35,7 @@ def play_game(
             BCPerspective(
                 p,
                 handle.device,
+                handle.model.cfg.obs,
                 force_move=force_move,
                 sample=sample,
                 temperature=temperature,

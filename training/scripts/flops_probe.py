@@ -22,7 +22,7 @@ import argparse
 
 import torch
 
-from bc.constants import H_PADDED, OBS_CHANNELS, W_PADDED
+from bc.constants import H_PADDED, W_PADDED
 from bc.model import BCModel
 from bc.model_config import ModelConfig
 from shared.perf import measure_total_flops
@@ -37,15 +37,16 @@ def main() -> None:
     args = parser.parse_args()
 
     model = BCModel(ModelConfig(value_head_variant=args.value_head))
+    in_ch = model.cfg.in_ch
     print(f"value_head variant: {args.value_head}")
     n_params = sum(p.numel() for p in model.parameters())
     print(f"params: {n_params:,} ({n_params / 1e6:.2f}M)")
-    print(f"input shape per sample: [C={OBS_CHANNELS}, H={H_PADDED}, W={W_PADDED}]")
+    print(f"input shape per sample: [C={in_ch}, H={H_PADDED}, W={W_PADDED}]")
 
     # Forward-only FLOPs (eval mode + no backward). Smaller number; useful
     # for inference-cost framing, and for the bwd/fwd ratio sanity check.
     model.eval()
-    x = torch.zeros(1, OBS_CHANNELS, H_PADDED, W_PADDED)
+    x = torch.zeros(1, in_ch, H_PADDED, W_PADDED)
     # Worst-case fully-used grid for FLOPs counting.
     vm1 = torch.ones(1, 1, H_PADDED, W_PADDED, dtype=torch.bool)
     with torch.no_grad():
@@ -59,7 +60,7 @@ def main() -> None:
     # loss is sum of all three head outputs so backward touches every path.
     model.train()
     def fwd_bwd_b1() -> torch.Tensor:
-        x = torch.zeros(1, OBS_CHANNELS, H_PADDED, W_PADDED)
+        x = torch.zeros(1, in_ch, H_PADDED, W_PADDED)
         vm = torch.ones(1, 1, H_PADDED, W_PADDED, dtype=torch.bool)
         out = model(x, vm)
         return out["policy_logits"].sum() + out["pass_logit"].sum() + out["value_logits"].sum()
@@ -71,7 +72,7 @@ def main() -> None:
     # Linearity sanity check at a larger batch.
     model.zero_grad()
     def fwd_bwd_b8() -> torch.Tensor:
-        x = torch.zeros(8, OBS_CHANNELS, H_PADDED, W_PADDED)
+        x = torch.zeros(8, in_ch, H_PADDED, W_PADDED)
         vm = torch.ones(8, 1, H_PADDED, W_PADDED, dtype=torch.bool)
         out = model(x, vm)
         return out["policy_logits"].sum() + out["pass_logit"].sum() + out["value_logits"].sum()

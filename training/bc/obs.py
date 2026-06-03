@@ -1,16 +1,23 @@
 """
-Observation-tensor construction — the 96-channel input to the policy/value
-network at one (game, perspective, timestep) snapshot.
+Observation-tensor construction — the policy/value network's input at one
+(game, perspective, timestep) snapshot.
 
 This module owns three things:
   - `canonical_slot_order` — pin from Phase 1 (perspective→slot-0 layout).
   - `MemoryState` + `init_memory` + `step_memory` — per-perspective running
     memory, advanced once per tick.
-  - `build_obs` — pure read of (sim, state, vis, bfs_cache) → [96, H_PADDED, W_PADDED].
+  - `build_obs` — pure read of (sim, state, vis, bfs_cache) →
+    [obs_channel_count(n), H_PADDED, W_PADDED].
+
+The channel count is `obs_channel_count(state.obs_cfg.dense_history_n)`: a fixed
+base block plus a `2 * n` dense-history tail. The obs-encoder config rides on
+`MemoryState` (set at `init_memory`), so `build_obs` reads `n` off the state it
+already receives rather than taking another parameter.
 
 The channel set is grouped by category internally (named vars per channel),
-then assembled in `CHANNEL_ORDER` at the bottom of `build_obs`. The named-var
-shape is deliberately verbose so that the encoding for each channel is
+then assembled at the bottom of `build_obs`; that stacking order is the source
+of truth for layout (the names in `bc.constants` are reference docs). The
+named-var shape is deliberately verbose so that the encoding for each channel is
 visually self-contained and easy to audit.
 
 --- Per-opp slot ordering contract ---
@@ -49,12 +56,12 @@ import numpy as np
 from bc import bfs
 from bc.constants import (
     CITY_TRAVERSABILITY_FACTOR,
-    DENSE_HISTORY_N,
     H_PADDED,
-    OBS_CHANNELS,
     OWN_FOG,
     W_PADDED,
+    obs_channel_count,
 )
+from bc.obs_config import OBS_CONFIG_DEFAULTS, ObsConfig
 
 
 # ---------------------------------------------------------------------------
@@ -176,8 +183,15 @@ class MemoryState:
         (-1=alive, 0..7=raw slot of captor).
       - Source pins: `general_locations` (-1 = unknown).
       - Dense-history buffer: bounded deque of `PerspectiveView` snapshots,
-        length DENSE_HISTORY_N + 1.
+        length `obs_cfg.dense_history_n + 1`.
+      - Obs-encoder config: `obs_cfg`, the static encoder hyperparameters for
+        this walk (read by `build_obs`).
     """
+
+    # ---- Obs-encoder config for this walk ----
+    # Static hyperparameters (currently `dense_history_n`); set at init and read
+    # by build_obs. Sizes `view_buf` and the dense-history channel tail.
+    obs_cfg: ObsConfig
 
     # ---- Static within a game ----
     # bool [H, W]: cells the agent knows are *some* structure (mountain, city,
@@ -235,12 +249,13 @@ class MemoryState:
     # of fog.
     opp_captured_by: np.ndarray
 
-    # ---- Dense-history buffer (bounded deque of length DENSE_HISTORY_N+1) ----
+    # ---- Dense-history buffer (bounded deque of length dense_history_n+1) ----
     # Each entry is a perspective-filtered snapshot at one tick. After
     # `step_memory` at tick t, the right end is the view at tick t. Fog cells
     # in each view carry the OWN_FOG sentinel (see `PerspectiveView`); this is
     # what keeps the dense-history channels fog-respecting per game-mechanics §5.
-    view_buf: deque = field(default_factory=lambda: deque(maxlen=DENSE_HISTORY_N + 1))
+    # `maxlen` is set from `obs_cfg.dense_history_n` in `_init_memory_common`.
+    view_buf: deque = field(default_factory=deque)
 
 
 def _init_memory_common(
@@ -249,6 +264,7 @@ def _init_memory_common(
     H: int,
     W: int,
     P: int,
+    obs_cfg: ObsConfig,
 ) -> MemoryState:
     """Shared setup for init_memory / init_memory_live. Returns a
     MemoryState with empty scoreboard lists (caller fills them)."""
@@ -273,6 +289,7 @@ def _init_memory_common(
     general_locations[perspective_slot] = int(sim["initial_generals"][perspective_slot])
 
     state = MemoryState(
+        obs_cfg=obs_cfg,
         is_structure=is_structure,
         general_locations=general_locations,
         land_count_history=[],
@@ -287,6 +304,7 @@ def _init_memory_common(
         opp_has_seen=np.zeros((P, H, W), dtype=bool),
         opp_contacted=np.zeros(P, dtype=bool),
         opp_captured_by=np.full(P, -1, dtype=np.int8),
+        view_buf=deque(maxlen=obs_cfg.dense_history_n + 1),
     )
 
     # Mark own general as known from t=0.
@@ -313,10 +331,11 @@ def init_memory(
     perspective_slot: int,
     H: int,
     W: int,
+    obs_cfg: ObsConfig,
     P: int = 8,
 ) -> MemoryState:
     """Training path: precompute scoreboard for all T rows."""
-    state = _init_memory_common(sim, perspective_slot, H, W, P)
+    state = _init_memory_common(sim, perspective_slot, H, W, P, obs_cfg)
 
     ownership = sim["ownership"]  # [T, HW] int8
     armies = sim["armies"]  # [T, HW] int16
@@ -338,17 +357,35 @@ def init_memory_live(
     perspective_slot: int,
     H: int,
     W: int,
+    obs_cfg: ObsConfig,
     P: int = 8,
 ) -> MemoryState:
     """Live inference path: compute scoreboard for row 0 only.
     Caller appends subsequent rows each tick."""
-    state = _init_memory_common(sim, perspective_slot, H, W, P)
+    state = _init_memory_common(sim, perspective_slot, H, W, P, obs_cfg)
 
     land_0, army_0 = scoreboard_row(sim["ownership"][0], sim["armies"][0], P)
     state.land_count_history = [land_0]
     state.army_count_history = [army_0]
 
     return state
+
+
+def init_memory_live_fog_only(
+    sim: Mapping[str, np.ndarray | list[np.ndarray]],
+    perspective_slot: int,
+    H: int,
+    W: int,
+    P: int = 8,
+) -> MemoryState:
+    """Live `init_memory_live` for consumers that track fog memory but never
+    encode the dense-history obs channels (e.g. the heuristic eval bot's
+    `WorldModel`). The obs-encoder config is immaterial to them, so this fills
+    the default — they read `MemoryState`'s fog/scoreboard fields, never
+    `view_buf`. NN inference must use `init_memory_live` with the checkpoint's
+    own `obs_cfg` instead, so its obs matches the model's `in_ch`.
+    """
+    return init_memory_live(sim, perspective_slot, H, W, OBS_CONFIG_DEFAULTS, P)
 
 
 def step_memory(
@@ -468,7 +505,7 @@ def step_memory(
     # current tick. Fog cells get OWN_FOG / 0 — so anything downstream that
     # reads from view_buf sees only what the perspective observed at each
     # tick, not the global ground truth. Bounded deque drops the oldest
-    # entry automatically once length exceeds DENSE_HISTORY_N + 1.
+    # entry automatically once length exceeds dense_history_n + 1.
     state.view_buf.append(make_perspective_view(own_t, armies_t, vis))
 
     return graph_grew
@@ -535,10 +572,10 @@ def compute_known_passable(
 # ---------------------------------------------------------------------------
 #
 # Each `_cat_*` builds one category of the obs tensor and returns a list of
-# `[H, W] float32` channels in CHANNEL_ORDER position. `build_obs` is the
+# `[H, W] float32` channels in stack-order position. `build_obs` is the
 # orchestrator that calls them and stacks the result. Comments retain the
 # numeric category labels (Cat 1, Cat 2, ...) for cross-reference with the
-# design docs (5.05-1 §F/§G, etc.) and CHANNEL_ORDER groupings.
+# design docs (5.05-1 §F/§G, etc.) and the channel groupings in `bc.constants`.
 #
 # `structures_in_fog_mask` is the one cross-cat helper — it's the bool form
 # of cat 3's `structures_in_fog` channel and also feeds the BFS passability
@@ -824,7 +861,7 @@ def _cat_dense_history(
     opp_slots: list[int],
     H: int, W: int,
 ) -> list[np.ndarray]:
-    # Cat 10: Dense recent spatial history (2N channels, N=DENSE_HISTORY_N).
+    # Cat 10: Dense recent spatial history (2N channels, N=obs_cfg.dense_history_n).
     # ownership_transition[t-k]: categorical encoding keyed on the older
     # owner (see `_encode_ownership_transition`).
     # army_delta[t-k]: production-subtracted signed-log army change applied
@@ -843,7 +880,7 @@ def _cat_dense_history(
     # transition on capture is handled by subtracting cities_at_t_flat below.
     initial_generals_flat = np.zeros(HW, dtype=bool)
     initial_generals_flat[sim["initial_generals"]] = True
-    for k in range(1, DENSE_HISTORY_N + 1):
+    for k in range(1, state.obs_cfg.dense_history_n + 1):
         # view_buf is right-aligned at t. Snapshot at t-(k-1) = view_buf[-k];
         # snapshot at t-k = view_buf[-k-1]. We need both for a transition.
         idx_newer = buf_len - k
@@ -903,10 +940,13 @@ def build_obs(
     W: int,
 ) -> np.ndarray:
     """
-    Build the 96-channel obs tensor for one (game, perspective, tick).
+    Build the obs tensor for one (game, perspective, tick). Channel count is
+    `obs_channel_count(state.obs_cfg.dense_history_n)` (96 at the default n=5).
 
-    Channel layout: see `bc.constants.CHANNEL_ORDER`. Each `_cat_*` helper
-    returns its slice in CHANNEL_ORDER position; this function stacks them.
+    Channel layout: the stack order below is the source of truth (the names in
+    `bc.constants` are reference docs). Each `_cat_*` helper returns its slice
+    in stack-order position; this function concatenates them, and the assert
+    guards against count drift.
 
     `step_memory` must have already been called for this `(state, t, vis)` —
     `build_obs` is pure-read w.r.t. `state` (the only side effect is lazy
@@ -945,12 +985,13 @@ def build_obs(
         *_cat_dense_history(state, sim, t, perspective_slot, opp_slots, H, W),
     ]
 
-    assert len(channels) == OBS_CHANNELS, (
+    n_channels = obs_channel_count(state.obs_cfg.dense_history_n)
+    assert len(channels) == n_channels, (
         f"channel count mismatch: built {len(channels)}, "
-        f"CHANNEL_ORDER has {OBS_CHANNELS}"
+        f"expected {n_channels} for dense_history_n={state.obs_cfg.dense_history_n}"
     )
 
     obs_unpadded = np.stack(channels, axis=0).astype(np.float32)
-    obs = np.zeros((OBS_CHANNELS, H_PADDED, W_PADDED), dtype=np.float32)
+    obs = np.zeros((n_channels, H_PADDED, W_PADDED), dtype=np.float32)
     obs[:, :H, :W] = obs_unpadded
     return obs

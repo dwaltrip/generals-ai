@@ -7,8 +7,9 @@ The live single-tick inference path is exercised end-to-end by `test_driver`
 from pathlib import Path
 
 from bc.checkpoint import load_bc_model
-from bc.constants import H_PADDED, OBS_CHANNELS, W_PADDED
+from bc.constants import H_PADDED, W_PADDED
 from bc.inference import default_device
+from bc.obs_config import OBS_CHANNELS
 import pytest
 import torch
 

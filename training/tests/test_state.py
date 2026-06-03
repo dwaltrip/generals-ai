@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import torch
 
-from bc.constants import H_PADDED, OBS_CHANNELS, W_PADDED
+from bc.constants import H_PADDED, W_PADDED
 from bc.model import BCModel
+from bc.obs_config import OBS_CHANNELS
 from bc.state import TrainingState
 from bc.train_config import TrainConfig
 

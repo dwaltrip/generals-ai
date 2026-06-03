@@ -13,7 +13,7 @@
     "packages/eval-tools",
     "scripts",
 ],
-  "exclude": ["**/tmp/**", "**/__pycache__/**"],
+  "exclude": ["**/tmp/**", "**/__pycache__/**", "**/_archive/**"],
   "typeCheckingMode": "basic",
   "pythonVersion": "3.14",
   "executionEnvironments": [

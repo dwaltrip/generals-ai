@@ -56,7 +56,8 @@ def run_eval(
 
         # Model plays slot 0, EvalBot plays slot 1.
         policies = [
-            NNAgent(handle, BCPerspective(0, device, force_move=force_move,
+            NNAgent(handle, BCPerspective(0, device, handle.model.cfg.obs,
+                                          force_move=force_move,
                                           sample=sample, temperature=temperature)),
             EvalBotAgent(perspective_slot=1, cfg=BotConfig()),
         ]

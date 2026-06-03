@@ -43,6 +43,7 @@ from bc.obs import (
     init_memory,
     step_memory,
 )
+from bc.obs_config import ObsConfig
 from bc.visibility import compute_visibility
 
 
@@ -194,15 +195,21 @@ class IterableDataset(TorchIterableDataset):
         self,
         samples: list[tuple[Path, int]],
         seed: int,
+        obs_cfg: ObsConfig,
         shuffle_buffer_size: int = 0,
     ) -> None:
         """
         `samples` is a list of `(sim_path, perspective_k)` pairs. Caller is
         responsible for filtering — this class trusts every pair is trainable.
         See `bc.splits.samples_for_split` for the production producer.
+
+        `obs_cfg` is the obs-encoder config (sizes the obs tensor); it must
+        match the model's `in_ch`. Required — pass `config.arch.obs` from the
+        training config (or `OBS_CONFIG_DEFAULTS` for default-shape diagnostics).
         """
         self._groups = _group_by_path(samples)
         self._seed = seed
+        self._obs_cfg = obs_cfg
         self._shuffle_buffer_size = shuffle_buffer_size
         self._epoch = 0
 
@@ -310,7 +317,7 @@ class IterableDataset(TorchIterableDataset):
                 perspective_slot = int(meta["perspective_player_ids"][k])
                 opp_slots = canonical_slot_order(perspective_slot)[1:]
 
-                state = init_memory(sim, perspective_slot, H, W)
+                state = init_memory(sim, perspective_slot, H, W, self._obs_cfg)
                 bfs_cache = bfs.init_bfs_cache()
 
                 elim_t = int(meta["elim_timestep"][k])

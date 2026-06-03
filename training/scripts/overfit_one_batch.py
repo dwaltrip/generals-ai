@@ -30,6 +30,7 @@ from bc.filters import eligible_perspectives
 from bc.loss import bc_loss
 from bc.model import BCModel
 from bc.model_config import ModelConfig
+from bc.obs_config import OBS_CONFIG_DEFAULTS
 from bc.splits import load_curated_names
 from bc.utils import list_sim_paths, meta_path_for
 from shared.device import disable_mps_fallback, move_batch, pick_device
@@ -102,7 +103,7 @@ def main() -> None:
         for k in eligible_perspectives(sim_path, meta_path_for(sim_path), curated_names):
             samples.append((sim_path, k))
     print(f"scanned {len(sim_paths):,} games -> {len(samples):,} eligible (game, k) pairs")
-    ds = IterableDataset(samples=samples, seed=args.seed)
+    ds = IterableDataset(samples=samples, seed=args.seed, obs_cfg=OBS_CONFIG_DEFAULTS)
     loader = DataLoader(ds, batch_size=args.batch_size)
     min_non_pass = int(args.batch_size * args.min_non_pass_frac)
     print(

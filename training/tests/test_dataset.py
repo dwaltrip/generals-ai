@@ -12,6 +12,7 @@ import pytest
 from bc.constants import ELIGIBLE_PLAYER_COUNT, MAX_BOARD_SIDE
 from bc.dataset import IterableDataset, _shuffle_buffered
 from bc.filters import is_eligible
+from bc.obs_config import OBS_CONFIG_DEFAULTS
 
 
 class _IdentityDataset(IterableDataset):
@@ -68,7 +69,7 @@ def test_iter_groups_partitions_disjointly_and_completely(num_workers: int) -> N
     nothing by construction, so the case has no bug to catch.
     """
     samples = [(Path(f"/synth/g{i:03d}.npz"), 0) for i in range(40)]
-    ds = IterableDataset(samples=samples, seed=0)
+    ds = IterableDataset(samples=samples, seed=0, obs_cfg=OBS_CONFIG_DEFAULTS)
 
     seen_paths: set[Path] = set()
     sizes: list[int] = []
@@ -97,7 +98,7 @@ def test_cross_epoch_shuffle_advances() -> None:
     `_epoch_counter += 1` had is now structurally impossible: `__iter__`
     no longer mutates `self`, so there's nothing for a fork to lose."""
     samples = [(Path(f"/synth/g{i:03d}.npz"), 0) for i in range(40)]
-    ds = _IdentityDataset(samples=samples, seed=0)
+    ds = _IdentityDataset(samples=samples, seed=0, obs_cfg=OBS_CONFIG_DEFAULTS)
 
     ds.set_epoch(0)
     epoch0 = list(ds)
@@ -121,7 +122,7 @@ def test_walk_stops_at_elim_timestep(
         with np.load(meta_path) as meta_npz:
             elim_t = int(meta_npz["elim_timestep"][k])
         if elim_t > 0:
-            ds = IterableDataset(samples=[(sim_path, k)], seed=0)
+            ds = IterableDataset(samples=[(sim_path, k)], seed=0, obs_cfg=OBS_CONFIG_DEFAULTS)
             walked = sum(1 for _ in ds._walk(ds._groups))
             assert walked == elim_t, (
                 f"perspective k={k} in {sim_path.name}: "

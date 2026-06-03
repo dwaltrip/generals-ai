@@ -53,6 +53,7 @@ import torch.nn.functional as F
 from bc.checkpoint import load_bc_model
 from bc.constants import H_PADDED, W_PADDED
 from bc.dataset import IterableDataset
+from bc.obs_config import OBS_CONFIG_DEFAULTS
 from bc.splits import load_manifest, samples_for_split
 from shared.device import disable_mps_fallback, pick_device
 
@@ -227,7 +228,7 @@ def gather_stratified_frames(
     moving on, so without this cap, 8 frames of an 8th-place player would
     all be consecutive timesteps from the same game.
     """
-    ds = IterableDataset(samples=val_samples, seed=seed)
+    ds = IterableDataset(samples=val_samples, seed=seed, obs_cfg=OBS_CONFIG_DEFAULTS)
 
     by_class: dict[int, list[dict]] = defaultdict(list)
     # Track contribution per (sim_path-id-stand-in, perspective) — we don't
@@ -494,7 +495,7 @@ def stream_trunk_features(
     `max_frames` caps the total samples kept; the walk stops once the
     cap is reached. Useful for memory-tight runs.
     """
-    ds = IterableDataset(samples=samples, seed=seed)
+    ds = IterableDataset(samples=samples, seed=seed, obs_cfg=OBS_CONFIG_DEFAULTS)
 
     obs_buffer: list[torch.Tensor] = []
     target_buffer: list[torch.Tensor] = []

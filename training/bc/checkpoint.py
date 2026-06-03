@@ -15,18 +15,24 @@ import torch
 
 from bc.model import BCModel
 from bc.model_config import ModelConfig
+from bc.obs_config import ObsConfig
 
 
-# Describes every checkpoint written before the `arch` key existed. DO NOT EDIT
-# — these are historical facts about on-disk checkpoints, NOT live defaults.
-# Kept separate from ModelConfig's field defaults on purpose: the day we change
-# the default width, aliasing legacy = ModelConfig() would silently mis-load
-# every old checkpoint. They're equal today and allowed to diverge — hence the
-# literals below rather than OBS_CHANNELS/H_PADDED/W_PADDED references.
+# Historical facts about on-disk checkpoints, NOT live defaults. DO NOT EDIT.
+# Kept separate from the live defaults on purpose: the day we change the default
+# width or dense_history_n, aliasing legacy = ModelConfig() / OBS_CONFIG_DEFAULTS
+# would silently mis-load every old checkpoint. They're equal today and allowed
+# to diverge — hence the literals here rather than default references.
+#
+# LEGACY_OBS_CFG is the single home for the pre-`obs`-key dense-history depth: it
+# backs both LEGACY_ARCH.obs (pre-`arch` checkpoints) and the `_arch_for_load`
+# fill (arch-bearing-but-pre-`obs` checkpoints, e.g. the early width sweep).
+LEGACY_OBS_CFG = ObsConfig(dense_history_n=5)
 LEGACY_ARCH = ModelConfig(
     outer_width=128, middle_width=128, inner_width=160,
     n_outer=2, m_middle=2, m_inner=2,
     in_ch=96, H=32, W=32,
+    obs=LEGACY_OBS_CFG,
 )
 
 
@@ -82,9 +88,15 @@ def _arch_for_load(obj: object, value_head_variant: str) -> ModelConfig:
     ignored). Absent (legacy) → `LEGACY_ARCH` widths + the load-time variant,
     since legacy checkpoints don't record their variant (it lived in the run
     dir's `args.json`, and the ones on disk are a mix of direct/pyramid).
+
+    Arch dicts written before the `obs` key existed get `LEGACY_OBS_CFG` filled
+    in (those checkpoints were all dense_history_n=5) — pinned to the historical
+    value, not the live default, so a future re-default doesn't re-describe them.
     """
     if is_combined_checkpoint(obj) and "arch" in obj:
-        return ModelConfig(**obj["arch"])
+        arch_dict = dict(obj["arch"])
+        arch_dict.setdefault("obs", LEGACY_OBS_CFG)
+        return ModelConfig(**arch_dict)
     return replace(LEGACY_ARCH, value_head_variant=value_head_variant)
 
 

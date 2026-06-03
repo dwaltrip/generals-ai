@@ -119,7 +119,10 @@ class WorldModel:
             ),
             "capture_events": capture_events_to_array(state.capture_events),
         }
-        self._memory = bc_obs.init_memory_live(
+        # Fog-only memory: the eval bot reads MemoryState's fog/scoreboard
+        # fields, never the dense-history obs channels, so the obs-encoder
+        # config is immaterial here (the wrapper fills the default).
+        self._memory = bc_obs.init_memory_live_fog_only(
             self._sim, self.perspective_slot, H, W, P,
         )
 

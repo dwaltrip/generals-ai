@@ -16,9 +16,10 @@ import pytest
 import torch
 from torch.utils.data import DataLoader
 
-from bc.constants import H_PADDED, OBS_CHANNELS, W_PADDED
+from bc.constants import H_PADDED, W_PADDED
 from bc.dataset import IterableDataset
 from bc.model import BCModel
+from bc.obs_config import OBS_CHANNELS, OBS_CONFIG_DEFAULTS
 
 
 BATCH_SIZE = 64
@@ -39,6 +40,7 @@ def test_dataloader_pipeline_smoke(
     ds = IterableDataset(
         samples=samples,
         seed=0,
+        obs_cfg=OBS_CONFIG_DEFAULTS,
         shuffle_buffer_size=shuffle_buffer_size,
     )
     loader = DataLoader(ds, batch_size=BATCH_SIZE)

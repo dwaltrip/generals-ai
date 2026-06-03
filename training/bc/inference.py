@@ -40,6 +40,7 @@ from bc.constants import H_PADDED, W_PADDED
 from bc.loss import flatten_policy_logits
 from bc.model import BCModel
 from bc.obs import pad_initial_generals
+from bc.obs_config import ObsConfig
 
 
 # Fixed slot count the model + obs encoder were trained on (8-player FFA).
@@ -229,6 +230,7 @@ class BCPerspective:
         self,
         perspective_slot: int,
         device: torch.device,
+        obs_cfg: ObsConfig,
         *,
         force_move: bool = False,
         sample: bool = False,
@@ -236,6 +238,9 @@ class BCPerspective:
     ):
         self.perspective_slot = perspective_slot
         self.device = device
+        # Obs-encoder config the model was trained with — source from the loaded
+        # checkpoint's `handle.model.cfg.obs` so the built obs matches `in_ch`.
+        self.obs_cfg = obs_cfg
         self.opp_slots = bc_obs.canonical_slot_order(perspective_slot, P)[1:]
         self.force_move = force_move
         self.sample = sample
@@ -285,7 +290,9 @@ class BCPerspective:
             "cities_present_at": np.asarray(view.cities_present_at, dtype=np.int32),
             "capture_events": np.asarray(view.capture_events, dtype=np.int32),
         }
-        self._memory = bc_obs.init_memory_live(self._sim, self.perspective_slot, H, W, P)
+        self._memory = bc_obs.init_memory_live(
+            self._sim, self.perspective_slot, H, W, self.obs_cfg, P,
+        )
         self._bfs_cache = bc_bfs.init_bfs_cache(P)
 
         self.n_passed = 0

@@ -45,7 +45,10 @@ def _collect_real_obs(handle: BCModelHandle, device: torch.device):
     rid = list_replay_ids_by_player_count(2)[0]
     static = load_static_from_db(rid)
     state = sim_core.new_state(static)
-    persps = [BCPerspective(p, device, force_move=True) for p in (0, 1)]
+    persps = [
+        BCPerspective(p, device, handle.model.cfg.obs, force_move=True)
+        for p in (0, 1)
+    ]
     for p in persps:
         p.reset(state_to_view(state, static, p.perspective_slot))
 

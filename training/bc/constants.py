@@ -10,22 +10,25 @@ cols 0..W-1 of the padded grid; the right/bottom margins are filler. The
 padded re-index in `actions.py` and the channel-assembly code both assume
 this convention.
 
-`CHANNEL_ORDER` is the single source of truth for the obs tensor layout.
-`obs.py` assembles by stacking in this order; tests + model side read
-`OBS_CHANNELS = len(CHANNEL_ORDER)`. When you add or rearrange channels,
-this list is the one place to edit — and the assembly code's named-var
-stack should be reordered to match.
+This module is purely structural: channel *names* (`_BASE_OBS_CHANNEL_NAMES`)
+and the size *formula* (`obs_channel_count`). It holds no default policy — the
+live obs-encoder defaults live in `bc.obs_config` (`OBS_CONFIG_DEFAULTS`), which
+imports from here. `_BASE_OBS_CHANNEL_NAMES` documents the fixed channels for
+human reference; it does NOT drive assembly — the real source of truth for
+layout is the stacking order in `bc.obs.build_obs`, guarded by the channel-count
+assert there.
+
+The dense-history tail (`ownership_transition[t-k]` + `army_delta[t-k]`,
+`2 * dense_history_n` channels) is appended after the base channels and sized by
+`ObsConfig.dense_history_n`, so the total count is a function of `n`, not a fixed
+constant.
 """
 
-# TODO(config): not everything here is a true invariant. The model arch is now
-# self-describing via `ModelConfig` (bc/model_config.py); the obs-encoder
-# hyperparameters below that *change the input tensor* (hence model quality) are
-# the next candidates to surface into config — deferred to the obs-encoder pass
-# because moving them changes the input shape, not just the model:
-#   - DENSE_HISTORY_N             (history-window depth)
-#   - CITY_TRAVERSABILITY_FACTOR  (BFS passability threshold)
-# Both already carry "tune post-spike" comments. Genuine invariants that stay
-# fixed (sim/data structure, not knobs): H_PADDED/W_PADDED, ELIGIBLE_PLAYER_COUNT,
+# TODO(config): `CITY_TRAVERSABILITY_FACTOR` is the remaining obs-encoder
+# hyperparameter still pinned here; it changes obs *values* (BFS passability),
+# not the tensor *shape*, so it's a natural next addition to `ObsConfig`
+# (bc/obs_config.py) — its own small pass. Genuine invariants that stay fixed
+# (sim/data structure, not knobs): H_PADDED/W_PADDED, ELIGIBLE_PLAYER_COUNT,
 # MAX_BOARD_SIDE.
 
 H_PADDED = 32
@@ -34,11 +37,6 @@ W_PADDED = 32
 # Drop-filter membership.
 ELIGIBLE_PLAYER_COUNT = 8
 MAX_BOARD_SIDE = 32  # inclusive; drop games where max(w, h) > MAX_BOARD_SIDE
-
-# Dense-history window size for `ownership_transition[t-k]` + `army_delta[t-k]`.
-# v1 spike uses N=5 (vs. design's 10–12) to keep dataloader cost lower. Tune up
-# post-spike if the model is starved for tactical-history signal.
-DENSE_HISTORY_N = 5
 
 # Sentinel value for cells outside the perspective's vision in a
 # `PerspectiveView` (see `bc/obs.py`). Distinct from existing ownership values
@@ -61,10 +59,11 @@ CITY_TRAVERSABILITY_FACTOR = 4
 # This contract is enforced uniformly across `opp_N_owned`, `opp_N_army_count`,
 # `last_seen_owner_opp_N`, BFS-to-opp-N, `opp_N_contacted`, `opp_N_captured_by`, etc.
 
-# Channel layout for the v1 spike obs tensor (96 channels).
-# Grouped by category; comments mark the boundaries. Order here = stack order in
-# `bc.obs.build_obs`.
-CHANNEL_ORDER = [
+# Fixed (non-history) obs channels — everything before the dense-history tail.
+# Grouped by category; comments mark the boundaries. The order mirrors the
+# stack order in `bc.obs.build_obs` for readability, but this list is reference
+# documentation only — `build_obs` is what actually defines the layout.
+_BASE_OBS_CHANNEL_NAMES = [
     # Visibility (1)
     "fog_cells",
     # Visible state (9): self + 7 canonical opponents + log-armies
@@ -109,13 +108,32 @@ CHANNEL_ORDER = [
     "opp_5_contacted", "opp_6_contacted", "opp_7_contacted",
     "opp_1_captured_by", "opp_2_captured_by", "opp_3_captured_by", "opp_4_captured_by",
     "opp_5_captured_by", "opp_6_captured_by", "opp_7_captured_by",
-    # Dense recent spatial history (2 * DENSE_HISTORY_N)
-    "ownership_transition_t-1", "ownership_transition_t-2", "ownership_transition_t-3",
-    "ownership_transition_t-4", "ownership_transition_t-5",
-    "army_delta_t-1", "army_delta_t-2", "army_delta_t-3", "army_delta_t-4", "army_delta_t-5",
 ]
 
-OBS_CHANNELS = len(CHANNEL_ORDER)  # 96
-assert OBS_CHANNELS == 96, f"channel count drifted; CHANNEL_ORDER has {OBS_CHANNELS} entries"
+_BASE_OBS_CHANNELS = len(_BASE_OBS_CHANNEL_NAMES)  # 86
 
-CHANNEL_INDEX = {name: i for i, name in enumerate(CHANNEL_ORDER)}
+
+def dense_history_channel_names(n: int) -> list[str]:
+    """The `2 * n` dense-history channel names for a window depth of `n`.
+
+    `ownership_transition[t-k]` then `army_delta[t-k]` for k = 1..n — matching
+    the stack order `bc.obs._cat_dense_history` produces.
+    """
+    return (
+        [f"ownership_transition_t-{k}" for k in range(1, n + 1)]
+        + [f"army_delta_t-{k}" for k in range(1, n + 1)]
+    )
+
+
+def obs_channel_names(n: int) -> list[str]:
+    """Full ordered channel-name list for dense-history depth `n` (base + tail).
+
+    Reference/debugging only — not consumed by the encoder. `build_obs`'s
+    assembly order is authoritative; this just names the positions.
+    """
+    return _BASE_OBS_CHANNEL_NAMES + dense_history_channel_names(n)
+
+
+def obs_channel_count(n: int) -> int:
+    """Total obs-tensor channel count for dense-history depth `n`."""
+    return _BASE_OBS_CHANNELS + 2 * n

@@ -44,6 +44,7 @@ import numpy as np
 import pytest
 
 from bc.obs import init_memory, step_memory
+from bc.obs_config import OBS_CONFIG_DEFAULTS
 from bc.visibility import compute_visibility
 
 
@@ -164,7 +165,7 @@ def sim() -> dict[str, np.ndarray]:
 
 def _walk_to(sim: dict[str, np.ndarray], target_t: int):
     """Run init_memory + step_memory for t=0..target_t inclusive."""
-    state = init_memory(sim, PERSPECTIVE, H, W, P=P_FIXTURE)
+    state = init_memory(sim, PERSPECTIVE, H, W, OBS_CONFIG_DEFAULTS, P=P_FIXTURE)
     for t in range(target_t + 1):
         vis = compute_visibility(sim["ownership"][t], PERSPECTIVE, H, W)
         step_memory(state, sim, t, vis, PERSPECTIVE, H, W, P=P_FIXTURE)

@@ -45,6 +45,7 @@ from torch.utils.data import DataLoader
 
 from bc.dataset import IterableDataset, assert_safe_loader
 from bc.loss import LossAccumulator, bc_loss, flatten_policy_logits
+from bc.obs_config import ObsConfig
 from shared.device import dataloader_kwargs, move_batch
 
 
@@ -73,6 +74,7 @@ def run_val(
     num_workers: int,
     pin_memory: bool | None,
     prefetch_factor: int,
+    obs_cfg: ObsConfig,
     seed: int = 0,
     amp_dtype: torch.dtype | None = None,
 ) -> dict:
@@ -90,7 +92,7 @@ def run_val(
     # Val shuffle is intentionally deterministic across epochs (we never
     # call `set_epoch`), so the per-epoch val loss numbers are apples-to-
     # apples — variation across epochs reflects model change, not reorder.
-    val_ds = IterableDataset(samples=val_samples, seed=seed)
+    val_ds = IterableDataset(samples=val_samples, seed=seed, obs_cfg=obs_cfg)
     val_loader = DataLoader(
         val_ds,
         batch_size=batch_size,

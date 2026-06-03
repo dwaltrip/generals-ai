@@ -14,6 +14,7 @@ import numpy as np
 
 from bc.constants import CITY_TRAVERSABILITY_FACTOR
 from bc.obs import MemoryState, compute_known_passable
+from bc.obs_config import OBS_CONFIG_DEFAULTS
 
 
 H, W = 4, 4
@@ -95,6 +96,7 @@ def _make_fixture(total_army: int, *, enemy_city_visible: bool = True):
     last_seen_armies[ENEMY_GENERAL] = 1
 
     state = MemoryState(
+        obs_cfg=OBS_CONFIG_DEFAULTS,
         is_structure=is_structure,
         general_locations=general_locations,
         land_count_history=land_count_history,

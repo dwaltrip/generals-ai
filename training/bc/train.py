@@ -34,7 +34,7 @@ import torch
 from torch.utils.data import DataLoader
 
 from bc.checkpoint import ckpt_name
-from bc.constants import H_PADDED, OBS_CHANNELS, W_PADDED
+from bc.constants import H_PADDED, W_PADDED
 from bc.dataset import IterableDataset, assert_safe_loader
 from bc.eval import run_val
 from bc.loss import LossAccumulator, bc_loss
@@ -77,7 +77,7 @@ def _measure_model_flops_per_sample(model: BCModel, device: torch.device) -> int
     model.train()
 
     def fwd_bwd() -> torch.Tensor:
-        x = torch.zeros(1, OBS_CHANNELS, H_PADDED, W_PADDED, device=device)
+        x = torch.zeros(1, model.cfg.in_ch, H_PADDED, W_PADDED, device=device)
         # All-True mask: synthetic-throughput measurement assumes a fully-used
         # grid (worst-case FLOPs through the heads).
         valid_mask = torch.ones(1, 1, H_PADDED, W_PADDED, dtype=torch.bool, device=device)
@@ -229,6 +229,7 @@ def build_dataloader(
     ds = IterableDataset(
         samples=train_samples,
         seed=config.seed,
+        obs_cfg=config.arch.obs,
         shuffle_buffer_size=config.shuffle_buffer_size,
     )
     dl_kwargs = dataloader_kwargs(
@@ -462,6 +463,7 @@ def train_loop(
                     num_workers=config.num_workers,
                     pin_memory=config.pin_memory,
                     prefetch_factor=config.prefetch_factor,
+                    obs_cfg=config.arch.obs,
                     seed=config.seed,
                     amp_dtype=amp_dtype,
                 )

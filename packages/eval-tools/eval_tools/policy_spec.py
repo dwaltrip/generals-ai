@@ -94,6 +94,7 @@ def _parse_checkpoint_spec(
     perspective = BCPerspective(
         slot,
         device,
+        handle.model.cfg.obs,
         force_move=force_move,
         sample=sample,
         temperature=temperature,
