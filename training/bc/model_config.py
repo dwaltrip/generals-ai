@@ -49,11 +49,13 @@ class ModelConfig:
     # --- obs encoding: determines in_ch ---
     obs: ObsConfig = OBS_CONFIG_DEFAULTS
     # --- derived: recorded for self-description, not a free knob ---
-    # in_ch is the obs channel count (= obs.obs_channels). Left None to derive;
-    # an explicit value (e.g. from a legacy checkpoint dict) is validated against
-    # the derived count, so a channel-count change fails load with a clear
-    # arch-mismatch instead of a cryptic state_dict error.
-    in_ch: int | None = None
+    # in_ch is the obs channel count (= obs.obs_channels). -1 is the "derive from
+    # obs" sentinel; an explicit value (e.g. from a checkpoint's arch dict) is
+    # validated against the derived count, so a channel-count change fails load
+    # with a clear arch-mismatch instead of a cryptic state_dict error. Resolved
+    # to the real positive count in __post_init__ (never stays -1), so readers
+    # can rely on `int`.
+    in_ch: int = -1
     H: int = H_PADDED
     W: int = W_PADDED
 
@@ -65,7 +67,7 @@ class ModelConfig:
             object.__setattr__(self, "obs", ObsConfig(**merged))
         # Derive in_ch from the obs config (or validate an explicit value).
         derived_in_ch = self.obs.obs_channels
-        if self.in_ch is None:
+        if self.in_ch == -1:
             object.__setattr__(self, "in_ch", derived_in_ch)
         elif self.in_ch != derived_in_ch:
             raise ValueError(

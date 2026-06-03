@@ -37,11 +37,14 @@ def _corpus_2p_replay_id() -> str | None:
 
 
 def test_two_widths_coexist_and_play_head_to_head(tmp_path: Path) -> None:
-    if _corpus_2p_replay_id() is None:
+    replay_id = _corpus_2p_replay_id()
+    if replay_id is None:
         pytest.skip("replay corpus not available")
+    from bc.inference import BCModelHandle
     from eval_tools.policy_spec import parse_policy_spec
     from game_runner.batched import PendingGame, run_batched
     from game_runner.seed_map import load_static_from_db
+    from self_play.nn_agent import NNAgent
 
     device = torch.device("cpu")
     wide = ModelConfig()  # default 128/128/160
@@ -53,13 +56,19 @@ def test_two_widths_coexist_and_play_head_to_head(tmp_path: Path) -> None:
     # Both load in one process, each reconstructing its own architecture.
     p0 = parse_policy_spec(f"checkpoint:{wide_ckpt}:force_move=true", slot=0, device=device)
     p1 = parse_policy_spec(f"checkpoint:{narrow_ckpt}:force_move=true", slot=1, device=device)
-    assert p0.model_handle.model.cfg == wide
-    assert p1.model_handle.model.cfg == narrow
+    # parse_policy_spec is typed to return the Policy protocol; narrow to the
+    # concrete NN types so the .model_handle.model.cfg chain type-checks (and to
+    # verify the reconstruction actually produced them).
+    assert isinstance(p0, NNAgent) and isinstance(p1, NNAgent)
+    h0, h1 = p0.model_handle, p1.model_handle
+    assert isinstance(h0, BCModelHandle) and isinstance(h1, BCModelHandle)
+    assert h0.model.cfg == wide
+    assert h1.model.cfg == narrow
     # Distinct arch-bearing checkpoints → distinct model_keys → the runner runs
     # each through its own forward rather than collapsing them into one.
-    assert p0.model_handle.model_key != p1.model_handle.model_key
+    assert h0.model_key != h1.model_key
 
-    static = load_static_from_db(_corpus_2p_replay_id())
+    static = load_static_from_db(replay_id)
     pending = [PendingGame(game_id=1, map_data=static, policies=[p0, p1])]
     finished = list(run_batched(iter(pending), pool_size=1, max_turns=40))
 
