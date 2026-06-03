@@ -7,6 +7,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from game_types.state_constants import OWN_MOUNTAIN 
 from replay_parser.decode import ReplayData
 from replay_parser.types import PlayerIndex, Timestep
 import sim_core
@@ -51,9 +52,9 @@ def check_invariants(state: sim_core.State, replay: ReplayData) -> list[Violatio
         arm = snaps_arm[t]   # int16[map_size]
         cm  = snaps_cm[t]    # uint8[map_size]
 
-        if not (own[mountain_mask] == -2).all():
+        if not (own[mountain_mask] == OWN_MOUNTAIN).all():
             v.append(Violation("mountain_owner_changed", t))
-        if (own[~mountain_mask] == -2).any():
+        if (own[~mountain_mask] == OWN_MOUNTAIN).any():
             v.append(Violation("non_mountain_became_mountain", t))
         if (arm[mountain_mask] != 0).any():
             v.append(Violation("mountain_has_army", t))

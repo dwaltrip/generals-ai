@@ -57,11 +57,11 @@ from bc import bfs
 from bc.constants import (
     CITY_TRAVERSABILITY_FACTOR,
     H_PADDED,
-    OWN_FOG,
     W_PADDED,
     obs_channel_count,
 )
 from bc.obs_config import OBS_CONFIG_DEFAULTS, ObsConfig
+from game_types.state_constants import OWN_FOG, OWN_MOUNTAIN 
 
 
 # ---------------------------------------------------------------------------
@@ -220,6 +220,12 @@ class MemoryState:
     # Cleared when the general becomes a city via capture (handled in
     # step_memory).
     known_general: np.ndarray
+    # -----------------------------------------------------------------
+    # TODO: The magic values of -1, -2 for `last_seen_owner` are not well documented.
+    #   Should be constants, I believe.
+    #   Also, they differ in meaning. -1 means "never seen" elsewhere.
+    # TODO: -1 should also be a constant for `last_seen_armies`, etc.
+    # -----------------------------------------------------------------
     # int8 [H, W]: last observed owner per cell. Sentinels:
     #   -2 = never seen (default at init)
     #   -1 = neutral
@@ -412,10 +418,8 @@ def step_memory(
     # historically_seen: monotonic OR with current vision.
     state.historically_seen |= vis
 
-    # known_mountain: visible cells with the -2 (mountain) ownership sentinel.
-    # Already assumed impassable in BFS (structures_in_fog default), so this
-    # doesn't grow the passable set.
-    new_mountain = vis & (own_t == -2) & ~state.known_mountain
+    # Add newly discovered mountains to `known_mountain` explored in prev tick)
+    new_mountain = vis & (own_t == OWN_MOUNTAIN) & ~state.known_mountain
     state.known_mountain |= new_mountain
 
     # Compute which cells are cities at time t. Cities never disappear once
