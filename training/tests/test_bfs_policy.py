@@ -6,6 +6,18 @@ city army-ratio formula.
 Each test hand-builds a tiny 4×4 MemoryState fixture rather than going
 through `init_memory` + `step_memory`. The mutation-site assertion lives
 here, decoupled from the fog-evolution machinery.
+
+Map fixture:
+       c0 c1 c2 c3
+  r0:  G0 ·  ·  G1
+  r1:  ·  Cn ·  M
+  r2:  ·  ·  Ce ·
+  r3:  ·  Fs ·  Cs
+
+  M = mountain
+  C = city (n = neutral, s = self, e = enemy)
+  G0 = self-general
+  G1 = enemy-general
 """
 
 from __future__ import annotations
@@ -16,24 +28,24 @@ from bc.constants import CITY_TRAVERSABILITY_FACTOR
 from bc.obs import MemoryState, compute_known_passable
 from bc.obs_config import OBS_CONFIG_DEFAULTS
 
-
 H, W = 4, 4
 PERSPECTIVE = 0
 ENEMY = 1
 P = 8
 
 # Cell coords (row, col) — picked to keep the fixture small.
-OWN_GENERAL = (0, 0)
+SELF_GENERAL = (0, 0)
 ENEMY_GENERAL = (0, 3)
 NEUTRAL_CITY = (1, 1)
 ENEMY_CITY = (2, 2)
-OWN_CITY = (3, 3)
+SELF_CITY = (3, 3)
 MOUNTAIN = (1, 3)
 FOG_STRUCTURE = (3, 1)  # known to be a structure but type not yet resolved
 EMPTY_CELL = (2, 0)  # baseline non-structure cell
 
 NEUTRAL_CITY_ARMY = 40
 ENEMY_CITY_ARMY = 50
+SELF_CITY_ARMY = 10
 
 
 def _flat(rc: tuple[int, int]) -> int:
@@ -51,14 +63,14 @@ def _make_fixture(total_army: int, *, enemy_city_visible: bool = True):
     """
     is_structure = np.zeros((H, W), dtype=bool)
     for cell in [
-        OWN_GENERAL, ENEMY_GENERAL,
-        NEUTRAL_CITY, ENEMY_CITY, OWN_CITY,
+        SELF_GENERAL, ENEMY_GENERAL,
+        NEUTRAL_CITY, ENEMY_CITY, SELF_CITY,
         MOUNTAIN, FOG_STRUCTURE,
     ]:
         is_structure[cell] = True
 
     general_locations = np.full(P, -1, dtype=np.int32)
-    general_locations[PERSPECTIVE] = _flat(OWN_GENERAL)
+    general_locations[PERSPECTIVE] = _flat(SELF_GENERAL)
     general_locations[ENEMY] = _flat(ENEMY_GENERAL)
 
     land_row = np.zeros(P, dtype=np.int32)
@@ -73,21 +85,21 @@ def _make_fixture(total_army: int, *, enemy_city_visible: bool = True):
     known_mountain[MOUNTAIN] = True
     known_city[NEUTRAL_CITY] = True
     known_city[ENEMY_CITY] = True
-    known_city[OWN_CITY] = True
-    known_general[OWN_GENERAL] = True
+    known_city[SELF_CITY] = True
+    known_general[SELF_GENERAL] = True
     known_general[ENEMY_GENERAL] = True
     # FOG_STRUCTURE: in is_structure but not in any known_* → structures_in_fog.
 
     historically_seen = np.zeros((H, W), dtype=bool)
-    for cell in [OWN_GENERAL, OWN_CITY, NEUTRAL_CITY, ENEMY_CITY, ENEMY_GENERAL, MOUNTAIN]:
+    for cell in [SELF_GENERAL, SELF_CITY, NEUTRAL_CITY, ENEMY_CITY, ENEMY_GENERAL, MOUNTAIN]:
         historically_seen[cell] = True
 
     last_seen_owner = np.full((H, W), -2, dtype=np.int8)
     last_seen_armies = np.full((H, W), -1, dtype=np.int16)
-    last_seen_owner[OWN_GENERAL] = PERSPECTIVE
-    last_seen_armies[OWN_GENERAL] = 1
-    last_seen_owner[OWN_CITY] = PERSPECTIVE
-    last_seen_armies[OWN_CITY] = 10
+    last_seen_owner[SELF_GENERAL] = PERSPECTIVE
+    last_seen_armies[SELF_GENERAL] = 1
+    last_seen_owner[SELF_CITY] = PERSPECTIVE
+    last_seen_armies[SELF_CITY] = SELF_CITY_ARMY
     last_seen_owner[NEUTRAL_CITY] = -1
     last_seen_armies[NEUTRAL_CITY] = NEUTRAL_CITY_ARMY
     last_seen_owner[ENEMY_CITY] = ENEMY
@@ -114,20 +126,20 @@ def _make_fixture(total_army: int, *, enemy_city_visible: bool = True):
     )
 
     vis = np.zeros((H, W), dtype=bool)
-    vis[OWN_GENERAL] = True
-    vis[OWN_CITY] = True
+    vis[SELF_GENERAL] = True
+    vis[SELF_CITY] = True
     if enemy_city_visible:
         vis[ENEMY_CITY] = True
 
     own = np.full((H, W), -1, dtype=np.int8)
     armies = np.zeros((H, W), dtype=np.int16)
-    own[OWN_GENERAL] = PERSPECTIVE
+    own[SELF_GENERAL] = PERSPECTIVE
     own[ENEMY_GENERAL] = ENEMY
     own[NEUTRAL_CITY] = -1
     own[ENEMY_CITY] = ENEMY
-    own[OWN_CITY] = PERSPECTIVE
-    armies[OWN_GENERAL] = 1
-    armies[OWN_CITY] = 10
+    own[SELF_CITY] = PERSPECTIVE
+    armies[SELF_GENERAL] = 1
+    armies[SELF_CITY] = 10
     armies[NEUTRAL_CITY] = NEUTRAL_CITY_ARMY
     armies[ENEMY_CITY] = ENEMY_CITY_ARMY
     armies[ENEMY_GENERAL] = 1
@@ -154,7 +166,7 @@ def test_structures_in_fog_impassable():
 
 def test_own_general_always_passable():
     # Own general is in `known_general`; must be excluded from enemy-general mask.
-    assert _passable(_make_fixture(total_army=1), OWN_GENERAL)
+    assert _passable(_make_fixture(total_army=1), SELF_GENERAL)
 
 
 def test_enemy_general_always_impassable():
@@ -163,11 +175,11 @@ def test_enemy_general_always_impassable():
 
 def test_own_city_passable_regardless_of_total_army():
     # Own city is in `known_city`; must skip the formula via the owner check.
-    assert _passable(_make_fixture(total_army=1), OWN_CITY)
+    assert _passable(_make_fixture(total_army=1), SELF_CITY)
 
 
 def test_empty_cell_passable():
-    # Sanity: a non-structure plain cell stays passable.
+    # Sanity: a non-structure cell stays passable.
     assert _passable(_make_fixture(total_army=1), EMPTY_CELL)
 
 
