@@ -46,6 +46,10 @@ EMPTY_CELL = (2, 0)  # baseline non-structure cell
 NEUTRAL_CITY_ARMY = 40
 ENEMY_CITY_ARMY = 50
 SELF_CITY_ARMY = 10
+# Hidden ground-truth army of ENEMY_CITY while it is fogged: it has grown past
+# the perspective's last-seen belief (ENEMY_CITY_ARMY). The policy must ignore
+# this current value and use last_seen_armies — see the fog branch below.
+ENEMY_CITY_FOGGED_ARMY = 999
 
 
 def _flat(rc: tuple[int, int]) -> int:
@@ -141,7 +145,13 @@ def _make_fixture(total_army: int, *, enemy_city_visible: bool = True):
     armies[SELF_GENERAL] = 1
     armies[SELF_CITY] = 10
     armies[NEUTRAL_CITY] = NEUTRAL_CITY_ARMY
-    armies[ENEMY_CITY] = ENEMY_CITY_ARMY
+    # When visible, the current army equals last-seen (step_memory pins them on
+    # every sighting). When fogged, the current array holds the hidden ground
+    # truth (999), which diverges from the stale last-seen (50) — so the fog
+    # test can tell whether the policy reads the right source.
+    armies[ENEMY_CITY] = (
+        ENEMY_CITY_ARMY if enemy_city_visible else ENEMY_CITY_FOGGED_ARMY
+    )
     armies[ENEMY_GENERAL] = 1
 
     structures_in_fog_mask = (
@@ -201,6 +211,10 @@ def test_enemy_city_visible_uses_current_armies():
 
 
 def test_enemy_city_fogged_uses_last_seen_armies():
+    # Fogged: current army is the hidden 999, last-seen is 50. Threshold is built
+    # from the last-seen value, so these pass only if the policy ignores 999. A
+    # bug reading the current army would push the threshold to 999*4 and flip the
+    # +1 case to impassable.
     threshold = ENEMY_CITY_ARMY * CITY_TRAVERSABILITY_FACTOR
     assert not _passable(_make_fixture(total_army=threshold, enemy_city_visible=False), ENEMY_CITY)
     assert _passable(_make_fixture(total_army=threshold + 1, enemy_city_visible=False), ENEMY_CITY)
