@@ -27,8 +27,8 @@ from __future__ import annotations
 from base64 import b64encode
 import sqlite3
 
-from replay_parser._collector.config import DB_PATH
 from replay_parser.parser import parse_replay
+from settings import DB_PATH
 import sim_core
 
 

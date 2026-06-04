@@ -13,10 +13,10 @@ import tempfile
 
 import numpy as np
 
-from replay_parser._collector.config import DB_PATH
 from replay_parser.metadata import build_metadata
 from replay_parser.output import write_metadata, write_sim_output
 from replay_parser.parser import parse_replay
+from settings import DB_PATH
 
 
 def main() -> int:

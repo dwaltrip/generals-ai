@@ -12,6 +12,7 @@ members = [
     "replay-collector",
     "replay-parser",
     "self-play",
+    "settings",
     "sim-core",
     "training",
     "utils",
@@ -484,6 +485,7 @@ dependencies = [
     { name = "numpy" },
     { name = "replay-collector" },
     { name = "replay-parser" },
+    { name = "settings" },
     { name = "sim-core" },
 ]
 
@@ -493,6 +495,7 @@ requires-dist = [
     { name = "numpy", specifier = ">=2.0" },
     { name = "replay-collector", editable = "replay-collector" },
     { name = "replay-parser", editable = "replay-parser" },
+    { name = "settings", editable = "packages/settings" },
     { name = "sim-core", editable = "sim-core" },
 ]
 
@@ -520,6 +523,7 @@ dependencies = [
     { name = "replay-collector" },
     { name = "replay-parser" },
     { name = "self-play" },
+    { name = "settings" },
     { name = "sim-core" },
     { name = "training" },
     { name = "utils" },
@@ -543,6 +547,7 @@ requires-dist = [
     { name = "replay-collector", editable = "replay-collector" },
     { name = "replay-parser", editable = "replay-parser" },
     { name = "self-play", editable = "packages/self-play" },
+    { name = "settings", editable = "packages/settings" },
     { name = "sim-core", editable = "sim-core" },
     { name = "training", editable = "training" },
     { name = "utils", editable = "packages/utils" },
@@ -1371,6 +1376,11 @@ requires-dist = [
     { name = "sim-core", editable = "sim-core" },
     { name = "training", editable = "training" },
 ]
+
+[[package]]
+name = "settings"
+version = "0.0.0"
+source = { editable = "packages/settings" }
 
 [[package]]
 name = "setuptools"

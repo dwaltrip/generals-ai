@@ -11,8 +11,8 @@ import sqlite3
 
 import pytest
 
-from replay_parser._collector.config import DB_PATH
 from replay_parser._collector.wire import decode
+from settings import DB_PATH
 
 
 @pytest.mark.skipif(not DB_PATH.exists(), reason=f"collector DB not found at {DB_PATH}")

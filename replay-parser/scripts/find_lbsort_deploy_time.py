@@ -22,11 +22,11 @@ from collections import defaultdict
 from datetime import UTC, datetime
 import sqlite3
 
-from replay_parser._collector.config import DB_PATH
 from replay_parser._collector.wire import decode as decode_blob
 from replay_parser._shared import is_vanilla_ffa
 from replay_parser.parser import parse_replay
 from replay_parser.validator import deduce_ranking
+from settings import DB_PATH
 
 
 # Window: 2 days centered on the changelog date.

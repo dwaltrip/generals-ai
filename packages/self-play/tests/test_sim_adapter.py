@@ -14,7 +14,7 @@ import pytest
 from bc import mask
 from bc.constants import H_PADDED, W_PADDED
 from game_runner import seed_map, sim_adapter
-from replay_collector.config import DB_PATH
+from settings import DB_PATH
 import sim_core
 
 

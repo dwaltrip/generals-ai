@@ -11,6 +11,7 @@
     "packages/self-play",
     "packages/eval-bot",
     "packages/eval-tools",
+    "packages/settings",
     "scripts",
 ],
   "exclude": ["**/tmp/**", "**/__pycache__/**", "**/_archive/**"],
@@ -22,8 +23,9 @@
     // only; it stays an error everywhere else.
     // extraPath lets training/investigations scripts sibling-import `_helpers`.
     { "root": "training", "reportPrivateImportUsage": "none", "extraPaths": ["training/investigations"] },
-    { "root": "packages/self-play",  "reportPrivateImportUsage": "none" },
     { "root": "packages/eval-tools", "reportPrivateImportUsage": "none" },
+    { "root": "packages/self-play",  "reportPrivateImportUsage": "none" },
+    { "root": "packages/settings", "reportPrivateImportUsage": "none" },
     { "root": "replay-parser/scripts", "extraPaths": ["replay-parser/scripts"] },
     { "root": "replay-parser/tests",   "extraPaths": ["replay-parser/tests"] },
     {

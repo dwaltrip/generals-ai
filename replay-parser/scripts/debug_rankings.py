@@ -9,10 +9,10 @@ import sqlite3
 
 from tabulate import tabulate
 
-from replay_parser._collector.config import DB_PATH
 from replay_parser.errors import ArmyOverflowError
 from replay_parser.parser import parse_replay
 from replay_parser.validator import apply_surrender_bonus, deduce_ranking_for_replay
+from settings import DB_PATH
 
 
 def fetch(conn, replay_id) -> tuple[int, str, bytes, list[str]] | None:

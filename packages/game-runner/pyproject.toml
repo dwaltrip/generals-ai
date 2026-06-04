@@ -8,6 +8,7 @@ dependencies = [
     "numpy>=2.0",
     "replay-collector",
     "replay-parser",
+    "settings",
     "sim-core",
 ]
 
@@ -22,4 +23,5 @@ packages = ["game_runner"]
 game-types = { workspace = true }
 replay-collector = { workspace = true }
 replay-parser = { workspace = true }
+settings = { workspace = true }
 sim-core = { workspace = true }

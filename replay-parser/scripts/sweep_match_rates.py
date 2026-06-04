@@ -19,7 +19,6 @@ import sqlite3
 
 from tabulate import tabulate
 
-from replay_parser._collector.config import DB_PATH
 from replay_parser._collector.wire import decode as decode_blob
 from replay_parser._shared import is_vanilla_ffa
 from replay_parser.errors import ArmyOverflowError
@@ -29,6 +28,7 @@ from replay_parser.validator import (
     PRE_V30_9_2_CUTOFF_MS,
     deduce_ranking_for_replay,
 )
+from settings import DB_PATH
 
 from _sweep_common import (
     ReplayInfo,

@@ -13,6 +13,7 @@ dependencies = [
     "replay-parser",
     "self-play",
     "sim-core",
+    "settings",
     "training",
     "utils",
 ]
@@ -35,6 +36,7 @@ members = [
     "replay-collector",
     "replay-parser",
     "packages/self-play",
+    "packages/settings",
     "sim-core",
     "training",
     "packages/utils",
@@ -48,6 +50,7 @@ game-types = { workspace = true }
 replay-collector = { workspace = true }
 replay-parser = { workspace = true }
 self-play = { workspace = true }
+settings = { workspace = true }
 sim-core = { workspace = true }
 training = { workspace = true }
 utils = { workspace = true }

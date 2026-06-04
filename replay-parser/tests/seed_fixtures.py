@@ -10,7 +10,7 @@ Usage (from replay-parser/):
 import sqlite3
 import sys
 
-from replay_parser._collector.config import DB_PATH
+from settings import DB_PATH
 
 from _fixture_lib import FIXTURES, FIXTURES_DIR
 

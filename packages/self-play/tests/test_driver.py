@@ -16,8 +16,8 @@ import pytest
 
 from bc.inference import BCModelHandle, default_device
 from game_runner import seed_map, viewer
-from replay_collector.config import DB_PATH
 from self_play import driver
+from settings import DB_PATH
 
 
 # packages/self-play/tests/ → repo root is 3 levels up.

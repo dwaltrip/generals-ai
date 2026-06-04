@@ -11,7 +11,6 @@ import argparse
 from pathlib import Path
 import sys
 
-from replay_parser._collector.config import DB_PATH
 from replay_parser.driver import (
     DEFAULT_MIN_PRIOR_GAMES,
     DEFAULT_ROLLING_1ST_FLOOR,
@@ -21,6 +20,7 @@ from replay_parser.driver import (
     run_corpus_driver,
 )
 from replay_parser.git_state import DirtyWorkingTreeError
+from settings import DB_PATH
 from utils.player_name_lists import load_union
 
 

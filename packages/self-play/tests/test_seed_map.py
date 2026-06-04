@@ -7,7 +7,7 @@ sim_core. Skips if the local replay DB isn't populated.
 import pytest
 
 from game_runner import seed_map
-from replay_collector.config import DB_PATH
+from settings import DB_PATH
 import sim_core
 
 

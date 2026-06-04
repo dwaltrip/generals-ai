@@ -17,6 +17,7 @@ known-first-party = [
     "replay_collector",
     "replay_parser",
     "self_play",
+    "settings",
     "sim_core",
     "training",
     "utils",
@@ -30,4 +31,3 @@ lines-after-imports = 2
 [lint.per-file-ignores]
 "replay-parser/replay_parser/_collector/**/*.py" = ["TID251"]
 "replay-collector/**/*.py" = ["TID251"]
-"packages/game-runner/**/*.py" = ["TID251"]

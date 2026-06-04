@@ -4,7 +4,6 @@ import numpy as np
 import pytest
 
 from game_types import StaticMap
-from replay_parser._collector.config import DB_PATH
 from replay_parser._collector.wire import decode as decompress
 from replay_parser.decode import (
     Afks,
@@ -14,6 +13,7 @@ from replay_parser.decode import (
     decode_wire,
     decode_wire_array,
 )
+from settings import DB_PATH
 
 
 @pytest.fixture(scope="module")

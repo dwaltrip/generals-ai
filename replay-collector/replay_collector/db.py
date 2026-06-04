@@ -6,8 +6,8 @@ import sys
 import time
 
 from replay_collector import wire
-from replay_collector.config import DB_PATH
 from replay_collector.sql_helpers import from_player_games
+from settings import DB_PATH
 
 
 def format_started_date(started: int | None) -> str:

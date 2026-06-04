@@ -18,8 +18,8 @@ the parsed static).
 import sqlite3
 
 from game_types import StaticMap
-from replay_collector.config import DB_PATH
 from replay_parser.decode import decode_wire
+from settings import DB_PATH
 
 
 def load_static_from_db(replay_id: str) -> StaticMap:

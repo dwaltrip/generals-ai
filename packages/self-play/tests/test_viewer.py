@@ -9,7 +9,7 @@ viewer can render any game our self-play loop produces.
 import pytest
 
 from game_runner import seed_map, viewer
-from replay_collector.config import DB_PATH
+from settings import DB_PATH
 import sim_core
 
 
