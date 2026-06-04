@@ -12,9 +12,9 @@ browser for manual visual check.
 
 from pathlib import Path
 
-from bc.inference import BCModelHandle, default_device
 import pytest
 
+from bc.inference import BCModelHandle, default_device
 from game_runner import seed_map, viewer
 from replay_collector.config import DB_PATH
 from self_play import driver

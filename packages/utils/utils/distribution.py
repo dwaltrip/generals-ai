@@ -17,7 +17,7 @@ def print_counts_with_percents(
     labels = [str(lbl) for lbl, _ in items]
     width = max(len(s) for s in labels)
     cum = 0
-    for (_, count), label_str in zip(items, labels):
+    for (_, count), label_str in zip(items, labels, strict=True):
         pct = 100 * count / total
         if cumulative:
             cum += count

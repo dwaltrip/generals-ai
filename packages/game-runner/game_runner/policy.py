@@ -4,7 +4,6 @@ from dataclasses import dataclass, field
 from typing import Protocol
 
 from game_types import StaticMap
-
 import sim_core
 
 

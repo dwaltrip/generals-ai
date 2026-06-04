@@ -10,17 +10,17 @@ from collections import deque
 from dataclasses import dataclass
 from typing import Any, NamedTuple
 
+import numpy as np
+
 # TODO: cross-package dep on training internals — extract shared
 # fog-tracking module if this coupling becomes painful.
 from bc import obs as bc_obs
 from bc import visibility
 from bc.obs import MemoryState, pad_initial_generals
-from game_types import StaticMap
-import numpy as np
-
 from eval_bot.bfs import bfs_distances
 from eval_bot.bot_config import BotConfig
 from game_runner.sim_adapter import capture_events_to_array
+from game_types import StaticMap
 import sim_core
 
 

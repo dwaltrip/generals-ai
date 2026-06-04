@@ -79,7 +79,7 @@ def plot_per_batch_loss(batches: list[dict], out: Path, alpha: float = 0.01) -> 
     bounds = epoch_boundaries(batches)
 
     fig, axes = plt.subplots(2, 2, figsize=(13, 8), sharex=True)
-    for ax, comp in zip(axes.flat, LOSS_COMPONENTS):
+    for ax, comp in zip(axes.flat, LOSS_COMPONENTS, strict=True):
         ys = [b[comp] for b in batches]
         ema_ys = ema(ys, alpha)
         ax.scatter(x, ys, s=1, alpha=0.08, color="C0", linewidths=0)
@@ -131,7 +131,7 @@ def plot_per_epoch_train_val(epochs: list[dict], out: Path) -> None:
     xs = [e["epoch"] for e in epochs]
 
     fig, axes = plt.subplots(2, 2, figsize=(11, 7), sharex=True)
-    for ax, comp in zip(axes.flat, LOSS_COMPONENTS):
+    for ax, comp in zip(axes.flat, LOSS_COMPONENTS, strict=True):
         ax.plot(xs, [e[comp] for e in epochs], marker="o", label="train", color="C0")
         ax.plot(xs, [e["val"][comp] for e in epochs], marker="o", label="val", color="C3")
         ax.set_title(f"{comp} loss")
@@ -176,7 +176,7 @@ def plot_per_epoch_action_dist(epochs: list[dict], out: Path) -> None:
 
     bar_w = 0.4
     positions = list(range(n_buckets))
-    for ax, e in zip(axes, epochs):
+    for ax, e in zip(axes, epochs, strict=True):
         model = [e["val"]["action_dist"][k] for k in ACTION_BUCKETS]
         target = [e["val"]["action_target_dist"][k] for k in ACTION_BUCKETS]
         ax.bar([p - bar_w / 2 for p in positions], model, bar_w, label="model", color="C0")

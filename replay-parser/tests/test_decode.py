@@ -1,9 +1,9 @@
 import sqlite3
 
-from game_types import StaticMap
 import numpy as np
 import pytest
 
+from game_types import StaticMap
 from replay_parser._collector.config import DB_PATH
 from replay_parser._collector.wire import decode as decompress
 from replay_parser.decode import (

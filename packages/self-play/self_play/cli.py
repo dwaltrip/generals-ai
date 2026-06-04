@@ -16,9 +16,9 @@ import argparse
 import datetime as dt
 from pathlib import Path
 
-from bc.inference import BCModelHandle, default_device
 import torch
 
+from bc.inference import BCModelHandle, default_device
 from game_runner import seed_map, viewer
 from self_play import driver
 

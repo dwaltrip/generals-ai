@@ -7,8 +7,6 @@ Same duck-typed interface as ModelAgent in self_play.agent:
 
 from __future__ import annotations
 
-from game_types import StaticMap
-
 from eval_bot.attack import should_clear_attack, try_attack
 from eval_bot.bot_config import BotConfig
 from eval_bot.defend import should_clear_defend, try_defend
@@ -23,6 +21,7 @@ from eval_bot.plan import (
     SingleMove,
 )
 from eval_bot.world_model import PlayerView, WorldModel
+from game_types import StaticMap
 import sim_core
 
 

@@ -26,12 +26,13 @@ from __future__ import annotations
 
 import time
 
+import torch
+
 from bc.constants import H_PADDED, OBS_CHANNELS, W_PADDED
 from bc.inference import default_device
 from bc.loss import flatten_policy_logits
 from bc.model import BCModel
 from bc.model_config import build_model_cfg
-import torch
 
 
 P = 8

@@ -19,10 +19,9 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Protocol
 
-from game_types import ObsBundle, PlayerView, StaticMap
-
 from game_runner.brain import ModelHandle
 from game_runner.sim_adapter import state_to_view
+from game_types import ObsBundle, PlayerView, StaticMap
 
 
 if TYPE_CHECKING:

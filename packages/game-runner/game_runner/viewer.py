@@ -26,7 +26,6 @@ from types import SimpleNamespace
 from typing import Any
 
 from game_types import StaticMap
-
 import replay_parser
 import sim_core
 

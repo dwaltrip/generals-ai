@@ -1,8 +1,8 @@
 from dataclasses import dataclass
 
-from game_types import StaticMap
 import numpy as np
 
+from game_types import StaticMap
 from replay_parser._collector.wire import decode as _decompress
 
 

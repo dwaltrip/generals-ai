@@ -116,13 +116,13 @@ def test_step_tick_matches_simulate(spec):
 
     # Event lists — order matters (sim emits in canonical order)
     assert len(live.death_events) == len(canonical.death_events)
-    for a, b in zip(live.death_events, canonical.death_events):
+    for a, b in zip(live.death_events, canonical.death_events, strict=True):
         assert (a.timestep, a.player) == (b.timestep, b.player)
 
     assert len(live.capture_events) == len(canonical.capture_events)
-    for a, b in zip(live.capture_events, canonical.capture_events):
+    for a, b in zip(live.capture_events, canonical.capture_events, strict=True):
         assert (a.timestep, a.captor, a.captured) == (b.timestep, b.captor, b.captured)
 
     assert len(live.neutralize_events) == len(canonical.neutralize_events)
-    for a, b in zip(live.neutralize_events, canonical.neutralize_events):
+    for a, b in zip(live.neutralize_events, canonical.neutralize_events, strict=True):
         assert (a.timestep, a.player) == (b.timestep, b.player)

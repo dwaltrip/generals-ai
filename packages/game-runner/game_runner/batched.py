@@ -20,7 +20,6 @@ from collections.abc import Iterable, Iterator, Sequence
 from dataclasses import dataclass
 from typing import Any, TypeGuard
 
-from game_types import ObsBundle, StaticMap
 import numpy as np
 
 from game_runner.brain import BatchablePolicy
@@ -28,6 +27,7 @@ from game_runner.policy import GameResult, Policy
 from game_runner.runner import OnTickCallback, build_result
 from game_runner.sim_adapter import state_to_view
 from game_runner.tick_timing import TickTiming, timing_enabled
+from game_types import ObsBundle, StaticMap
 import sim_core
 
 

@@ -6,10 +6,9 @@ and uses EvalBot instead of ModelAgent.
 
 from __future__ import annotations
 
-from game_types import StaticMap
-
 from eval_bot.bot import EvalBot
 from eval_bot.bot_config import BotConfig
+from game_types import StaticMap
 import sim_core
 
 

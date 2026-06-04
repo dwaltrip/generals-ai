@@ -14,9 +14,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from bc.inference import BCModelHandle, BCPerspective
 import torch
 
+from bc.inference import BCModelHandle, BCPerspective
 from eval_bot.bot_config import BotConfig
 from eval_bot.eval_bot_agent import EvalBotAgent
 from game_runner.policy import Policy

@@ -9,9 +9,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from game_types import StaticMap
 import numpy as np
 
+from game_types import StaticMap
 import sim_core
 
 

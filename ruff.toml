@@ -1,4 +1,5 @@
 line-length = 100
+extend-exclude = ["**/_archive/"]
 
 [lint]
 select = ["F", "E", "W", "I", "B", "UP", "TID"]
@@ -8,9 +9,11 @@ ignore = ["B028"]
 [lint.isort]
 force-sort-within-sections = true
 known-first-party = [
+    "bc",
     "eval_bot",
     "eval_tools",
     "game_runner",
+    "game_types",
     "replay_collector",
     "replay_parser",
     "self_play",

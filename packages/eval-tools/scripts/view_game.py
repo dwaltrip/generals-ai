@@ -19,10 +19,10 @@ import subprocess
 import sys
 from types import SimpleNamespace
 
-from game_types import StaticMap
 import numpy as np
 
 from game_runner.viewer import render_viewer_html
+from game_types import StaticMap
 
 
 # TODO(viewer overhaul): the `state` arg below is a SimpleNamespace faking

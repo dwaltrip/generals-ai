@@ -18,8 +18,9 @@ from typing import TYPE_CHECKING, Any, Protocol
 
 
 if TYPE_CHECKING:
-    from game_types import ObsBundle, PlayerView
     import numpy as np
+
+    from game_types import ObsBundle, PlayerView
 
 
 class ModelHandle(Protocol):

@@ -27,7 +27,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from game_types import ObsBundle, PlayerView
 import numpy as np
 import torch
 
@@ -41,6 +40,7 @@ from bc.loss import flatten_policy_logits
 from bc.model import BCModel
 from bc.obs import pad_initial_generals
 from bc.obs_config import ObsConfig
+from game_types import ObsBundle, PlayerView
 
 
 # Fixed slot count the model + obs encoder were trained on (8-player FFA).

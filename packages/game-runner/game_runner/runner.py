@@ -17,10 +17,10 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 
-from game_types import StaticMap
 import numpy as np
 
 from game_runner.policy import GameResult, PlayerStats, Policy
+from game_types import StaticMap
 import sim_core
 
 

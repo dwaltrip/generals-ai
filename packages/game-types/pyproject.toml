@@ -1,7 +1,7 @@
 [project]
 name = "game-types"
 version = "0.0.0"
-description = "Dependency-light data contracts shared across the game/model boundary (PlayerView, ObsBundle, Decision)"
+description = "Dependency-light data contracts shared across the game/model boundary"
 requires-python = ">=3.14"
 dependencies = [
     "numpy>=2.0",

@@ -8,11 +8,11 @@ visibility. If `build_mask` runs cleanly on our dict and produces a
 sensible legality tensor, the dict shape is correct.
 """
 
-from bc import mask
-from bc.constants import H_PADDED, W_PADDED
 import numpy as np
 import pytest
 
+from bc import mask
+from bc.constants import H_PADDED, W_PADDED
 from game_runner import seed_map, sim_adapter
 from replay_collector.config import DB_PATH
 import sim_core

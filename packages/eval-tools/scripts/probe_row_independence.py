@@ -24,11 +24,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from bc.inference import BCModelHandle, BCPerspective
-from bc.loss import flatten_policy_logits
 import numpy as np
 import torch
 
+from bc.inference import BCModelHandle, BCPerspective
+from bc.loss import flatten_policy_logits
 from game_runner.seed_map import list_replay_ids_by_player_count, load_static_from_db
 from game_runner.sim_adapter import state_to_view
 import sim_core

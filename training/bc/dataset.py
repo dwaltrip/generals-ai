@@ -26,7 +26,6 @@ from __future__ import annotations
 from collections.abc import Iterable, Iterator
 from pathlib import Path
 import random
-from typing import TypeVar
 
 import numpy as np
 import torch
@@ -61,10 +60,7 @@ def _group_by_path(samples: list[tuple[Path, int]]) -> list[tuple[Path, tuple[in
     return [(p, tuple(ks)) for p, ks in by_path.items()]
 
 
-T = TypeVar("T")
-
-
-def _shuffle_buffered(
+def _shuffle_buffered[T](
     upstream: Iterable[T],
     buffer_size: int,
     rng: random.Random,

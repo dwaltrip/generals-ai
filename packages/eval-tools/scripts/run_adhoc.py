@@ -45,16 +45,16 @@ import random
 import sys
 import time
 
-from bc.inference import default_device
-from game_types import StaticMap
 import torch
 
+from bc.inference import default_device
 from eval_tools.metrics_collector import MetricsCollector
 from eval_tools.policy_spec import build_policy_names, parse_policy_spec
 from game_runner.batched import FinishedGame, PendingGame, run_batched
 from game_runner.policy import GameResult
 from game_runner.save import write_eval_game
 from game_runner.seed_map import list_replay_ids_by_player_count, load_static_from_db
+from game_types import StaticMap
 from utils.log import tee_stdio
 
 

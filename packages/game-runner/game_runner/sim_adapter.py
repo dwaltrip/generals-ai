@@ -8,9 +8,9 @@ keeps the model package free of any `sim_core` dependency.
 
 from __future__ import annotations
 
-from game_types import PlayerView, StaticMap
 import numpy as np
 
+from game_types import PlayerView, StaticMap
 import sim_core
 
 
