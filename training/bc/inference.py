@@ -340,12 +340,12 @@ class BCPerspective:
         # 4. Visibility for this perspective.
         vis = visibility.compute_visibility(own_t, self.perspective_slot, H, W)
 
-        # 5. Advance memory; invalidate BFS cache if the known-passable graph grew.
-        graph_grew = bc_obs.step_memory(
+        # 5. Advance memory. BFS cache invalidation is handled inside
+        # `build_obs` via `BFSCache.maybe_invalidate`, which catches both
+        # structural changes and city-passability ratio flips.
+        bc_obs.step_memory(
             self._memory, self._sim, t, vis, self.perspective_slot, H, W, P,
         )
-        if graph_grew:
-            self._bfs_cache.invalidate_graph()
 
         # 6. Build obs + legality mask + valid-region mask.
         obs_np = bc_obs.build_obs(

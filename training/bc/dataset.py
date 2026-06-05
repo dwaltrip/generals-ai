@@ -321,15 +321,7 @@ class IterableDataset(TorchIterableDataset):
 
                 for t in range(end_t):
                     vis = compute_visibility(sim["ownership"][t], perspective_slot, H, W)
-                    _graph_grew = step_memory(state, sim, t, vis, perspective_slot, H, W)
-                    # v1 BFS-policy: city passability depends on per-tick army
-                    # values (perspective total + per-city), so the BFS graph
-                    # cache is invalidated unconditionally each frame.
-                    # `step_memory`'s `graph_grew` return is unused for now.
-                    # every-frame invalidation already covers it.
-                    # TODO: Either use `graph_grew` in the future or remove it.
-                    # And then clean up or remove `bfs_cache` as well.
-                    bfs_cache.invalidate_graph()
+                    step_memory(state, sim, t, vis, perspective_slot, H, W)
 
                     yield encode_frame(
                         sim, meta, k, t,

@@ -70,6 +70,15 @@ class BFSCache:
     graph_epoch: int = 0
     # Index 0 = self general; 1..7 = canonical opp generals (matches obs channel layout).
     per_general: list[_Entry] = field(default_factory=list)
+    # Mask cached by `maybe_invalidate` for frame-to-frame equality checks.
+    # Held by reference (compute_known_passable allocates fresh each frame).
+    prev_mask: np.ndarray | None = field(default=None, repr=False)
+    # Per-cache lookup accounting. Incremented in `compute_or_get`. Excludes
+    # the source<0 early-return (those calls never touch the cache). `n_lookups`
+    # is the denominator; `n_bfs_runs` is the number of actual `_bfs` calls.
+    # Hit rate = 1 - n_bfs_runs / n_lookups.
+    n_lookups: int = 0
+    n_bfs_runs: int = 0
 
     def __post_init__(self) -> None:
         if not self.per_general:
@@ -78,6 +87,20 @@ class BFSCache:
     def invalidate_graph(self) -> None:
         """Bump the epoch so all per-general entries miss on next lookup."""
         self.graph_epoch += 1
+
+    def maybe_invalidate(self, mask: np.ndarray) -> None:
+        """Bump the epoch iff `mask` differs from the previously cached one.
+
+        One `np.array_equal` per frame (~µs on a ~1024-cell bool) replaces the
+        unconditional per-frame invalidation that used to live in the dataset
+        walk. Both invalidation triggers are covered here in a single check:
+        structural growth (new known-passable cells from `step_memory`) and
+        city-passability flips (per-tick army-ratio changes). The mask is the
+        single source of truth for "would BFS produce different output?"
+        """
+        if self.prev_mask is None or not np.array_equal(self.prev_mask, mask):
+            self.graph_epoch += 1
+            self.prev_mask = mask
 
 
 def init_bfs_cache(P: int = 8) -> BFSCache:
@@ -113,6 +136,7 @@ def compute_or_get(
     if source < 0:
         return np.full((H, W), -1.0, dtype=np.float32)
 
+    cache.n_lookups += 1
     entry = cache.per_general[gen_idx]
     if (
         entry.distances is not None
@@ -121,6 +145,7 @@ def compute_or_get(
     ):
         return entry.distances
 
+    cache.n_bfs_runs += 1
     distances = _bfs(source, known_passable_flat, H, W)
     entry.cached_graph_epoch = cache.graph_epoch
     entry.cached_source = source

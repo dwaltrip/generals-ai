@@ -680,13 +680,14 @@ def _cat_bfs(
 ) -> list[np.ndarray]:
     # Cat 5: BFS distance-from-known-generals (8 channels). Passability is
     # computed by `compute_known_passable` — see its docstring for the v1
-    # spike policy. Per-frame recompute: city passability depends on
-    # tick-level values, so cross-frame BFS caching is invalidated every
-    # frame in `dataset.py::__iter__`.
+    # spike policy. `BFSCache.maybe_invalidate` does one `array_equal` against
+    # the previous frame's mask and bumps the epoch only on change, so
+    # structurally-stable frames reuse cached distances across all 8 sources.
     known_passable_flat = compute_known_passable(
         state, t, perspective_slot, vis, own, armies,
         structures_in_fog_mask, H, W,
     )
+    bfs_cache.maybe_invalidate(known_passable_flat)
     bfs_self = bfs.compute_or_get(
         bfs_cache, 0, int(state.general_locations[perspective_slot]),
         known_passable_flat, H, W,
