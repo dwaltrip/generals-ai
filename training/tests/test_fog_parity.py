@@ -29,11 +29,12 @@ Trajectory: perspective expands one cell per tick toward the opponent.
 Structures resolve as they enter the Moore-neighborhood. At action t=6
 the perspective captures the opponent; snapshot[7] reflects the capture.
 
-Known limitations of this fixture (worth a follow-up):
-  - No "visible → fogged" transition; `turns_since_seen` increment logic
-    is exercised only for the "stays visible (TSS=0)" and "never seen
-    (TSS=-1)" cases. Visible-then-fogged needs a separate small fixture.
-  - Slot canonicalization: this fixture uses perspective=slot-0 only.
+A second, smaller fixture (`sim_fog`) covers the visible → fogged → re-seen
+path the expanding-vision trajectory can't reach: memory of a now-hidden cell
+(stale last_seen_* values and the `turns_since_seen` increment/reset logic).
+
+Known limitations (worth a follow-up):
+  - Slot canonicalization: both fixtures use perspective=slot-0 only.
     Verifying canonical-channel mapping for non-zero perspective slots
     (essential #3) needs a separate fixture.
 """
@@ -377,3 +378,120 @@ def test_t7_post_capture(sim):
         ]),
     )
     assert state.turns_since_seen[0, 0] == -1
+
+
+# ===========================================================================
+# Memory-path fixture: a visible → fogged → re-seen transition.
+#
+# The main fixture's vision only ever expands, so it never exercises memory of
+# a now-fogged cell (turns_since_seen stays 0/-1; last_seen_* are read only off
+# visible cells; historically_seen == vision every tick). Here the opponent
+# captures the perspective's vantage tile — fogging a cell it had seen — then
+# the perspective retakes it.
+#
+# Board (3x4), idx = r*4 + c:
+#
+#   row 0:  G1  ·   ·   X
+#   row 1:  ·   ·   ·   V
+#   row 2:  G0  ·   ·   ·
+#
+#   G0  perspective general (2, 0), owned every tick.
+#   G1  opp general (0, 0), never enters perspective vision.
+#   V   vantage (1, 3): perspective owns it at t=0 and t=3; Moore(V) covers X.
+#   X   tracked cell (0, 3): opp-owned w/ army 7 at t=0, then neutral + fogged.
+# ===========================================================================
+
+H2, W2 = 3, 4
+
+
+def _c2(r: int, c: int) -> int:
+    return r * W2 + c
+
+
+@pytest.fixture(scope="module")
+def sim_fog() -> dict[str, np.ndarray]:
+    T2, HW2 = 4, H2 * W2
+    G0, G1, V, X = _c2(2, 0), _c2(0, 0), _c2(1, 3), _c2(0, 3)
+
+    # t=1: opp captures the vantage V → X drops to fog (and X itself vacates,
+    # turning neutral, so last_seen_* can be shown to hold the STALE value).
+    # t=3: perspective retakes V → X re-enters vision.
+    persp_owned = [[G0, V], [G0], [G0], [G0, V]]
+    opp_owned = [[G1, X], [G1, V], [G1, V], [G1]]
+
+    ownership = np.full((T2, HW2), -1, dtype=np.int8)  # default: neutral
+    armies = np.zeros((T2, HW2), dtype=np.int16)
+    for t in range(T2):
+        for c in persp_owned[t]:
+            ownership[t, c], armies[t, c] = PERSPECTIVE, 10
+        for c in opp_owned[t]:
+            ownership[t, c], armies[t, c] = OPP, 1
+    armies[0, X] = 7  # distinctive army on X the one tick it's seen
+
+    return {
+        "ownership": ownership,
+        "armies": armies,
+        "mountains": np.array([], dtype=np.int32),
+        "initial_cities": np.array([], dtype=np.int32),
+        "initial_generals": np.array([G0, G1], dtype=np.int32),
+        "cities": np.array([], dtype=np.int32),
+        "cities_present_at": np.array([], dtype=np.int32),
+        "capture_events": np.zeros((0, 3), dtype=np.int32),
+        "map_width": np.asarray(W2, dtype=np.int32),
+        "map_height": np.asarray(H2, dtype=np.int32),
+    }
+
+
+def _walk_fog(sim_fog: dict[str, np.ndarray], target_t: int):
+    """init_memory + step_memory for t=0..target_t on the 3x4 fog board."""
+    state = init_memory(sim_fog, PERSPECTIVE, H2, W2, OBS_CONFIG_DEFAULTS, P=P_FIXTURE)
+    for t in range(target_t + 1):
+        vis = compute_visibility(sim_fog["ownership"][t], PERSPECTIVE, H2, W2)
+        step_memory(state, sim_fog, t, vis, PERSPECTIVE, H2, W2, P=P_FIXTURE)
+    return state
+
+
+# ===========================================================================
+# Checkpoint: a cell is seen, then fogged — memory holds the stale value while
+# the staleness counter climbs.
+# ===========================================================================
+
+
+def test_fog_memory_holds_stale_value(sim_fog):
+    # t=0 — X seen: opp-owned, army 7.
+    s0 = _walk_fog(sim_fog, 0)
+    assert s0.historically_seen[0, 3]
+    assert s0.last_seen_owner[0, 3] == OPP
+    assert s0.last_seen_armies[0, 3] == 7
+    assert s0.turns_since_seen[0, 3] == 0
+
+    # t=1 — vantage lost → X fogged. Memory holds the STALE value, not truth
+    # (X is now neutral with 0 army), and the staleness counter starts.
+    s1 = _walk_fog(sim_fog, 1)
+    vis1 = compute_visibility(sim_fog["ownership"][1], PERSPECTIVE, H2, W2)
+    assert s1.historically_seen[0, 3]      # remembered...
+    assert not vis1[0, 3]                   # ...but not currently visible
+    assert s1.last_seen_owner[0, 3] == OPP  # stale (true owner now neutral, -1)
+    assert s1.last_seen_armies[0, 3] == 7   # stale (true army now 0)
+    assert s1.turns_since_seen[0, 3] == 1   # increment path: 0 → 1
+
+    # t=2 — still fogged → counter keeps climbing.
+    s2 = _walk_fog(sim_fog, 2)
+    assert s2.last_seen_owner[0, 3] == OPP
+    assert s2.turns_since_seen[0, 3] == 2
+
+
+# ===========================================================================
+# Checkpoint: re-sighting a fogged cell resets the counter and overwrites the
+# remembered owner/army with current truth.
+# ===========================================================================
+
+
+def test_fog_memory_resets_on_resight(sim_fog):
+    # t=3 — perspective retakes the vantage → X visible again.
+    s3 = _walk_fog(sim_fog, 3)
+    vis3 = compute_visibility(sim_fog["ownership"][3], PERSPECTIVE, H2, W2)
+    assert vis3[0, 3]
+    assert s3.turns_since_seen[0, 3] == 0   # reset on re-sight
+    assert s3.last_seen_owner[0, 3] == -1   # overwritten with truth (now neutral)
+    assert s3.last_seen_armies[0, 3] == 0
