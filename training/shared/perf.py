@@ -94,6 +94,27 @@ _APPLE_PEAKS_FP32: dict[str, float] = {
     "Apple M4 Max": 18.4,
 }
 
+# Peak FP16 *tensor-core* TFLOPS, DENSE (no structured sparsity), FP32-accumulate
+# — the regime PyTorch AMP fp16 training actually runs in, so this is the right
+# MFU denominator for our fp16 runs. The fp32 table above is the WRONG one for
+# fp16 work: tensor cores deliver ~16x the fp32-ALU peak, so MFU-vs-fp32 reads
+# well over 100% once the GPU is actually busy.
+#
+# Dense, NOT the headline "with sparsity" figure (2x larger, irrelevant to our
+# dense training). Sourced from NVIDIA datasheets / vendor product guides:
+#   T4    65    (Turing — no sparsity; 65 is the FP16/FP32-mixed figure)
+#   L4   121    (242 with sparsity — Lenovo/NVIDIA L4 product guide)
+#   A100 312    (624 with sparsity — A100 datasheet)
+#   H100 989.5  (1979 with sparsity — H100 SXM/HBM3 datasheet)
+# Caveat: substring "H100" assumes the SXM/HBM3 part (what Modal provisions); the
+# PCIe H100 is ~756 dense. Refine the key if a PCIe H100 ever shows up.
+_CUDA_PEAKS_FP16: dict[str, float] = {
+    "Tesla T4": 65.0,
+    "L4":       121.0,
+    "A100":     312.0,
+    "H100":     989.5,
+}
+
 
 def _apple_chip_name() -> str | None:
     """Return e.g. `"Apple M1 Max"` on macOS, or None on other platforms / failure.
@@ -136,6 +157,24 @@ def peak_tflops_fp32(device: torch.device) -> float | None:
             if needle in chip:
                 return tflops
         return None
+    return None
+
+
+def peak_tflops_fp16(device: torch.device) -> float | None:
+    """Peak dense FP16 tensor-core TFLOPS for a CUDA device, or None if unknown.
+
+    CUDA-only by design: this is the MFU denominator for fp16 AMP training (what
+    `precision=auto` selects on CUDA). MPS/CPU return None — there's no Apple
+    tensor-core figure we'd trust as a denominator, and CPU MFU isn't a useful
+    framing. Substring-matched against `get_device_name`, same as the fp32 table.
+    """
+    if device.type != "cuda":
+        return None
+    idx = device.index if device.index is not None else 0
+    name = torch.cuda.get_device_name(idx)
+    for needle, tflops in _CUDA_PEAKS_FP16.items():
+        if needle in name:
+            return tflops
     return None
 
 

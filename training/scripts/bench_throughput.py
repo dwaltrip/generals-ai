@@ -162,13 +162,16 @@ def bench_gpu_ceiling(
     from bc.loss import bc_loss
     from bc.model import BCModel
     from bc.model_config import build_model_cfg
-    from shared.perf import compute_mfu, peak_tflops_fp32
+    from shared.perf import compute_mfu, peak_tflops_fp16, peak_tflops_fp32
 
     # Fixed input shapes -> autotune the best kernels once, reuse them. Correct
     # for this workload; note that train.py does NOT set this today.
     torch.backends.cudnn.benchmark = True
     device = torch.device("cuda")
     cuda_name = torch.cuda.get_device_name(0)
+    # fp16 tensor-core peak is the right MFU denominator for our fp16 AMP work;
+    # fp32 is kept only as a secondary reference (it reads >100% once busy).
+    peak_fp16 = peak_tflops_fp16(device)
     peak_fp32 = peak_tflops_fp32(device)
     amp_dtype = torch.float16 if precision == "fp16" else None
 
@@ -219,6 +222,8 @@ def bench_gpu_ceiling(
 
                 sps = n_steps * B / elapsed
                 achieved_tflops = sps * flops_per_sample / 1e12
+                mfu_fp16 = compute_mfu(sps, flops_per_sample, peak_fp16)
+                mfu_fp32 = compute_mfu(sps, flops_per_sample, peak_fp32)
                 rows.append({
                     "width": label, "outer_width": o, "batch_size": B,
                     "params": n_params, "flops_per_sample": flops_per_sample,
@@ -226,8 +231,8 @@ def bench_gpu_ceiling(
                     "step_ms": round(elapsed / n_steps * 1e3, 2),
                     "n_steps": n_steps,
                     "achieved_tflops": round(achieved_tflops, 2),
-                    "mfu_fp32": (round(compute_mfu(sps, flops_per_sample, peak_fp32), 4)
-                                 if peak_fp32 is not None else None),
+                    "mfu_fp16": round(mfu_fp16, 4) if mfu_fp16 is not None else None,
+                    "mfu_fp32": round(mfu_fp32, 4) if mfu_fp32 is not None else None,
                     "oom": False,
                 })
             except (torch.cuda.OutOfMemoryError, RuntimeError) as e:
@@ -241,7 +246,10 @@ def bench_gpu_ceiling(
                 gc.collect()
                 torch.cuda.empty_cache()
 
-    return {"gpu": gpu_label, "cuda_name": cuda_name, "peak_fp32": peak_fp32, "rows": rows}
+    return {
+        "gpu": gpu_label, "cuda_name": cuda_name,
+        "peak_fp16": peak_fp16, "peak_fp32": peak_fp32, "rows": rows,
+    }
 
 
 # ======================================================================
@@ -404,15 +412,15 @@ def gpu_ceiling(
     results = [h.get() for _, h in handles]
 
     for r in results:
-        peak = r["peak_fp32"]
-        peak_str = f"{peak} TFLOPS fp32-peak" if peak is not None else "peak unknown"
+        peak = r["peak_fp16"]
+        peak_str = f"{peak} TFLOPS fp16-peak" if peak is not None else "fp16 peak unknown"
         print(f"=== {r['gpu']}  ({r['cuda_name']}, {peak_str}) ===")
-        print(f"  {'width':>6} {'bs':>5} {'sps':>9} {'step_ms':>8} {'TFLOPS':>8} {'MFU(fp32)':>10}")
+        print(f"  {'width':>6} {'bs':>5} {'sps':>9} {'step_ms':>8} {'TFLOPS':>8} {'MFU(fp16)':>10}")
         for row in r["rows"]:
             if row.get("oom"):
                 print(f"  {row['width']:>6} {row['batch_size']:>5} {'OOM':>9}")
                 continue
-            mfu = f"{row['mfu_fp32'] * 100:.1f}%" if row["mfu_fp32"] is not None else "n/a"
+            mfu = f"{row['mfu_fp16'] * 100:.1f}%" if row["mfu_fp16"] is not None else "n/a"
             print(f"  {row['width']:>6} {row['batch_size']:>5} {row['samples_per_sec']:>9,.0f} "
                   f"{row['step_ms']:>8} {row['achieved_tflops']:>8} {mfu:>10}")
         print()
