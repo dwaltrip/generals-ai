@@ -34,9 +34,8 @@ Both write a JSON record under `training/data/bench/` and print a table.
 
 Caveats baked into the numbers, surfaced in the output:
   - Precision is fp16 AMP (what `precision=auto` resolves to on CUDA), matching
-    real runs. MFU is reported against the **fp32** peak table in `shared.perf`
-    (the only one we have sourced); since the work runs on fp16 tensor cores,
-    true tensor-core utilization is a good deal lower than the printed MFU.
+    real runs. MFU is reported against both the fp16 and fp32 tensor-core peak
+    tables in `shared.perf`; fp16 is the appropriate denominator for AMP work.
   - `cudnn.benchmark=True` is set here (correct for our fixed 32x32 shapes) but
     `train.py` does NOT set it today — so realizing this ceiling means enabling
     it there too. Flagged in the output.
