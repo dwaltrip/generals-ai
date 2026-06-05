@@ -45,7 +45,6 @@ mask is the only lever.
 
 from __future__ import annotations
 
-from collections import deque
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -129,45 +128,67 @@ def compute_or_get(
     return distances
 
 
+def _log_scale_dist(dist_2d: np.ndarray) -> np.ndarray:
+    """Log-scale a raw integer BFS-distance array, preserving the -1 sentinel
+    for unreachable cells.
+
+    `np.maximum(x, 0)` before log1p suppresses the "log of negative" warning
+    for cells where the -1 sentinel will be substituted by np.where anyway.
+    """
+    dist_f = dist_2d.astype(np.float32)
+    safe = np.maximum(dist_f, 0)
+    return np.where(dist_f >= 0, np.log1p(safe), -1.0).astype(np.float32)
+
+
 def _bfs(source: int, known_passable_flat: np.ndarray, H: int, W: int) -> np.ndarray:
     """
-    Plain 4-connected BFS on a [H*W] passable mask.
+    Layered 4-connected BFS — one numpy wavefront per distance layer.
+
+    Each iteration expands the current frontier in all four cardinal
+    directions at once via boundary-aware slice assignment (same pattern as
+    `visibility.compute_visibility`'s Moore expansion, restricted to
+    4-connected). Loop count is O(diameter) instead of O(cells), so the
+    Python interpreter tax is per-layer, not per-cell.
+
+    `dist[source] = 0` unconditionally — even if the source cell isn't itself
+    in `known_passable_flat`. The wavefront only propagates *into* passable
+    cells, so neighbors of a non-passable source are still reached correctly
+    (matches the structures-in-fog edge case where a general's cell briefly
+    sits in `structures_in_fog` during early-game initialization).
 
     Returns log-scaled float32 [H, W] distance array. Unreachable cells are
     encoded as -1.0 (post-log sentinel — never feed -1 into log1p).
-
-    Implementation note: Python-level BFS loop is fine at our scale (~1024
-    cells, ~tens of recomputes per game thanks to caching). A vectorized
-    bellman-ford or scipy.sparse.csgraph.shortest_path would be faster but
-    adds a dependency for ~no measurable benefit when cache hit rate is
-    90%+ over the full corpus.
     """
-    HW = H * W
-    dist = np.full(HW, UNREACHABLE, dtype=np.int32)
+    passable_2d = known_passable_flat.reshape(H, W)
+    dist = np.full((H, W), UNREACHABLE, dtype=np.int32)
 
-    # Walk from the source if it's itself passable; otherwise start the
-    # frontier as the immediate passable neighbors (handles the case where the
-    # general's cell is the source even though structures_in_fog might briefly
-    # mask it during early-game initialization). Generals are passable in v1
-    # so source is normally in the passable set.
-    dist[source] = 0
-    frontier: deque[int] = deque([source])
+    sr, sc = divmod(source, W)
+    dist[sr, sc] = 0
 
-    while frontier:
-        cell = frontier.popleft()
-        d = dist[cell]
-        r, c = divmod(cell, W)
-        for nr, nc in ((r - 1, c), (r + 1, c), (r, c - 1), (r, c + 1)):
-            if not (0 <= nr < H and 0 <= nc < W):
-                continue
-            ncell = nr * W + nc
-            if known_passable_flat[ncell] and dist[ncell] == UNREACHABLE:
-                dist[ncell] = d + 1
-                frontier.append(ncell)
+    visited = np.zeros((H, W), dtype=bool)
+    visited[sr, sc] = True
+    frontier = np.zeros((H, W), dtype=bool)
+    frontier[sr, sc] = True
 
-    # Log-scale + sentinel passthrough. `np.maximum(x, 0)` before log1p suppresses
-    # the "log of negative" warning for cells where the -1 sentinel will be
-    # substituted by np.where anyway.
-    dist_f = dist.astype(np.float32).reshape(H, W)
-    safe = np.maximum(dist_f, 0)
-    return np.where(dist_f >= 0, np.log1p(safe), -1.0).astype(np.float32)
+    d = 0
+    while True:
+        # 4-connected dilation of `frontier`. Each line shifts the frontier
+        # one step in one cardinal direction and ORs it into the neighbor
+        # mask — "if (r+1, c) was in frontier, then (r, c) is its N neighbor",
+        # etc. Boundary slices drop cells whose neighbor would be off-board.
+        neighbors = np.zeros((H, W), dtype=bool)
+        neighbors[:-1, :] = frontier[1:, :]    # N (frontier-cell is south of us)
+        neighbors[1:, :] |= frontier[:-1, :]   # S
+        neighbors[:, :-1] |= frontier[:, 1:]   # W
+        neighbors[:, 1:] |= frontier[:, :-1]   # E
+
+        new_layer = neighbors & passable_2d & ~visited
+        if not new_layer.any():
+            break
+
+        d += 1
+        dist[new_layer] = d
+        visited |= new_layer
+        frontier = new_layer
+
+    return _log_scale_dist(dist)
