@@ -69,9 +69,10 @@ def test_encode_ownership_transition_all_categories():
 def test_encode_army_delta_production_subtraction():
     """Production subtraction at per-2-step + land-tick boundaries (5.05-1 §G).
 
-    Each scenario is crafted so `raw_delta - expected_prod` is either 0 (when
-    production should be subtracted in full) or +1 (when not), making the
-    encoded outputs either 0 or log(2) — easy to assert exactly.
+    `_encode_army_delta` returns the raw adjusted delta (`raw - prod`); the
+    log scaling lives in `_signed_log` at the call site. Each scenario is
+    crafted so adjusted is either 0 (production fully subtracted) or +1
+    (not), checked directly without re-deriving the log.
     """
     # --- Scenario A: t_newer=50 (per-2-step AND land-tick both fire) ---
     # cell 0: city  owned → prod=2 (city + land-tick), raw=2 → adj=0
@@ -85,12 +86,12 @@ def test_encode_army_delta_production_subtraction():
     arm_newer = np.array([[12, 12, 11, 11, 0, 12]], dtype=np.int16)
     city_mask = np.array([[True, False, False, True, False, False]])
     general_mask = np.array([[False, True, False, False, False, False]])
-    expected = np.array([[0.0, 0.0, 0.0, np.log(2), 0.0, np.log(2)]], dtype=np.float32)
-    np.testing.assert_allclose(
+    expected = np.array([[0.0, 0.0, 0.0, 1.0, 0.0, 1.0]], dtype=np.float32)
+    np.testing.assert_array_equal(
         _encode_army_delta(
             arm_newer, arm_older, own_newer, 50, city_mask, general_mask,
         ),
-        expected, atol=1e-6,
+        expected,
     )
 
     # --- Scenario B: t_newer=2 (per-2-step only; not land-tick) ---
@@ -102,12 +103,12 @@ def test_encode_army_delta_production_subtraction():
     arm_newer = np.array([[11, 11, 11]], dtype=np.int16)
     city_mask = np.array([[True, False, False]])
     general_mask = np.array([[False, False, True]])
-    expected = np.array([[0.0, np.log(2), 0.0]], dtype=np.float32)
-    np.testing.assert_allclose(
+    expected = np.array([[0.0, 1.0, 0.0]], dtype=np.float32)
+    np.testing.assert_array_equal(
         _encode_army_delta(
             arm_newer, arm_older, own_newer, 2, city_mask, general_mask,
         ),
-        expected, atol=1e-6,
+        expected,
     )
 
     # --- Scenario C: t_newer=3 (odd → neither rule fires) ---
@@ -117,10 +118,10 @@ def test_encode_army_delta_production_subtraction():
     arm_newer = np.array([[11]], dtype=np.int16)
     city_mask = np.array([[True]])
     general_mask = np.array([[False]])
-    expected = np.array([[np.log(2)]], dtype=np.float32)
-    np.testing.assert_allclose(
+    expected = np.array([[1.0]], dtype=np.float32)
+    np.testing.assert_array_equal(
         _encode_army_delta(
             arm_newer, arm_older, own_newer, 3, city_mask, general_mask,
         ),
-        expected, atol=1e-6,
+        expected,
     )

@@ -183,7 +183,7 @@ def _profile_game(
 
         # ---- cat 10: dense history ----
         a = time.perf_counter_ns()
-        c10 = _cat_dense_history(state, sim, t, perspective_slot, opp_slots, H, W)
+        c10 = _cat_dense_history(state, H, W)
         b = time.perf_counter_ns()
         totals["cat10_dense_history"] += b - a
 

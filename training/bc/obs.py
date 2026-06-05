@@ -182,16 +182,25 @@ class MemoryState:
       - Per-opponent: `opp_contacted` (binary monotonic), `opp_captured_by`
         (-1=alive, 0..7=raw slot of captor).
       - Source pins: `general_locations` (-1 = unknown).
-      - Dense-history buffer: bounded deque of `PerspectiveView` snapshots,
-        length `obs_cfg.dense_history_n + 1`.
-      - Obs-encoder config: `obs_cfg`, the static encoder hyperparameters for
-        this walk (read by `build_obs`).
+      - Dense-history: `prev_view` (one snapshot, used to diff against the
+        next tick's snapshot inside `step_memory`) plus `transition_buf` /
+        `army_delta_buf` — bounded deques of already-encoded `[H, W] float32`
+        channels, length `obs_cfg.dense_history_n`. `_cat_dense_history`
+        reads these directly.
+      - Static-per-walk: `obs_cfg`, `perspective_slot`, `opp_slots`. The
+        per-opp channel groupings index `opp_slots` consistently across
+        every cat that emits them.
     """
 
-    # ---- Obs-encoder config for this walk ----
-    # Static hyperparameters (currently `dense_history_n`); set at init and read
-    # by build_obs. Sizes `view_buf` and the dense-history channel tail.
+    # ---- Static-per-walk identifiers ----
+    # Encoder hyperparameters (currently `dense_history_n`); sizes the
+    # transition/army-delta buffers and the dense-history channel tail.
     obs_cfg: ObsConfig
+    # Raw slot id of the perspective player and the canonical 7 opponents.
+    # `opp_slots = canonical_slot_order(perspective_slot)[1:]`; pinned at init
+    # so per-frame helpers don't recompute it.
+    perspective_slot: int
+    opp_slots: list[int]
 
     # ---- Static within a game ----
     # bool [H, W]: cells the agent knows are *some* structure (mountain, city,
@@ -255,13 +264,20 @@ class MemoryState:
     # of fog.
     opp_captured_by: np.ndarray
 
-    # ---- Dense-history buffer (bounded deque of length dense_history_n+1) ----
-    # Each entry is a perspective-filtered snapshot at one tick. After
-    # `step_memory` at tick t, the right end is the view at tick t. Fog cells
-    # in each view carry the OWN_FOG sentinel (see `PerspectiveView`); this is
-    # what keeps the dense-history channels fog-respecting per game-mechanics §5.
-    # `maxlen` is set from `obs_cfg.dense_history_n` in `_init_memory_common`.
-    view_buf: deque = field(default_factory=deque)
+    # ---- Dense-history caches (advanced by step_memory) ----
+    # The previous tick's perspective-filtered snapshot. Held so `step_memory`
+    # can diff (own_t, armies_t) against (own_t-1, armies_t-1) and emit the
+    # encoded pair into the buffers below. None before the first tick is
+    # processed; non-None thereafter.
+    prev_view: PerspectiveView | None = None
+    # Encoded ownership-transition channels, one per (newer, older) snapshot
+    # pair, oldest-first. Each entry is `_encode_ownership_transition * both_observed`
+    # — a float32 [H, W] ready for `_cat_dense_history` to read straight out.
+    # `maxlen = obs_cfg.dense_history_n`.
+    transition_buf: deque = field(default_factory=deque)
+    # Encoded production-subtracted army-delta channels, paired 1:1 with
+    # `transition_buf`. Each entry is `_encode_army_delta * both_observed`.
+    army_delta_buf: deque = field(default_factory=deque)
 
 
 def _init_memory_common(
@@ -296,6 +312,8 @@ def _init_memory_common(
 
     state = MemoryState(
         obs_cfg=obs_cfg,
+        perspective_slot=perspective_slot,
+        opp_slots=canonical_slot_order(perspective_slot, P)[1:],
         is_structure=is_structure,
         general_locations=general_locations,
         land_count_history=[],
@@ -310,7 +328,8 @@ def _init_memory_common(
         opp_has_seen=np.zeros((P, H, W), dtype=bool),
         opp_contacted=np.zeros(P, dtype=bool),
         opp_captured_by=np.full(P, -1, dtype=np.int8),
-        view_buf=deque(maxlen=obs_cfg.dense_history_n + 1),
+        transition_buf=deque(maxlen=obs_cfg.dense_history_n),
+        army_delta_buf=deque(maxlen=obs_cfg.dense_history_n),
     )
 
     # Mark own general as known from t=0.
@@ -387,9 +406,9 @@ def init_memory_live_fog_only(
     """Live `init_memory_live` for consumers that track fog memory but never
     encode the dense-history obs channels (e.g. the heuristic eval bot's
     `WorldModel`). The obs-encoder config is immaterial to them, so this fills
-    the default — they read `MemoryState`'s fog/scoreboard fields, never
-    `view_buf`. NN inference must use `init_memory_live` with the checkpoint's
-    own `obs_cfg` instead, so its obs matches the model's `in_ch`.
+    the default — they read `MemoryState`'s fog/scoreboard fields, never the
+    dense-history buffers. NN inference must use `init_memory_live` with the
+    checkpoint's own `obs_cfg` instead, so its obs matches the model's `in_ch`.
     """
     return init_memory_live(sim, perspective_slot, H, W, OBS_CONFIG_DEFAULTS, P)
 
@@ -505,14 +524,69 @@ def step_memory(
             captured = int(ev[2])
             state.opp_captured_by[captured] = captor
 
-    # Dense-history buffer: append a perspective-filtered snapshot of the
-    # current tick. Fog cells get OWN_FOG / 0 — so anything downstream that
-    # reads from view_buf sees only what the perspective observed at each
-    # tick, not the global ground truth. Bounded deque drops the oldest
-    # entry automatically once length exceeds dense_history_n + 1.
-    state.view_buf.append(make_perspective_view(own_t, armies_t, vis))
+    # Dense-history: build the current tick's perspective-filtered snapshot
+    # (fog cells get OWN_FOG / 0 so the encoded channels stay fog-respecting
+    # per game-mechanics §5), then — if there's a previous snapshot to pair
+    # with — diff against it once and push the encoded transition + army
+    # delta into the rolling buffers `_cat_dense_history` reads from.
+    new_view = make_perspective_view(own_t, armies_t, vis)
+    if state.prev_view is not None:
+        _append_dense_history_pair(state, sim, t, new_view, H, W)
+    state.prev_view = new_view
 
     return graph_grew
+
+
+def _append_dense_history_pair(
+    state: MemoryState,
+    sim: dict[str, np.ndarray],
+    t: int,
+    new_view: PerspectiveView,
+    H: int,
+    W: int,
+) -> None:
+    """Encode the (new_view, state.prev_view) snapshot pair into transition +
+    army-delta channels and append to the rolling buffers. Caller guarantees
+    `state.prev_view is not None`.
+
+    Inputs to both encoders are stable once the snapshots are pinned, so the
+    pair never needs recomputing across future frames — the bounded deques
+    drop oldest as the window slides.
+    """
+    prev_view = state.prev_view
+    assert prev_view is not None  # for type-narrowing; caller-guaranteed
+    own_newer, own_older = new_view.own, prev_view.own
+    armies_newer, armies_older = new_view.armies, prev_view.armies
+
+    # both_observed: cells the perspective saw at both endpoints. Anything
+    # outside this mask emits 0 in both channels (5.05-1 §7.2).
+    both_observed = (
+        (own_newer != OWN_FOG) & (own_older != OWN_FOG)
+    ).astype(np.float32)
+
+    transition = _encode_ownership_transition(
+        own_newer, own_older, state.perspective_slot, state.opp_slots,
+    )
+
+    # City/general masks at t — same derivation as the `cities_at_t` block in
+    # step_memory's known_city update. Feeds the production-subtraction in
+    # `_encode_army_delta`.
+    HW = H * W
+    cities_at_t_flat = sim["cities"][sim["cities_present_at"] <= t]
+    city_mask_flat = np.zeros(HW, dtype=bool)
+    city_mask_flat[cities_at_t_flat] = True
+    initial_generals_flat = np.zeros(HW, dtype=bool)
+    initial_generals_flat[sim["initial_generals"]] = True
+    city_mask = city_mask_flat.reshape(H, W)
+    general_mask = (initial_generals_flat & ~city_mask_flat).reshape(H, W)
+
+    delta = _signed_log(_encode_army_delta(
+        armies_newer, armies_older, own_newer, t,
+        city_mask, general_mask,
+    ))
+
+    state.transition_buf.append(transition * both_observed)
+    state.army_delta_buf.append(delta * both_observed)
 
 
 # ---------------------------------------------------------------------------
@@ -805,19 +879,27 @@ def _encode_army_delta(
     city_mask: np.ndarray,
     general_mask: np.ndarray,
 ) -> np.ndarray:
-    """Production-subtracted signed-log army delta (5.05-1 §G + §7.2).
+    """Production-subtracted raw army delta (5.05-1 §G + §7.2). Caller
+    applies the signed-log channel encoding via `_signed_log`.
 
     Subtracts the per-cell expected production applied between
-    `snapshot[t_newer-1]` and `snapshot[t_newer]` before encoding. Production
-    rules (sim-core README — production fires post-step-increment):
+    `snapshot[t_newer-1]` and `snapshot[t_newer]`. Production rules
+    (sim-core README — production fires post-step-increment):
       - At `t_newer % 2 == 0`: each owned general or city gains +1 army.
       - At `t_newer % 50 == 0` (land tick): each owned cell gains +1 army.
 
     Subtraction is universal across cell types — at combat cells the +1/+2
-    correction is dwarfed by the combat-magnitude delta, so the encoding
-    stays dominated by the combat signal where it matters. The point of the
-    subtraction is to remove peacetime production noise so the channel
-    highlights non-trivial events (combat, expansion).
+    correction is dwarfed by the combat-magnitude delta, so the encoded
+    channel stays dominated by the combat signal where it matters. The point
+    of the subtraction is to remove peacetime production noise so the
+    channel highlights non-trivial events (combat, expansion).
+
+    Returns float32 [H, W]: raw signed adjusted delta. Tests can specify
+    expected delta values directly without re-deriving the log scaling.
+
+    TODO: hand-coded fixtures for this function — small boards, picked ticks
+    that exercise the production cases (t%2==0 only, t%50==0 only, both,
+    neither), check the adjusted-delta values cell-by-cell against expected.
     """
     is_owned = own_newer >= 0
     prod = np.zeros_like(armies_newer, dtype=np.float32)
@@ -826,8 +908,15 @@ def _encode_army_delta(
     if t_newer % 50 == 0:
         prod += is_owned.astype(np.float32)
     raw_delta = armies_newer.astype(np.float32) - armies_older.astype(np.float32)
-    adjusted = raw_delta - prod
-    return (np.sign(adjusted) * np.log1p(np.abs(adjusted))).astype(np.float32)
+    return raw_delta - prod
+
+
+def _signed_log(x: np.ndarray) -> np.ndarray:
+    """`sign(x) * log1p(|x|)`, the signed-log channel encoding used for the
+    army-delta channel and any future signed magnitudes that want a soft
+    compression. Identity at 0; ≈ log magnitude for large |x|.
+    """
+    return (np.sign(x) * np.log1p(np.abs(x))).astype(np.float32)
 
 
 def _encode_ownership_transition(
@@ -859,72 +948,30 @@ def _encode_ownership_transition(
 
 
 def _cat_dense_history(
-    state: MemoryState,
-    sim: dict[str, np.ndarray],
-    t: int,
-    perspective_slot: int,
-    opp_slots: list[int],
-    H: int, W: int,
+    state: MemoryState, H: int, W: int,
 ) -> list[np.ndarray]:
     # Cat 10: Dense recent spatial history (2N channels, N=obs_cfg.dense_history_n).
-    # ownership_transition[t-k]: categorical encoding keyed on the older
-    # owner (see `_encode_ownership_transition`).
-    # army_delta[t-k]: production-subtracted signed-log army change applied
-    # between snapshot[t_newer-1] and snapshot[t_newer] (see
-    # `_encode_army_delta`).
+    # Each pair (transition, army-delta) is encoded once by `step_memory` when
+    # the snapshot at its newer endpoint is appended, then read out of the
+    # rolling buffers here. See `_append_dense_history_pair` for the per-pair
+    # encoding and `_encode_ownership_transition` / `_encode_army_delta` for
+    # the channel definitions.
     #
-    # Inputs come from `state.view_buf` — each entry is a `PerspectiveView`,
-    # so fog cells carry the OWN_FOG sentinel rather than ground truth. We
-    # multiply both encoder outputs by a `both_observed` mask so any cell
-    # not visible at both endpoints encodes as 0, matching 5.05-1 §7.2.
-    own_transitions = []
-    army_deltas = []
-    buf_len = len(state.view_buf)  # how many snapshots we have so far
-    HW = H * W
-    # initial_generals as a flat mask, reused across k. The general→city
-    # transition on capture is handled by subtracting cities_at_t_flat below.
-    initial_generals_flat = np.zeros(HW, dtype=bool)
-    initial_generals_flat[sim["initial_generals"]] = True
-    for k in range(1, state.obs_cfg.dense_history_n + 1):
-        # view_buf is right-aligned at t. Snapshot at t-(k-1) = view_buf[-k];
-        # snapshot at t-k = view_buf[-k-1]. We need both for a transition.
-        idx_newer = buf_len - k
-        idx_older = buf_len - k - 1
-        if idx_older < 0:
-            # not enough history yet (early in the walk)
-            own_transitions.append(np.zeros((H, W), dtype=np.float32))
-            army_deltas.append(np.zeros((H, W), dtype=np.float32))
-            continue
-        view_newer = state.view_buf[idx_newer]
-        view_older = state.view_buf[idx_older]
-        own_newer = view_newer.own
-        own_older = view_older.own
-        armies_newer = view_newer.armies
-        armies_older = view_older.armies
-        # both_observed: cells where the perspective had direct vision at
-        # both the older and newer snapshot. Cells outside this mask emit 0
-        # in both channels — per 5.05-1 §7.2 ("newly-visible: zero") and by
-        # extension to the ownership channel for the same reason.
-        both_observed = (
-            (own_newer != OWN_FOG) & (own_older != OWN_FOG)
-        ).astype(np.float32)
-        transition = _encode_ownership_transition(
-            own_newer, own_older, perspective_slot, opp_slots,
-        )
-        own_transitions.append(transition * both_observed)
-        # City/general masks at t_newer — feed the production-subtraction.
-        # Same derivation as step_memory's known_city update logic.
-        t_newer = t - (k - 1)
-        cities_at_t_flat = sim["cities"][sim["cities_present_at"] <= t_newer]
-        city_mask_flat = np.zeros(HW, dtype=bool)
-        city_mask_flat[cities_at_t_flat] = True
-        general_mask = (initial_generals_flat & ~city_mask_flat).reshape(H, W)
-        city_mask = city_mask_flat.reshape(H, W)
-        delta = _encode_army_delta(
-            armies_newer, armies_older, own_newer, t_newer,
-            city_mask, general_mask,
-        )
-        army_deltas.append(delta * both_observed)
+    # `transition_buf` / `army_delta_buf` are right-aligned at the current
+    # tick: index [-1] is the (t, t-1) pair, [-2] is (t-1, t-2), etc. Early
+    # in a walk the buffers haven't filled yet, so a missing slot emits a
+    # zero channel — same shape the loop-based implementation produced.
+    n = state.obs_cfg.dense_history_n
+    buf_len = len(state.transition_buf)
+    zero = np.zeros((H, W), dtype=np.float32)
+    own_transitions = [
+        state.transition_buf[buf_len - k] if buf_len - k >= 0 else zero
+        for k in range(1, n + 1)
+    ]
+    army_deltas = [
+        state.army_delta_buf[buf_len - k] if buf_len - k >= 0 else zero
+        for k in range(1, n + 1)
+    ]
     return [*own_transitions, *army_deltas]
 
 
@@ -987,7 +1034,7 @@ def build_obs(
         *_cat_opp_broadcast(state, t, opp_slots, H, W),
         *_cat_scoreboard(state, t, opp_slots, H, W),
         *_cat_contact_capture(state, perspective_slot, opp_slots, H, W),
-        *_cat_dense_history(state, sim, t, perspective_slot, opp_slots, H, W),
+        *_cat_dense_history(state, H, W),
     ]
 
     n_channels = obs_channel_count(state.obs_cfg.dense_history_n)

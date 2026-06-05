@@ -113,6 +113,8 @@ def _make_fixture(total_army: int, *, enemy_city_visible: bool = True):
 
     state = MemoryState(
         obs_cfg=OBS_CONFIG_DEFAULTS,
+        perspective_slot=PERSPECTIVE,
+        opp_slots=[s for s in range(P) if s != PERSPECTIVE],
         is_structure=is_structure,
         general_locations=general_locations,
         land_count_history=land_count_history,
