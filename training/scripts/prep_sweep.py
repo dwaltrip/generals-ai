@@ -14,7 +14,7 @@ Example:
 from __future__ import annotations
 
 import argparse
-import copy
+import itertools
 import json
 import stat
 import sys
@@ -23,6 +23,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from bc.train_config import TrainConfig  # noqa: E402
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "packages" / "utils"))
+from utils.dict_merge import deep_merge, unflatten  # noqa: E402
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -38,25 +41,85 @@ BASE_CONFIG_FILE = "base-config.json"
 # Helpers
 # ---------------------------------------------------------------------------
 
-def deep_set(d: dict, dotted_path: str, value) -> dict:
-    """Return a deep copy of *d* with *dotted_path* set to *value*."""
-    result = copy.deepcopy(d)
-    keys = dotted_path.split(".")
-    target = result
-    for key in keys[:-1]:
-        if key not in target or not isinstance(target[key], dict):
-            target[key] = {}
-        target = target[key]
-    target[keys[-1]] = value
-    return result
-
-
 def make_label(value) -> str:
     """Derive a filesystem-safe label from a sweep value."""
     s = str(value)
     for ch in (" ", "/", "\\", ":"):
         s = s.replace(ch, "-")
     return s
+
+
+def _validate_axes(axes: dict) -> list[tuple[str, list, list[str]]]:
+    """Validate and parse axes spec. Returns [(path, values, labels), ...]
+    sorted by path depth (shallowest first)."""
+    parsed = []
+    for axis_path, axis_spec in axes.items():
+        values = axis_spec.get("values")
+        if not isinstance(values, list) or len(values) == 0:
+            raise SystemExit(
+                f"sweep.json: axis '{axis_path}' must have a non-empty 'values' list"
+            )
+        labels = axis_spec.get("labels")
+        if labels:
+            if len(labels) != len(values):
+                raise SystemExit(
+                    f"sweep.json: axis '{axis_path}' has {len(values)} values "
+                    f"but {len(labels)} labels"
+                )
+        else:
+            labels = [make_label(v) for v in values]
+        parsed.append((axis_path, values, labels))
+
+    # Shallow axes first so deep_merge applies them before deeper ones.
+    parsed.sort(key=lambda item: item[0].count("."))
+    return parsed
+
+
+def _apply_axes(
+    base_config: dict,
+    parsed_axes: list[tuple[str, list, list[str]]],
+    index: int | None = None,
+    combo: tuple | None = None,
+) -> dict:
+    """Build a resolved config by merging axis values into the base.
+
+    Pass *index* to pick that index from each axis (for validation).
+    Pass *combo* (a tuple of values, one per axis) for grid-product cells.
+    """
+    config = base_config
+    for i, (axis_path, values, _labels) in enumerate(parsed_axes):
+        value = values[index] if combo is None else combo[i]
+        config = deep_merge(config, unflatten(axis_path, value))
+    return config
+
+
+def _generate_cells(
+    base_config: dict,
+    parsed_axes: list[tuple[str, list, list[str]]],
+    configs_dir: Path,
+) -> list[tuple[str, str]]:
+    """Generate per-cell config files. Returns [(label, rel_config_path), ...]."""
+    label_lists = [labels for _, _, labels in parsed_axes]
+    value_lists = [values for _, values, _ in parsed_axes]
+
+    cells = []
+    for combo_labels, combo_values in zip(
+        itertools.product(*label_lists),
+        itertools.product(*value_lists),
+    ):
+        label = "-".join(combo_labels)
+        config = _apply_axes(base_config, parsed_axes, combo=combo_values)
+
+        config_path = configs_dir / f"{label}.json"
+        config_path.write_text(json.dumps(config, indent=2) + "\n")
+        cells.append((label, f"configs/{label}.json"))
+
+    all_labels = [label for label, _ in cells]
+    if len(set(all_labels)) != len(all_labels):
+        raise SystemExit(f"sweep.json: duplicate cell labels after grid product: "
+                         f"{sorted(l for l in all_labels if all_labels.count(l) > 1)}")
+
+    return cells
 
 
 def write_executable(path: Path, content: str) -> None:
@@ -130,31 +193,8 @@ def cmd_generate(args: argparse.Namespace) -> None:
     axes = spec.get("axes")
     if not isinstance(axes, dict) or len(axes) == 0:
         raise SystemExit("sweep.json: 'axes' must be a non-empty object")
-    if len(axes) > 1:
-        raise SystemExit(
-            "sweep.json: multi-axis sweeps are not yet supported (got "
-            f"{len(axes)} axes)"
-        )
 
-    axis_path, axis_spec = next(iter(axes.items()))
-    values = axis_spec.get("values")
-    if not isinstance(values, list) or len(values) == 0:
-        raise SystemExit(
-            f"sweep.json: axis '{axis_path}' must have a non-empty 'values' list"
-        )
-
-    labels = axis_spec.get("labels")
-    if labels:
-        if len(labels) != len(values):
-            raise SystemExit(
-                f"sweep.json: axis '{axis_path}' has {len(values)} values but "
-                f"{len(labels)} labels"
-            )
-    else:
-        labels = [make_label(v) for v in values]
-
-    if len(set(labels)) != len(labels):
-        raise SystemExit(f"sweep.json: duplicate labels: {labels}")
+    parsed_axes = _validate_axes(axes)
 
     # -- validate base config --
     for field in ("manifest", "intermediate"):
@@ -177,13 +217,12 @@ def cmd_generate(args: argparse.Namespace) -> None:
             "base-config.json: invalid fields:\n  " + "\n  ".join(errors)
         )
 
-    # Validate axis path by checking a resolved cell config.
-    sample_config = deep_set(base_config, axis_path, values[0])
-    errors = TrainConfig.validate_partial(sample_config)
+    # Validate axis paths by checking a sample resolved config.
+    sample = _apply_axes(base_config, parsed_axes, index=0)
+    errors = TrainConfig.validate_partial(sample)
     if errors:
         raise SystemExit(
-            f"axis path '{axis_path}' produces invalid config:\n  "
-            + "\n  ".join(errors)
+            "axis path(s) produce invalid config:\n  " + "\n  ".join(errors)
         )
 
     # -- warn if already launched --
@@ -199,12 +238,7 @@ def cmd_generate(args: argparse.Namespace) -> None:
     configs_dir = sweep_dir / "configs"
     configs_dir.mkdir(exist_ok=True)
 
-    cells = []
-    for label, value in zip(labels, values):
-        cell_config = deep_set(base_config, axis_path, value)
-        config_path = configs_dir / f"{label}.json"
-        config_path.write_text(json.dumps(cell_config, indent=2) + "\n")
-        cells.append((label, f"configs/{label}.json"))
+    cells = _generate_cells(base_config, parsed_axes, configs_dir)
 
     # -- generate bash scripts --
     sweep_rel = str(sweep_dir.relative_to(REPO_ROOT))
