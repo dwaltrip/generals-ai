@@ -21,7 +21,7 @@ channel-count formula).
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 
 from bc.constants import obs_channel_count
 
@@ -40,6 +40,11 @@ class ObsConfig:
     def obs_channels(self) -> int:
         """Total obs-tensor channel count implied by this config."""
         return obs_channel_count(self.dense_history_n)
+
+    @classmethod
+    def validate_partial(cls, d: dict) -> list[str]:
+        valid = {f.name for f in fields(cls)}
+        return [f"unknown ObsConfig field: {k!r}" for k in d if k not in valid]
 
     def __post_init__(self) -> None:
         if self.dense_history_n < 0:

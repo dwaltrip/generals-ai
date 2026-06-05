@@ -122,7 +122,7 @@ def _write_args_cloud(run_dir: Path, gpu: str, suffix: str = "") -> None:
 def train(*arglist: str) -> None:
     """Parse args, resolve the GPU class from the config, spawn on a Modal GPU."""
     parser = build_arg_parser()
-    parser.set_defaults(out_dir=Path("/runs"), device="cuda")
+    parser.set_defaults(out_dir=Path("/runs"))
     args = parser.parse_args(arglist)
 
     if args.resume:

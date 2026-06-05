@@ -21,9 +21,14 @@ import sys
 from datetime import UTC, datetime
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from bc.train_config import TrainConfig  # noqa: E402
+
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 SWEEPS_DIR = REPO_ROOT / "training" / "data" / "sweeps"
+
+_DISALLOWED_CONFIG_FIELDS = {"run_dir"}
 
 SWEEP_SPEC_FILE = "sweep.json"
 BASE_CONFIG_FILE = "base-config.json"
@@ -158,6 +163,28 @@ def cmd_generate(args: argparse.Namespace) -> None:
             raise SystemExit(
                 f"base-config.json: '{field}' is still a placeholder — fill it in"
             )
+
+    disallowed = _DISALLOWED_CONFIG_FIELDS & base_config.keys()
+    if disallowed:
+        raise SystemExit(
+            f"base-config.json: field(s) not allowed in sweep configs: "
+            f"{', '.join(sorted(disallowed))}"
+        )
+
+    errors = TrainConfig.validate_partial(base_config)
+    if errors:
+        raise SystemExit(
+            "base-config.json: invalid fields:\n  " + "\n  ".join(errors)
+        )
+
+    # Validate axis path by checking a resolved cell config.
+    sample_config = deep_set(base_config, axis_path, values[0])
+    errors = TrainConfig.validate_partial(sample_config)
+    if errors:
+        raise SystemExit(
+            f"axis path '{axis_path}' produces invalid config:\n  "
+            + "\n  ".join(errors)
+        )
 
     # -- warn if already launched --
     run_ids_path = sweep_dir / "run_ids.txt"

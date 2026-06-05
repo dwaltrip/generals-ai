@@ -11,7 +11,7 @@ where to look on the outputs Volume.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from datetime import UTC, datetime
 import json
 from pathlib import Path
@@ -146,6 +146,18 @@ class TrainConfig:
         if self.prefetch_factor < 1:
             raise ValueError(f"prefetch_factor must be >= 1; got {self.prefetch_factor}")
         # `arch` validates itself in `ModelConfig.__post_init__`.
+
+    @classmethod
+    def validate_partial(cls, d: dict) -> list[str]:
+        valid = {f.name for f in fields(cls)}
+        errors = []
+        for key in d:
+            if key == "arch":
+                if isinstance(d[key], dict):
+                    errors.extend(ModelConfig.validate_partial(d[key]))
+            elif key not in valid:
+                errors.append(f"unknown TrainConfig field: {key!r}")
+        return errors
 
     @classmethod
     def from_file(

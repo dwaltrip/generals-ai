@@ -25,7 +25,7 @@ dance.
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, replace
+from dataclasses import asdict, dataclass, fields, replace
 from typing import Any
 
 from bc.constants import H_PADDED, W_PADDED
@@ -71,6 +71,20 @@ class ModelConfig:
         a clear error rather than a cryptic state_dict shape mismatch.
         """
         return self.obs.obs_channels
+
+    @classmethod
+    def validate_partial(cls, d: dict) -> list[str]:
+        valid = {f.name for f in fields(cls)}
+        # in_ch appears in checkpoint arch dicts; build_model_cfg pops it.
+        valid.add("in_ch")
+        errors = []
+        for key in d:
+            if key == "obs":
+                if isinstance(d[key], dict):
+                    errors.extend(ObsConfig.validate_partial(d[key]))
+            elif key not in valid:
+                errors.append(f"unknown ModelConfig field: {key!r}")
+        return errors
 
     def __post_init__(self) -> None:
         # Coerce a dict-valued `obs` (asdict round-trip / config JSON), filling
