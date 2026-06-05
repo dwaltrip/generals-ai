@@ -66,15 +66,16 @@ image = (
     modal.Image.debian_slim(python_version="3.14")
     .uv_pip_install(requirements=[str(TRAINING_REQS)])
     .env({"OMP_NUM_THREADS": "1", "OPENBLAS_NUM_THREADS": "1", "MKL_NUM_THREADS": "1"})
-    .add_local_python_source("bc", "shared", "utils")
+    .add_local_python_source("bc", "shared", "utils", "game_types")
 )
 
 app = modal.App("bc-bench", image=image)
 parsed_replays_vol = modal.Volume.from_name("generals-ai.parsed-replays")
 
-# Reused width set — the 0.5x/1x/1.5x/2x of the 128/128/160 trunk from the
-# 5.31-3 sweep, so ceiling numbers line up with the loss-curve runs.
-DEFAULT_WIDTHS = "0.5x:64:64:80,1x:128:128:160,1.5x:192:192:240,2x:256:256:320"
+# width set — 0.5x PoC width -> 1x "full-width" (from DeepNash).
+# The 3 meaningful widths from the 5.31-3 sweep, so ceiling numbers
+# line up with the loss-curve runs.
+DEFAULT_WIDTHS = "0.5x:128:128:160,0.75x:192:192:240,1x:256:256:320"
 
 
 # ======================================================================
@@ -132,16 +133,23 @@ def bench_gpu_ceiling(
     batch_sizes: list[int],
     warmup: int,
     iters: int,
+    min_seconds: float,
     precision: str,
 ) -> dict:
     """Time the real train step over width x batch_size on one card, no data.
 
     For each cell: build the model, synthesize an on-device batch, run the
     exact `train_one_epoch` step (autocast + GradScaler + optim.step), warm up
-    (covers cuDNN autotune + allocator), then time `iters` steps inside a single
-    `cuda.synchronize()`-bracketed window. Block timing — not per-step sync —
-    because real training pipelines steps; per-step syncs would serialize and
-    understate throughput.
+    (covers cuDNN autotune + allocator), then time a window of `iters` steps OR
+    `min_seconds` wall-clock (whichever is longer) inside a single
+    `cuda.synchronize()`-bracketed region. The time floor keeps the tiny/fast
+    widths — where a fixed `iters` would be a ~100ms window — statistically
+    stable, which matters because comparing widths is the whole point.
+
+    This is the *realistic* ceiling, not a theoretical fully-pipelined one: the
+    step calls `bc_loss`, which does a per-step host sync (`n_non_pass.item()`),
+    exactly as the real loop does. So the number includes that intrinsic sync
+    rather than pretending steps pipeline with zero host involvement.
 
     Batch sizes ascend; the first OOM for a width breaks the inner loop (larger
     batches would only OOM too) and records a DNF cell.
@@ -202,18 +210,21 @@ def bench_gpu_ceiling(
                 torch.cuda.synchronize()
 
                 t0 = time.perf_counter()
-                for _ in range(iters):
+                n_steps = 0
+                while n_steps < iters or (time.perf_counter() - t0) < min_seconds:
                     train_step(model, optim, scaler, batch)
+                    n_steps += 1
                 torch.cuda.synchronize()
                 elapsed = time.perf_counter() - t0
 
-                sps = iters * B / elapsed
+                sps = n_steps * B / elapsed
                 achieved_tflops = sps * flops_per_sample / 1e12
                 rows.append({
                     "width": label, "outer_width": o, "batch_size": B,
                     "params": n_params, "flops_per_sample": flops_per_sample,
                     "samples_per_sec": round(sps, 1),
-                    "step_ms": round(elapsed / iters * 1e3, 2),
+                    "step_ms": round(elapsed / n_steps * 1e3, 2),
+                    "n_steps": n_steps,
                     "achieved_tflops": round(achieved_tflops, 2),
                     "mfu_fp32": (round(compute_mfu(sps, flops_per_sample, peak_fp32), 4)
                                  if peak_fp32 is not None else None),
@@ -246,7 +257,11 @@ def _pin_worker_threads(worker_id: int) -> None:
     torch.set_num_threads(1)
 
 
-@app.function(volumes={"/data": parsed_replays_vol}, memory=16384, timeout=60 * 30)
+# memory headroom: the largest cell (32 workers) holds prefetch_factor(2) x 32
+# collated obs batches in flight (~196 MiB each at bs=512) plus 32 per-worker
+# shuffle buffers — ~15+ GiB. Request generously so a tight host can't silently
+# page/throttle that cell and depress its rate.
+@app.function(volumes={"/data": parsed_replays_vol}, memory=32768, timeout=60 * 30)
 def bench_dataloader(
     cpu_count: float,
     num_workers: int,
@@ -371,20 +386,21 @@ def gpu_ceiling(
     batch_sizes: str = "512,1024,2048,4096",
     warmup: int = 15,
     iters: int = 50,
+    min_seconds: float = 2.0,
     precision: str = "fp16",
 ) -> None:
     """Probe A: fan the GPU-ceiling bench across cards in parallel, then report."""
-    gpu_list = [g.strip() for g in gpus.split(",")]
+    gpu_list = [g.strip() for g in gpus.split(",") if g.strip()]
     width_list = _parse_widths(widths)
-    bs_list = [int(b) for b in batch_sizes.split(",")]
+    bs_list = [int(b) for b in batch_sizes.split(",") if b.strip()]
 
     print(f"GPU compute ceiling — {precision} | widths={[w[0] for w in width_list]} | "
-          f"batch_sizes={bs_list} | warmup={warmup} iters={iters}")
+          f"batch_sizes={bs_list} | warmup={warmup} iters={iters} (>= {min_seconds}s)")
     print(f"cards (parallel): {gpu_list}\n")
 
     # Synthetic data -> no shared resource -> safe to run cards concurrently.
     handles = [(g, bench_gpu_ceiling.with_options(gpu=g).spawn(
-        g, width_list, bs_list, warmup, iters, precision)) for g in gpu_list]
+        g, width_list, bs_list, warmup, iters, min_seconds, precision)) for g in gpu_list]
     results = [h.get() for _, h in handles]
 
     for r in results:
@@ -403,7 +419,7 @@ def gpu_ceiling(
 
     path = _write_results("gpu_ceiling", {
         "kind": "gpu_ceiling", "precision": precision,
-        "warmup": warmup, "iters": iters, "results": results,
+        "warmup": warmup, "iters": iters, "min_seconds": min_seconds, "results": results,
     })
     print(f"wrote {path}")
     print("NOTE: cudnn.benchmark=True here but NOT in train.py — enable it there to realize these.")
@@ -435,8 +451,10 @@ def dataloader(
     This drops the redundant low-worker cells a full cpu×worker cross-product
     repeats (a 1-worker cell is ~identical at cpu=4 or cpu=32).
     """
-    sworkers = [int(w) for w in scaling_workers.split(",")]
-    ccpus = [float(c) for c in contention_cpus.split(",")]
+    # `if t.strip()` so an empty flag (e.g. --contention-cpus "") yields an
+    # empty list instead of choking on a "" token.
+    sworkers = [int(w) for w in scaling_workers.split(",") if w.strip()]
+    ccpus = [float(c) for c in contention_cpus.split(",") if c.strip()]
 
     print(f"Data-pipeline ceiling (lean grid) — manifest={manifest_path} bs={batch_size} "
           f"buffer={shuffle_buffer}")
@@ -449,7 +467,12 @@ def dataloader(
         if (cpu, w) in seen:
             return
         seen.add((cpu, w))
-        r = bench_dataloader.with_options(cpu=cpu).remote(
+        # cpu=(request, limit) HARD-CAPS the container to `cpu` cores. A scalar
+        # `cpu=` is only a *request* — the container could burst to all host
+        # cores, so a workers=2*cpu contention cell would never actually
+        # oversubscribe and the penalty would vanish. The tuple is load-bearing;
+        # do not collapse it to a scalar.
+        r = bench_dataloader.with_options(cpu=(cpu, cpu)).remote(
             cpu, w, manifest_path, intermediate_path,
             batch_size, shuffle_buffer, warmup_seconds, timed_seconds, min_batches)
         rows.append(r)
