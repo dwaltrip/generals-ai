@@ -54,6 +54,7 @@ from shared.device import (
 )
 from shared.gpu_sidecar import gpu_util_sidecar
 from shared.perf import compute_mfu, measure_total_flops, peak_tflops_fp32
+from shared.resource_info import log_resource_info
 from utils.log import abort, tee_stdio
 
 
@@ -245,6 +246,15 @@ def build_dataloader(
         f"num_workers={dl_kwargs['num_workers']}  "
         f"pin_memory={dl_kwargs['pin_memory']} (config={config.pin_memory!r})  "
         f"prefetch_factor={dl_kwargs.get('prefetch_factor', 'n/a')}"
+    )
+    log_resource_info(
+        device=device,
+        batch_size=config.batch_size,
+        obs_channels=config.arch.obs.obs_channels,
+        spatial=(H_PADDED, W_PADDED),
+        num_workers=dl_kwargs["num_workers"],
+        prefetch_factor=dl_kwargs.get("prefetch_factor"),
+        pin_memory=dl_kwargs["pin_memory"],
     )
     return ds, loader
 

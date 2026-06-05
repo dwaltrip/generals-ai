@@ -10,6 +10,9 @@ second and writes one JSONL record to a caller-specified sidecar file:
     {"t_sec": 2.0, "gpu_util_pct": 93, "mem_alloc_mb": 421, "mem_reserved_mb": 512}
     ...
 
+`gpu_util_pct` is `null` when the NVML backend (`nvidia-ml-py`) is missing —
+memory comes from torch directly, so those fields keep recording regardless.
+
 `t_sec` is monotonic time since the sidecar started, so a `tail -f` on this
 file alongside `run.log` aligns one-to-one in human time.
 
@@ -51,23 +54,31 @@ def _sampler_loop(
     """Daemon-thread body. Opens the JSONL file, samples until stopped."""
     fp = jsonl_path.open("x", buffering=1)
     t0 = time.monotonic()
+    util_err_logged = False
     try:
         # `stop_event.wait(timeout)` returns True if set, False on timeout.
         # Using it instead of `time.sleep` lets us exit immediately when the
         # context manager unwinds, instead of waiting out a full interval.
         while not stop_event.wait(sample_interval_sec):
+            # Memory is torch-native (no NVML backend), so it's always
+            # available on CUDA — sample it unconditionally.
+            mem_alloc = torch.cuda.memory_allocated()
+            mem_reserved = torch.cuda.memory_reserved()
+            # Utilization goes through NVML (`nvidia-ml-py`). If that's
+            # missing, degrade to null util and note it once — never let it
+            # kill memory logging, which is what the old break-on-error did
+            # (it dropped every record after the first failure).
             try:
-                gpu_util_pct = torch.cuda.utilization()
-                mem_alloc = torch.cuda.memory_allocated()
-                mem_reserved = torch.cuda.memory_reserved()
+                gpu_util_pct: int | None = int(torch.cuda.utilization())
             except Exception as exc:
-                # If polling fails (e.g. pynvml issue), log once and stop.
-                fp.write(json.dumps({"error": repr(exc)}) + "\n")
-                break
+                gpu_util_pct = None
+                if not util_err_logged:
+                    fp.write(json.dumps({"util_error": repr(exc)}) + "\n")
+                    util_err_logged = True
 
             rec = {
                 "t_sec": round(time.monotonic() - t0, 2),
-                "gpu_util_pct": int(gpu_util_pct),
+                "gpu_util_pct": gpu_util_pct,
                 "mem_alloc_mb": mem_alloc // (1024 * 1024),
                 "mem_reserved_mb": mem_reserved // (1024 * 1024),
             }
