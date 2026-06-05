@@ -186,6 +186,8 @@ def bench_gpu_ceiling(
         scaler.step(optim)
         scaler.update()
 
+    print(f"[{gpu_label}] {cuda_name} | fp16 peak: {peak_fp16} TF | precision: {precision}")
+
     rows = []
     for label, o, m, i in widths:
         cfg = build_model_cfg(
@@ -199,6 +201,9 @@ def bench_gpu_ceiling(
         del fmodel
         gc.collect()
         torch.cuda.empty_cache()
+
+        print(f"[{gpu_label}] width={label} ({n_params/1e6:.1f}M params, "
+              f"{flops_per_sample/1e9:.2f} GFLOPs/sample)")
 
         for B in batch_sizes:
             model = optim = scaler = batch = None
@@ -224,6 +229,9 @@ def bench_gpu_ceiling(
                 achieved_tflops = sps * flops_per_sample / 1e12
                 mfu_fp16 = compute_mfu(sps, flops_per_sample, peak_fp16)
                 mfu_fp32 = compute_mfu(sps, flops_per_sample, peak_fp32)
+                mfu_str = f"{mfu_fp16 * 100:.1f}%" if mfu_fp16 is not None else "n/a"
+                print(f"[{gpu_label}]   bs={B}: {sps:,.0f} sps, "
+                      f"{achieved_tflops:.1f} TFLOPS, MFU(fp16)={mfu_str}")
                 rows.append({
                     "width": label, "outer_width": o, "batch_size": B,
                     "params": n_params, "flops_per_sample": flops_per_sample,
@@ -238,6 +246,7 @@ def bench_gpu_ceiling(
             except (torch.cuda.OutOfMemoryError, RuntimeError) as e:
                 if isinstance(e, RuntimeError) and "out of memory" not in str(e).lower():
                     raise
+                print(f"[{gpu_label}]   bs={B}: OOM")
                 rows.append({"width": label, "outer_width": o, "batch_size": B,
                              "params": n_params, "oom": True})
                 break  # ascending batch sizes — larger will OOM too
@@ -314,6 +323,7 @@ def bench_dataloader(
 
     torch.set_num_threads(1)
 
+    print(f"[cpu={cpu_count} w={num_workers}] loading manifest {manifest_path}")
     manifest = load_manifest(Path(manifest_path))
     train_samples = samples_for_split(manifest, "train", Path(intermediate_path))
 
@@ -337,6 +347,7 @@ def bench_dataloader(
     t0 = time.perf_counter()
     exhausted = False
     try:
+        print(f"[cpu={cpu_count} w={num_workers}] warming up ({warmup_seconds}s)")
         warm_end = t0 + warmup_seconds
         while time.perf_counter() < warm_end:
             next(it)
@@ -344,6 +355,7 @@ def bench_dataloader(
         n = 0
         n_batches = 0
         t0 = time.perf_counter()
+        print(f"[cpu={cpu_count} w={num_workers}] timed window started")
         timed_end = t0 + timed_seconds
         while time.perf_counter() < timed_end or n_batches < min_batches:
             n += next(it)["obs"].shape[0]
@@ -356,6 +368,10 @@ def bench_dataloader(
         elapsed = time.perf_counter() - t0
 
     sps = n / elapsed if elapsed > 0 else 0.0
+    per_w = sps / num_workers if num_workers > 0 else sps
+    print(f"[cpu={cpu_count} w={num_workers}] done: {sps:,.0f} sps ({per_w:,.0f}/worker, "
+          f"{n_batches} batches, {elapsed:.1f}s)"
+          + ("  [slice exhausted]" if exhausted else ""))
     return {
         "cpu": cpu_count, "num_workers": num_workers, "batch_size": batch_size,
         "samples_per_sec": round(sps, 1), "n_samples": n, "n_batches": n_batches,
@@ -378,13 +394,30 @@ def _parse_widths(s: str) -> list[tuple[str, int, int, int]]:
     return out
 
 
-def _write_results(kind: str, payload: dict) -> Path:
-    out_dir = REPO_ROOT / "training" / "data" / "bench"
-    out_dir.mkdir(parents=True, exist_ok=True)
-    stamp = datetime.now(UTC).strftime("%Y-%m-%dT%H-%M-%SZ")
-    path = out_dir / f"{kind}_{stamp}.json"
-    path.write_text(json.dumps(payload, indent=2))
-    return path
+_BENCH_DIR = REPO_ROOT / "training" / "data" / "bench"
+
+
+class _Log:
+    """Print to terminal and append to a log file."""
+
+    def __init__(self, kind: str):
+        _BENCH_DIR.mkdir(parents=True, exist_ok=True)
+        self._stamp = datetime.now(UTC).strftime("%Y-%m-%dT%H-%M-%SZ")
+        self._kind = kind
+        self._path = _BENCH_DIR / f"{kind}_{self._stamp}.log"
+        self._file = open(self._path, "a")
+
+    def __call__(self, msg: str = "") -> None:
+        print(msg)
+        self._file.write(msg + "\n")
+        self._file.flush()
+
+    def write_results(self, payload: dict) -> Path:
+        json_path = _BENCH_DIR / f"{self._kind}_{self._stamp}.json"
+        json_path.write_text(json.dumps(payload, indent=2))
+        self(f"wrote {json_path}")
+        self(f"log:  {self._path}")
+        return json_path
 
 
 @app.local_entrypoint()
@@ -398,13 +431,15 @@ def gpu_ceiling(
     precision: str = "fp16",
 ) -> None:
     """Probe A: fan the GPU-ceiling bench across cards in parallel, then report."""
+    log = _Log("gpu_ceiling")
+
     gpu_list = [g.strip() for g in gpus.split(",") if g.strip()]
     width_list = _parse_widths(widths)
     bs_list = [int(b) for b in batch_sizes.split(",") if b.strip()]
 
-    print(f"GPU compute ceiling — {precision} | widths={[w[0] for w in width_list]} | "
-          f"batch_sizes={bs_list} | warmup={warmup} iters={iters} (>= {min_seconds}s)")
-    print(f"cards (parallel): {gpu_list}\n")
+    log(f"GPU compute ceiling — {precision} | widths={[w[0] for w in width_list]} | "
+        f"batch_sizes={bs_list} | warmup={warmup} iters={iters} (>= {min_seconds}s)")
+    log(f"cards (parallel): {gpu_list}\n")
 
     # Synthetic data -> no shared resource -> safe to run cards concurrently.
     handles = [(g, bench_gpu_ceiling.with_options(gpu=g).spawn(
@@ -414,23 +449,22 @@ def gpu_ceiling(
     for r in results:
         peak = r["peak_fp16"]
         peak_str = f"{peak} TFLOPS fp16-peak" if peak is not None else "fp16 peak unknown"
-        print(f"=== {r['gpu']}  ({r['cuda_name']}, {peak_str}) ===")
-        print(f"  {'width':>6} {'bs':>5} {'sps':>9} {'step_ms':>8} {'TFLOPS':>8} {'MFU(fp16)':>10}")
+        log(f"=== {r['gpu']}  ({r['cuda_name']}, {peak_str}) ===")
+        log(f"  {'width':>6} {'bs':>5} {'sps':>9} {'step_ms':>8} {'TFLOPS':>8} {'MFU(fp16)':>10}")
         for row in r["rows"]:
             if row.get("oom"):
-                print(f"  {row['width']:>6} {row['batch_size']:>5} {'OOM':>9}")
+                log(f"  {row['width']:>6} {row['batch_size']:>5} {'OOM':>9}")
                 continue
             mfu = f"{row['mfu_fp16'] * 100:.1f}%" if row["mfu_fp16"] is not None else "n/a"
-            print(f"  {row['width']:>6} {row['batch_size']:>5} {row['samples_per_sec']:>9,.0f} "
-                  f"{row['step_ms']:>8} {row['achieved_tflops']:>8} {mfu:>10}")
-        print()
+            log(f"  {row['width']:>6} {row['batch_size']:>5} {row['samples_per_sec']:>9,.0f} "
+                f"{row['step_ms']:>8} {row['achieved_tflops']:>8} {mfu:>10}")
+        log()
 
-    path = _write_results("gpu_ceiling", {
+    log.write_results({
         "kind": "gpu_ceiling", "precision": precision,
         "warmup": warmup, "iters": iters, "min_seconds": min_seconds, "results": results,
     })
-    print(f"wrote {path}")
-    print("NOTE: cudnn.benchmark=True here but NOT in train.py — enable it there to realize these.")
+    log("NOTE: cudnn.benchmark=True here but NOT in train.py — enable it there to realize these.")
 
 
 @app.local_entrypoint()
@@ -461,12 +495,14 @@ def dataloader(
     """
     # `if t.strip()` so an empty flag (e.g. --contention-cpus "") yields an
     # empty list instead of choking on a "" token.
+    log = _Log("dataloader")
+
     sworkers = [int(w) for w in scaling_workers.split(",") if w.strip()]
     ccpus = [float(c) for c in contention_cpus.split(",") if c.strip()]
 
-    print(f"Data-pipeline ceiling (lean grid) — manifest={manifest_path} bs={batch_size} "
-          f"buffer={shuffle_buffer}")
-    print(f"  warmup={warmup_seconds}s  timed={timed_seconds}s (>= {min_batches} batches)\n")
+    log(f"Data-pipeline ceiling (lean grid) — manifest={manifest_path} bs={batch_size} "
+        f"buffer={shuffle_buffer}")
+    log(f"  warmup={warmup_seconds}s  timed={timed_seconds}s (>= {min_batches} batches)\n")
 
     rows = []
     seen: set[tuple[float, int]] = set()
@@ -484,23 +520,22 @@ def dataloader(
             cpu, w, manifest_path, intermediate_path,
             batch_size, shuffle_buffer, warmup_seconds, timed_seconds, min_batches)
         rows.append(r)
-        print(f"  cpu={cpu:>4} workers={w:>3} -> {r['samples_per_sec']:>8,.0f} sps "
-              f"({r['per_worker_sps']:,.0f}/worker, {r['n_batches']} batches)"
-              + ("  [slice exhausted]" if r["exhausted"] else ""))
+        log(f"  cpu={cpu:>4} workers={w:>3} -> {r['samples_per_sec']:>8,.0f} sps "
+            f"({r['per_worker_sps']:,.0f}/worker, {r['n_batches']} batches)"
+            + ("  [slice exhausted]" if r["exhausted"] else ""))
 
-    print(f"clean scaling curve @ cpu={scaling_cpu}:")
+    log(f"clean scaling curve @ cpu={scaling_cpu}:")
     for w in sworkers:
         run_cell(scaling_cpu, w)
 
-    print("contention probe (workers = cpu and 2x cpu):")
+    log("contention probe (workers = cpu and 2x cpu):")
     for c in ccpus:
         run_cell(c, int(c))
         run_cell(c, int(2 * c))
 
-    path = _write_results("dataloader", {
+    log.write_results({
         "kind": "dataloader", "manifest_path": manifest_path,
         "batch_size": batch_size, "shuffle_buffer": shuffle_buffer,
         "warmup_seconds": warmup_seconds, "timed_seconds": timed_seconds,
         "min_batches": min_batches, "results": rows,
     })
-    print(f"\nwrote {path}")
