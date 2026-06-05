@@ -265,18 +265,14 @@ class MemoryState:
     opp_captured_by: np.ndarray
 
     # ---- Dense-history caches (advanced by step_memory) ----
-    # The previous tick's perspective-filtered snapshot. Held so `step_memory`
-    # can diff (own_t, armies_t) against (own_t-1, armies_t-1) and emit the
-    # encoded pair into the buffers below. None before the first tick is
-    # processed; non-None thereafter.
+    # Previous tick's perspective-filtered snapshot. Held so `step_memory`
+    # can diff (own_t, armies_t) against (own_t-1, armies_t-1).
     prev_view: PerspectiveView | None = None
-    # Encoded ownership-transition channels, one per (newer, older) snapshot
-    # pair, oldest-first. Each entry is `_encode_ownership_transition * both_observed`
-    # — a float32 [H, W] ready for `_cat_dense_history` to read straight out.
-    # `maxlen = obs_cfg.dense_history_n`.
+    # Encoded ownership-transition channels, oldest-first. float32 [H, W].
+    # maxlen = obs_cfg.dense_history_n.
     transition_buf: deque = field(default_factory=deque)
-    # Encoded production-subtracted army-delta channels, paired 1:1 with
-    # `transition_buf`. Each entry is `_encode_army_delta * both_observed`.
+    # Production-subtracted, signed-log army-delta channels, paired 1:1
+    # with `transition_buf`. float32 [H, W].
     army_delta_buf: deque = field(default_factory=deque)
 
 
@@ -545,13 +541,9 @@ def _append_dense_history_pair(
     H: int,
     W: int,
 ) -> None:
-    """Encode the (new_view, state.prev_view) snapshot pair into transition +
-    army-delta channels and append to the rolling buffers. Caller guarantees
+    """Encode the (new_view, prev_view) snapshot pair into transition +
+    army-delta channels; append to the rolling buffers. Caller guarantees
     `state.prev_view is not None`.
-
-    Inputs to both encoders are stable once the snapshots are pinned, so the
-    pair never needs recomputing across future frames — the bounded deques
-    drop oldest as the window slides.
     """
     prev_view = state.prev_view
     assert prev_view is not None  # for type-narrowing; caller-guaranteed
@@ -752,11 +744,9 @@ def _cat_bfs(
     H: int,
     W: int,
 ) -> list[np.ndarray]:
-    # Cat 5: BFS distance-from-known-generals (8 channels). Passability is
-    # computed by `compute_known_passable` — see its docstring for the v1
-    # spike policy. `BFSCache.maybe_invalidate` does one `array_equal` against
-    # the previous frame's mask and bumps the epoch only on change, so
-    # structurally-stable frames reuse cached distances across all 8 sources.
+    # Cat 5: BFS distance-from-known-generals (8 channels). `maybe_invalidate`
+    # gates the per-source BFS on mask change so structurally-stable frames
+    # are cache hits.
     known_passable_flat = compute_known_passable(
         state, t, perspective_slot, vis, own, armies,
         structures_in_fog_mask, H, W,
@@ -880,7 +870,7 @@ def _encode_army_delta(
     general_mask: np.ndarray,
 ) -> np.ndarray:
     """Production-subtracted raw army delta (5.05-1 §G + §7.2). Caller
-    applies the signed-log channel encoding via `_signed_log`.
+    applies `_signed_log` for the channel encoding.
 
     Subtracts the per-cell expected production applied between
     `snapshot[t_newer-1]` and `snapshot[t_newer]`. Production rules
@@ -888,18 +878,16 @@ def _encode_army_delta(
       - At `t_newer % 2 == 0`: each owned general or city gains +1 army.
       - At `t_newer % 50 == 0` (land tick): each owned cell gains +1 army.
 
-    Subtraction is universal across cell types — at combat cells the +1/+2
-    correction is dwarfed by the combat-magnitude delta, so the encoded
-    channel stays dominated by the combat signal where it matters. The point
-    of the subtraction is to remove peacetime production noise so the
-    channel highlights non-trivial events (combat, expansion).
+    Subtraction is universal: at combat cells the +1/+2 correction is
+    dwarfed by the combat delta, so the signal stays dominated by combat
+    where it matters. The goal is to strip peacetime production noise so
+    the channel highlights real events.
 
-    Returns float32 [H, W]: raw signed adjusted delta. Tests can specify
-    expected delta values directly without re-deriving the log scaling.
+    Returns float32 [H, W]: raw signed adjusted delta.
 
-    TODO: hand-coded fixtures for this function — small boards, picked ticks
-    that exercise the production cases (t%2==0 only, t%50==0 only, both,
-    neither), check the adjusted-delta values cell-by-cell against expected.
+    TODO: hand-coded fixtures — small boards, picked ticks exercising the
+    production cases (t%2==0 only, t%50==0 only, both, neither), assert
+    adjusted-delta values cell-by-cell.
     """
     is_owned = own_newer >= 0
     prod = np.zeros_like(armies_newer, dtype=np.float32)
@@ -951,11 +939,9 @@ def _cat_dense_history(
     state: MemoryState, H: int, W: int,
 ) -> list[np.ndarray]:
     # Cat 10: Dense recent spatial history (2N channels, N=obs_cfg.dense_history_n).
-    # Each pair (transition, army-delta) is encoded once by `step_memory` when
-    # the snapshot at its newer endpoint is appended, then read out of the
-    # rolling buffers here. See `_append_dense_history_pair` for the per-pair
-    # encoding and `_encode_ownership_transition` / `_encode_army_delta` for
-    # the channel definitions.
+    # Each pair is encoded once by `step_memory` when the snapshot at its
+    # newer endpoint is appended; we just read out of the rolling buffers
+    # here.
     #
     # `transition_buf` / `army_delta_buf` are right-aligned at the current
     # tick: index [-1] is the (t, t-1) pair, [-2] is (t-1, t-2), etc. Early
