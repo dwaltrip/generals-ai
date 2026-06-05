@@ -91,12 +91,11 @@ class BFSCache:
     def maybe_invalidate(self, mask: np.ndarray) -> None:
         """Bump the epoch iff `mask` differs from the previously cached one.
 
-        One `np.array_equal` per frame (~µs on a ~1024-cell bool) replaces the
-        unconditional per-frame invalidation that used to live in the dataset
-        walk. Both invalidation triggers are covered here in a single check:
-        structural growth (new known-passable cells from `step_memory`) and
-        city-passability flips (per-tick army-ratio changes). The mask is the
-        single source of truth for "would BFS produce different output?"
+        One `np.array_equal` per frame (~µs on a ~1024-cell bool) covers both
+        invalidation triggers in a single check: structural growth (new
+        known-passable cells from `step_memory`) and city-passability flips
+        (per-tick army-ratio changes). The mask is the single source of truth
+        for "would BFS produce different output?"
         """
         if self.prev_mask is None or not np.array_equal(self.prev_mask, mask):
             self.graph_epoch += 1

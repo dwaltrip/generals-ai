@@ -340,9 +340,7 @@ class BCPerspective:
         # 4. Visibility for this perspective.
         vis = visibility.compute_visibility(own_t, self.perspective_slot, H, W)
 
-        # 5. Advance memory. BFS cache invalidation is handled inside
-        # `build_obs` via `BFSCache.maybe_invalidate`, which catches both
-        # structural changes and city-passability ratio flips.
+        # 5. Advance memory. (BFS cache invalidation lives in `build_obs`.)
         bc_obs.step_memory(
             self._memory, self._sim, t, vis, self.perspective_slot, H, W, P,
         )

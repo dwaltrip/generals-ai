@@ -912,9 +912,9 @@ def _encode_army_delta(
 
 
 def _signed_log(x: np.ndarray) -> np.ndarray:
-    """`sign(x) * log1p(|x|)`, the signed-log channel encoding used for the
-    army-delta channel and any future signed magnitudes that want a soft
-    compression. Identity at 0; ≈ log magnitude for large |x|.
+    """`sign(x) * log1p(|x|)` — soft compression for signed magnitudes.
+    Identity at 0; ≈ log magnitude for large |x|. Used for the army-delta
+    channel.
     """
     return (np.sign(x) * np.log1p(np.abs(x))).astype(np.float32)
 
@@ -960,7 +960,7 @@ def _cat_dense_history(
     # `transition_buf` / `army_delta_buf` are right-aligned at the current
     # tick: index [-1] is the (t, t-1) pair, [-2] is (t-1, t-2), etc. Early
     # in a walk the buffers haven't filled yet, so a missing slot emits a
-    # zero channel — same shape the loop-based implementation produced.
+    # zero channel.
     n = state.obs_cfg.dense_history_n
     buf_len = len(state.transition_buf)
     zero = np.zeros((H, W), dtype=np.float32)
