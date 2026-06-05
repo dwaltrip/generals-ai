@@ -90,7 +90,7 @@ def bc_loss(
         - `policy`:   policy CE (mean over non-pass frames; 0 if batch is all pass)
         - `value`:    value CE (mean over batch)
         - `pass`:     pass BCE (mean over batch)
-        - `n_non_pass`: int scalar, number of non-pass frames in the batch
+        - `n_non_pass`: 0-d int tensor, number of non-pass frames in the batch
                        (debugging signal for the overfit harness)
     """
     policy_logits = model_out["policy_logits"]  # [B, 8, H, W]
@@ -113,19 +113,17 @@ def bc_loss(
     # Cross-entropy with ignore_index=-1 to skip pass frames.
     # Pass frames have action_target == -1 by construction (see
     # `bc/actions.py` `_PASS_FLAT_IDX`). They contribute no policy gradient.
-    n_non_pass = int((~is_pass).sum().item())
-    if n_non_pass > 0:
-        policy_ce = F.cross_entropy(
-            policy_logits_masked,
-            action_target,
-            ignore_index=_PASS_FLAT_IDX,
-            reduction="mean",
-        )
-    else:
-        # All-pass batch: F.cross_entropy with all targets ignored returns
-        # NaN (mean over empty set). Defensive guard. Won't fire in the
-        # fixed overfit batch but real corpus batches occasionally hit it.
-        policy_ce = policy_logits_masked.sum() * 0.0  # zero with gradient path
+    # `reduction="sum"` returns 0 (not NaN) when every target is ignored, so
+    # the all-pass edge case folds in via a safe divide — no host sync, no
+    # branch. `clamp(min=1)` only matters when the numerator is 0, so it
+    # doesn't bias the mean.
+    n_non_pass = (~is_pass).sum()  # 0-d tensor, stays on device
+    policy_ce = F.cross_entropy(
+        policy_logits_masked,
+        action_target,
+        ignore_index=_PASS_FLAT_IDX,
+        reduction="sum",
+    ) / n_non_pass.clamp(min=1)
 
     # --- Value CE ---
     value_ce = F.cross_entropy(value_logits, value_target, reduction="mean")
@@ -144,7 +142,7 @@ def bc_loss(
         "policy": policy_ce,
         "value": value_ce,
         "pass": pass_bce,
-        "n_non_pass": torch.tensor(n_non_pass),
+        "n_non_pass": n_non_pass,
     }
 
 

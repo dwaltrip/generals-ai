@@ -1,10 +1,15 @@
 """
-Unit tests for `bc.loss.LossAccumulator`.
+Unit tests for `bc.loss`.
 
-The load-bearing claim is the sample-weighted-mean math: policy weights by
-non-pass-frame count, value/pass weight by batch size, and total reconciles
-with the components via the fixed LAMBDA_VALUE / MU_PASS weights at every
-aggregation level. These tests pin that math against hand-computed values.
+`LossAccumulator`: the load-bearing claim is the sample-weighted-mean math
+— policy weights by non-pass-frame count, value/pass weight by batch size,
+and total reconciles with the components via the fixed LAMBDA_VALUE /
+MU_PASS weights at every aggregation level. These tests pin that math
+against hand-computed values.
+
+`bc_loss`: pins the all-pass-batch edge case, which the sync-free
+implementation handles via `F.cross_entropy(reduction="sum")` returning 0
+(not NaN) when every target is ignored.
 """
 
 from __future__ import annotations
@@ -12,7 +17,8 @@ from __future__ import annotations
 import pytest
 import torch
 
-from bc.loss import LAMBDA_VALUE, MU_PASS, LossAccumulator
+from bc.actions import _PASS_FLAT_IDX
+from bc.loss import LAMBDA_VALUE, MU_PASS, LossAccumulator, bc_loss
 
 
 def _fake_losses(
@@ -74,3 +80,38 @@ def test_empty_accumulator_returns_zeros() -> None:
     assert s["total"] == 0.0
     assert s["n_non_pass"] == 0
     assert s["n_samples"] == 0
+
+
+def test_bc_loss_all_pass_batch_returns_zero_policy_no_nan() -> None:
+    """All-pass batch must produce policy_ce = 0 (not NaN).
+
+    The sync-free implementation removed the host-side `if n_non_pass > 0`
+    guard and relies on `F.cross_entropy(reduction="sum")` returning 0 —
+    not NaN — when every target is ignored. This pins that invariant so a
+    future PyTorch change can't silently reintroduce NaN here.
+    """
+    B, H, W = 4, 8, 8
+
+    model_out = {
+        "policy_logits": torch.randn(B, 8, H, W, requires_grad=True),
+        "pass_logit": torch.randn(B, requires_grad=True),
+        "value_logits": torch.randn(B, 8, requires_grad=True),
+    }
+    targets = {
+        "mask": torch.ones(B, H, W, 8, dtype=torch.bool),
+        "action_target": torch.full((B,), _PASS_FLAT_IDX, dtype=torch.int64),
+        "is_pass": torch.ones(B, dtype=torch.bool),
+        "value_target": torch.zeros(B, dtype=torch.int64),
+    }
+
+    losses = bc_loss(model_out, targets)
+
+    assert int(losses["n_non_pass"]) == 0
+    assert losses["policy"].item() == 0.0
+    assert not torch.isnan(losses["total"]).item()
+
+    # Gradient path stays clean: total.backward() shouldn't NaN out the
+    # policy head even though policy_ce is zero.
+    losses["total"].backward()
+    assert model_out["policy_logits"].grad is not None
+    assert not torch.isnan(model_out["policy_logits"].grad).any().item()
