@@ -1029,7 +1029,14 @@ def build_obs(
         f"expected {n_channels} for dense_history_n={state.obs_cfg.dense_history_n}"
     )
 
-    obs_unpadded = np.stack(channels, axis=0).astype(np.float32)
+    # Write each channel straight into its slot of one preallocated padded
+    # buffer. Equivalent to `np.stack(channels).astype(float32)` followed by a
+    # pad copy, but in a single write pass instead of three (stack gather +
+    # astype copy + pad copy) — the assembly's per-sample memory traffic is the
+    # cost that scales with channel count, so collapsing it matters most for
+    # large dense-history depths. The pad region stays zero; the slice
+    # assignment converts any non-float32 channel exactly as `astype` did.
     obs = np.zeros((n_channels, H_PADDED, W_PADDED), dtype=np.float32)
-    obs[:, :H, :W] = obs_unpadded
+    for i, ch in enumerate(channels):
+        obs[i, :H, :W] = ch
     return obs

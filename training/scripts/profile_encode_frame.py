@@ -187,15 +187,15 @@ def _profile_game(
         b = time.perf_counter_ns()
         totals["cat10_dense_history"] += b - a
 
-        # ---- stack + pad ----
+        # ---- assemble into padded buffer ----
         a = time.perf_counter_ns()
         channels = [*c1, *c2, *c3, *c4, *c5, *c6, *c7, *c8, *c9, *c10]
         assert len(channels) == n_channels
-        obs_unpadded = np.stack(channels, axis=0).astype(np.float32)
         obs = np.zeros((n_channels, H_PADDED, W_PADDED), dtype=np.float32)
-        obs[:, :H, :W] = obs_unpadded
+        for i, ch in enumerate(channels):
+            obs[i, :H, :W] = ch
         b = time.perf_counter_ns()
-        totals["obs_stack_pad"] += b - a
+        totals["obs_assemble"] += b - a
 
         # ---- build_mask ----
         a = time.perf_counter_ns()
