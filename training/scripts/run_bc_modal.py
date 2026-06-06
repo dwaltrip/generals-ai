@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 import json
+import os
 from pathlib import Path
 import platform
 import socket
@@ -78,7 +79,8 @@ def train_remote(
     segment-suffixed `args_cloud_resume_NN.json`, then `bc_resume`.
 
     `args_cloud*.json` sits next to bc's args file and captures what the training
-    contract doesn't know: the GPU class, the device CUDA surfaced, the hostname.
+    contract doesn't know: the GPU class, the device CUDA surfaced, the Modal
+    region the container landed in, and the hostname.
     """
     from bc.resume import bc_resume
     from bc.run_dir import initialize_run_dir, prepare_resume
@@ -130,6 +132,9 @@ def _write_args_cloud(run_dir: Path, gpu: str, suffix: str = "") -> None:
     args_cloud = {
         "gpu": gpu,
         "cuda_device_name": cuda_device_name,
+        # The container's actual placement (Modal sets MODAL_REGION regardless
+        # of pinning) — the hook for spotting when two runs drew different hosts.
+        "modal_region": os.environ.get("MODAL_REGION"),
         "python": platform.python_version(),
         "hostname": socket.gethostname(),
         "written_at": datetime.now(UTC).isoformat(timespec="seconds"),

@@ -344,6 +344,13 @@ def run_training(
     # "run dir:" line printed by `initialize_run_dir` stays terminal-only;
     # self-reference inside the log would just be noise.
     with tee_stdio(config.run_dir / f"run{suffix}.log"):
+        # `begin()` enabled the timer before this call when --profile is set;
+        # surface it here since the report prints after the tee closes.
+        if timer.enabled:
+            print(
+                "profiling: ON — obs-pipeline timing seams active; "
+                f"report → {config.run_dir / 'prof' / 'summary.json'}"
+            )
         # --- Manifest + dataset ---
         print(f"loading manifest: {config.manifest}")
         manifest = load_manifest(config.manifest)
