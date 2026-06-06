@@ -1553,6 +1553,12 @@ wheels = [
 name = "utils"
 version = "0.0.0"
 source = { editable = "packages/utils" }
+dependencies = [
+    { name = "tabulate" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "tabulate", specifier = ">=0.10.0" }]
 
 [[package]]
 name = "watchfiles"

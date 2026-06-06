@@ -1,0 +1,62 @@
+"""Generic formatting helpers: human-readable sizes/durations/percentages and
+a thin `tabulate` wrapper for GitHub-flavored markdown tables.
+
+Deliberately domain-free — no knowledge of runs, GPUs, or any project schema.
+Anything that needs to know *what* it's formatting belongs with that domain's
+code; this module only turns numbers into strings.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Sequence
+
+from tabulate import tabulate
+
+
+def format_bytes(n: float) -> str:
+    """Human-readable IEC size (e.g. `252.0 MiB`)."""
+    for unit in ("B", "KiB", "MiB", "GiB", "TiB"):
+        if n < 1024 or unit == "TiB":
+            return f"{n:.1f} {unit}"
+        n /= 1024
+    raise AssertionError("unreachable")  # the TiB branch always returns
+
+
+def format_count(n: float) -> str:
+    """Integer with thousands separators (e.g. `1,234`)."""
+    return f"{round(n):,}"
+
+
+def format_duration(seconds: float) -> str:
+    """Compact duration: sub-minute stays in seconds (`47.0s`), longer rolls
+    up to `3m 12s` / `1h 04m`."""
+    if seconds < 60:
+        return f"{seconds:.1f}s"
+    minutes, secs = divmod(int(round(seconds)), 60)
+    if minutes < 60:
+        return f"{minutes}m {secs:02d}s"
+    hours, minutes = divmod(minutes, 60)
+    return f"{hours}h {minutes:02d}m"
+
+
+def format_pct(fraction: float, *, digits: int = 1) -> str:
+    """Format a 0–1 fraction as a percentage (`0.179 -> 17.9%`)."""
+    return f"{fraction * 100:.{digits}f}%"
+
+
+def md_table(
+    headers: Sequence[str],
+    rows: Sequence[Sequence[object]],
+    *,
+    align: Sequence[str] | None = None,
+) -> str:
+    """GitHub-flavored markdown table via `tabulate`. `align` is an optional
+    per-column alignment (`"left"`/`"right"`/`"center"`), handy for right-
+    aligning numeric columns."""
+    # disable_numparse: cells are pre-formatted strings; without this tabulate
+    # re-parses numeric-looking ones and reformats them (e.g. "666.0" -> "666"),
+    # clobbering our chosen precision.
+    kwargs: dict = {"headers": list(headers), "tablefmt": "github", "disable_numparse": True}
+    if align is not None:
+        kwargs["colalign"] = tuple(align)
+    return tabulate(rows, **kwargs)

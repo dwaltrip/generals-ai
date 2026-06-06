@@ -290,6 +290,7 @@ def build_dataloader(
         num_workers=dl_kwargs["num_workers"],
         prefetch_factor=dl_kwargs.get("prefetch_factor"),
         pin_memory=dl_kwargs["pin_memory"],
+        run_dir=config.run_dir,
     )
     return ds, loader
 

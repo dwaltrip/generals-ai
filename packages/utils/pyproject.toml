@@ -3,7 +3,9 @@ name = "utils"
 version = "0.0.0"
 description = "Cross-package shared helpers for the generals-ai workspace"
 requires-python = ">=3.14"
-dependencies = []
+dependencies = [
+    "tabulate>=0.10.0",  # utils.format.md_table
+]
 
 [build-system]
 requires = ["hatchling"]

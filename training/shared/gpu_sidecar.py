@@ -6,12 +6,17 @@ Background sampler for GPU utilization + memory, written to a JSONL sidecar.
 When training on CUDA, this spawns a daemon thread that wakes up once per
 second and writes one JSONL record to a caller-specified sidecar file:
 
-    {"t_sec": 1.0, "gpu_util_pct": 87, "mem_alloc_mb": 421, "mem_reserved_mb": 512}
-    {"t_sec": 2.0, "gpu_util_pct": 93, "mem_alloc_mb": 421, "mem_reserved_mb": 512}
+    {"t_sec": 1.0, "gpu_util_pct": 87, "mem_alloc_mb": 421, "mem_reserved_mb": 512,
+     "cpu_steal_pct": 0.0, "load_avg_1m": 6.2}
     ...
 
 `gpu_util_pct` is `null` when the NVML backend (`nvidia-ml-py`) is missing —
 memory comes from torch directly, so those fields keep recording regardless.
+
+`cpu_steal_pct` (time the hypervisor ran *other* tenants while we were
+runnable) and `load_avg_1m` are host-contention signals: a slow draw that
+isn't our own compute shows up as elevated steal here. `cpu_steal_pct` is
+`null` on the first sample (it's a delta) and off-Linux.
 
 `t_sec` is monotonic time since the sidecar started, so a `tail -f` on this
 file alongside `run.log` aligns one-to-one in human time.
@@ -39,11 +44,28 @@ from __future__ import annotations
 from collections.abc import Iterator
 from contextlib import contextmanager
 import json
+import os
 from pathlib import Path
 import threading
 import time
 
 import torch
+
+
+# TODO: CPU steal + load average are host-contention signals, not GPU metrics —
+# they don't belong in a module named `gpu_sidecar`. If host sampling grows,
+# rename this to something host-general (e.g. `resource_sidecar`) or split the
+# host signals into their own sampler sharing the same daemon thread.
+def _cpu_steal_total() -> tuple[int, int] | None:
+    """(steal_ticks, total_ticks) from the aggregate `cpu` line of /proc/stat,
+    or None off-Linux. Steal is field 8 (after the `cpu` label)."""
+    try:
+        fields = Path("/proc/stat").read_text().split("\n", 1)[0].split()[1:]
+        nums = [int(x) for x in fields]
+        steal = nums[7] if len(nums) > 7 else 0
+        return steal, sum(nums)
+    except (OSError, ValueError, IndexError):
+        return None
 
 
 def _sampler_loop(
@@ -55,6 +77,7 @@ def _sampler_loop(
     fp = jsonl_path.open("x", buffering=1)
     t0 = time.monotonic()
     util_err_logged = False
+    prev_steal = _cpu_steal_total()  # delta baseline; steal_pct is null until 2nd sample
     try:
         # `stop_event.wait(timeout)` returns True if set, False on timeout.
         # Using it instead of `time.sleep` lets us exit immediately when the
@@ -76,11 +99,28 @@ def _sampler_loop(
                     fp.write(json.dumps({"util_error": repr(exc)}) + "\n")
                     util_err_logged = True
 
+            # Host-contention signals. Steal is a delta over the interval, so
+            # the first sample (no baseline) emits null.
+            cur_steal = _cpu_steal_total()
+            steal_pct: float | None = None
+            if cur_steal is not None and prev_steal is not None:
+                d_steal = cur_steal[0] - prev_steal[0]
+                d_total = cur_steal[1] - prev_steal[1]
+                steal_pct = round(d_steal / d_total * 100, 1) if d_total > 0 else None
+            if cur_steal is not None:
+                prev_steal = cur_steal
+            try:
+                load_avg: float | None = round(os.getloadavg()[0], 2)
+            except OSError:
+                load_avg = None
+
             rec = {
                 "t_sec": round(time.monotonic() - t0, 2),
                 "gpu_util_pct": gpu_util_pct,
                 "mem_alloc_mb": mem_alloc // (1024 * 1024),
                 "mem_reserved_mb": mem_reserved // (1024 * 1024),
+                "cpu_steal_pct": steal_pct,
+                "load_avg_1m": load_avg,
             }
             fp.write(json.dumps(rec) + "\n")
     finally:
