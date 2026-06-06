@@ -66,6 +66,7 @@ def train_remote(
     gpu: str,
     force_config_mismatch: bool,
     legacy_lr_warmup_batches: int | None,
+    profile: bool,
 ) -> None:
     """Run a fresh or resumed BC training segment on a Modal GPU.
 
@@ -82,7 +83,12 @@ def train_remote(
     from bc.resume import bc_resume
     from bc.run_dir import initialize_run_dir, prepare_resume
     from bc.train import bc_run
+    from shared.timing_run import begin, end_and_report
 
+    # `--profile` brackets the run *inside the container* — the workers and prof
+    # files live here, not on the laptop that spawned us. `begin()` runs only
+    # after the run dir exists: `initialize_run_dir` mkdirs with exist_ok=False,
+    # so `begin()`'s own mkdir of `<run_dir>/prof` must not get there first.
     if resume_run_dir is not None:
         # Compute the suffix once so the cloud-only provenance lands on the
         # same segment bc_resume writes; pass `info` through so bc_resume
@@ -90,13 +96,27 @@ def train_remote(
         run_dir = Path(resume_run_dir)
         info = prepare_resume(run_dir)
         _write_args_cloud(run_dir, gpu, suffix=info.next_suffix)
-        bc_resume(run_dir, info, overlay, operational, force_config_mismatch,
-                  legacy_lr_warmup_batches)
+        prof_dir = run_dir / "prof"
+        if profile:
+            begin(prof_dir)
+        try:
+            bc_resume(run_dir, info, overlay, operational, force_config_mismatch,
+                      legacy_lr_warmup_batches)
+        finally:
+            if profile:
+                end_and_report(prof_dir)
     else:
         assert fresh_config is not None
         initialize_run_dir(fresh_config, config_input_text)
         _write_args_cloud(fresh_config.run_dir, gpu)
-        bc_run(fresh_config)
+        prof_dir = fresh_config.run_dir / "prof"
+        if profile:
+            begin(prof_dir)
+        try:
+            bc_run(fresh_config)
+        finally:
+            if profile:
+                end_and_report(prof_dir)
 
 
 def _write_args_cloud(run_dir: Path, gpu: str, suffix: str = "") -> None:
@@ -168,7 +188,7 @@ def train(*arglist: str) -> None:
     train_remote.with_options(gpu=gpu).spawn(
         fresh_config, config_input_text, resume_run_dir_arg,
         overlay, operational, gpu, args.force_config_mismatch,
-        args.legacy_lr_warmup_batches,
+        args.legacy_lr_warmup_batches, args.profile,
     )
 
     print()
