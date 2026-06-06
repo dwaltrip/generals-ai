@@ -23,7 +23,7 @@ import json
 from pathlib import Path
 from statistics import fmean, median, pstdev
 
-from bc.constants import obs_channel_count
+from bc.constants import H_PADDED, W_PADDED, obs_channel_count
 from utils.format import (
     format_bytes,
     format_duration,
@@ -243,7 +243,15 @@ def _compute_consumer(a: RunArtifacts) -> dict | None:
     return out or None
 
 
-def _compute_producer(a: RunArtifacts) -> list[dict] | None:
+# Byte-moving seams: annotate with effective GiB/s (obs bytes / time) so a slow
+# byte path stands out.
+_BYTE_SEAMS = frozenset({"assemble", "collate", "shm_copy"})
+
+
+def _compute_producer(a: RunArtifacts) -> dict | None:
+    """Producer seams split into the grouped table (leaves + TOTAL) and the
+    reference spans (`grouped=False`, which overlap the grouped rows). Byte-
+    moving seams carry an effective `gib_s` from the obs tensor size."""
     if not a.prof or not a.prof.get("producer"):
         return None
     prod = a.prof["producer"]
@@ -254,25 +262,37 @@ def _compute_producer(a: RunArtifacts) -> list[dict] | None:
     grouped = {k: (ns, c) for k, (ns, c, g) in norm.items() if g}
     ungrouped = {k: (ns, c) for k, (ns, c, g) in norm.items() if not g}
     total_ns = sum(ns for ns, _ in grouped.values())
-    rows = [
-        {"region": name, "us_per_sample": ns / n / 1e3,
-         "share": ns / total_ns if total_ns else 0.0}
-        for name, (ns, _calls) in sorted(grouped.items(), key=lambda kv: -kv[1][0])
-    ]
-    rows.append({
-        "region": "TOTAL",
-        "us_per_sample": total_ns / n / 1e3,
-        "share": 1.0,
-    })
-    # Ungrouped (`grouped=False`) spans overlap the grouped rows, so they sit
-    # below the TOTAL with share=None — reference, not part of the 100%.
-    for name, (ns, _calls) in sorted(ungrouped.items(), key=lambda kv: -kv[1][0]):
-        rows.append({
-            "region": name,
-            "us_per_sample": ns / n / 1e3,
-            "share": None,
+
+    # Obs bytes/sample (fp32) — dominant term for the byte-moving seams (the
+    # masks/scalars are <3%). None when we can't size the obs tensor.
+    args = a.args or {}
+    n_dense = (args.get("arch", {}).get("obs", {}) or {}).get("dense_history_n")
+    obs_ch = obs_channel_count(n_dense) if n_dense is not None else None
+    obs_bytes = obs_ch * H_PADDED * W_PADDED * 4 if obs_ch else None
+
+    def gib_s(name: str, us_per_sample: float) -> float | None:
+        if name not in _BYTE_SEAMS or not obs_bytes or us_per_sample <= 0:
+            return None
+        return obs_bytes / (us_per_sample * 1e-6) / 1024**3
+
+    grouped_rows = []
+    for name, (ns, _calls) in sorted(grouped.items(), key=lambda kv: -kv[1][0]):
+        us = ns / n / 1e3
+        grouped_rows.append({
+            "region": name, "us_per_sample": us,
+            "share": ns / total_ns if total_ns else 0.0,
+            "gib_s": gib_s(name, us),
         })
-    return rows
+    grouped_rows.append({
+        "region": "TOTAL", "us_per_sample": total_ns / n / 1e3,
+        "share": 1.0, "gib_s": None,
+    })
+
+    reference_rows = [
+        {"region": name, "us_per_sample": ns / n / 1e3}
+        for name, (ns, _calls) in sorted(ungrouped.items(), key=lambda kv: -kv[1][0])
+    ]
+    return {"grouped": grouped_rows, "reference": reference_rows}
 
 
 def _compute_quality(a: RunArtifacts) -> list[dict] | None:
@@ -430,17 +450,23 @@ def _render_consumer(c: dict | None) -> str | None:
     )
 
 
-def _render_producer(rows: list[dict] | None) -> str | None:
-    if not rows:
+def _render_producer(p: dict | None) -> str | None:
+    if not p or not p.get("grouped"):
         return None
-    table = [
-        [r["region"], f"{r['us_per_sample']:.1f}",
-         format_pct(r["share"]) if r["share"] is not None else "ref"]
-        for r in rows
+    grouped = [
+        [r["region"], f"{r['us_per_sample']:.1f}", format_pct(r["share"]),
+         f"{r['gib_s']:.2f}" if r.get("gib_s") is not None else "—"]
+        for r in p["grouped"]
     ]
-    return "## Producer obs-build (µs/sample)\n\n" + md_table(
-        ["region", "µs/sample", "share"], table, align=("left", "right", "right")
+    out = "## Producer obs-build (µs/sample)\n\n" + md_table(
+        ["region", "µs/sample", "share", "GiB/s"],
+        grouped, align=("left", "right", "right", "right"),
     )
+    if p.get("reference"):
+        ref = [[r["region"], f"{r['us_per_sample']:.1f}"] for r in p["reference"]]
+        out += "\n\n### Producer — reference spans (overlap the grouped seams; not in TOTAL)\n\n"
+        out += md_table(["region", "µs/sample"], ref, align=("left", "right"))
+    return out
 
 
 def _render_quality(rows: list[dict] | None) -> str | None:

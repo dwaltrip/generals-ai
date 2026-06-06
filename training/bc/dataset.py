@@ -67,11 +67,18 @@ def _group_by_path(samples: list[tuple[Path, int]]) -> list[tuple[Path, tuple[in
 
 
 def timed_collate(batch: list[dict[str, torch.Tensor]]) -> dict[str, torch.Tensor]:
-    """`default_collate` wrapped in a `collate` seam. Collation runs inside the
-    DataLoader worker (`_IterableDatasetFetcher` collates the per-sample dicts),
-    so the worker's own timer records it — inert when profiling is off."""
+    """`default_collate` under a `collate` seam (runs in the worker, so its timer
+    records it). When profiling, also pre-share the batch under `shm_copy` to
+    surface the worker→main IPC copy the queue put would otherwise hide; the put
+    reuses the shared storage, so total work is unchanged."""
     with timer.section("collate"):
-        return default_collate(batch)
+        out = default_collate(batch)
+    if timer.enabled:
+        with timer.section("shm_copy"):
+            for v in out.values():
+                if isinstance(v, torch.Tensor):
+                    v.share_memory_()
+    return out
 
 
 def _shuffle_buffered[T](
@@ -354,8 +361,9 @@ class IterableDataset(TorchIterableDataset):
                 perspective_slot = int(meta["perspective_player_ids"][k])
                 opp_slots = canonical_slot_order(perspective_slot)[1:]
 
-                state = init_memory(sim, perspective_slot, H, W, self._obs_cfg)
-                bfs_cache = bfs.init_bfs_cache()
+                with timer.section("perspective_setup"):
+                    state = init_memory(sim, perspective_slot, H, W, self._obs_cfg)
+                    bfs_cache = bfs.init_bfs_cache()
 
                 elim_t = int(meta["elim_timestep"][k])
                 end_t = T - 1 if elim_t == -1 else min(T - 1, elim_t)
@@ -364,15 +372,15 @@ class IterableDataset(TorchIterableDataset):
                     vis = compute_visibility(sim["ownership"][t], perspective_slot, H, W)
                     step_memory(state, sim, t, vis, perspective_slot, H, W)
 
-                    # Ungrouped reference span: wraps the build_obs/mask/tail
-                    # child seams, so it overlaps them and stays out of the
-                    # grouped TOTAL. Reconciles against their sum — a gap means
-                    # un-seamed cost inside encode_frame. Seam the call, never
-                    # the `yield` (which would clock consumer-side suspension).
+                    # Reference span over the build_obs/mask/tail child seams.
                     with timer.section("encode_frame", grouped=False):
                         sample = encode_frame(
                             sim, meta, k, t,
                             perspective_slot, opp_slots, vis,
                             state, bfs_cache, H, W,
                         )
-                    yield sample
+                    # Measures per-sample overhead plus (per batch boundary) collate, shm_copy,
+                    # and the queue put/block. Then `handoff − collate − shm_copy` should give
+                    # us the worker→main IPC/blocking blind spot.
+                    with timer.section("handoff", grouped=False):
+                        yield sample
