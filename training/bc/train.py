@@ -35,7 +35,7 @@ from torch.utils.data import DataLoader
 
 from bc.checkpoint import ckpt_name
 from bc.constants import H_PADDED, W_PADDED
-from bc.dataset import IterableDataset, assert_safe_loader
+from bc.dataset import IterableDataset, assert_safe_loader, timed_collate
 from bc.eval import run_val
 from bc.loss import LossAccumulator, bc_loss
 from bc.model import BCModel
@@ -274,7 +274,9 @@ def build_dataloader(
         prefetch_factor=config.prefetch_factor,
         device=device,
     )
-    loader = DataLoader(ds, batch_size=config.batch_size, **dl_kwargs)
+    loader = DataLoader(
+        ds, batch_size=config.batch_size, collate_fn=timed_collate, **dl_kwargs
+    )
     assert_safe_loader(loader)
     print(
         f"dataloader: batch_size={config.batch_size}  "

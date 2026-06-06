@@ -49,7 +49,19 @@ def test_records_when_enabled():
     assert snap["sec"][1] == 2  # two recorded spans
     assert snap["man"][1] == 1
     assert snap["fn"][1] == 1
-    assert all(ns >= 0 for ns, _ in snap.values())
+    assert all(ns >= 0 for ns, *_ in snap.values())
+
+
+def test_grouped_flag():
+    t = Timer()
+    t.enabled = True
+    with t.section("leaf"):
+        pass
+    with t.section("parent", grouped=False):  # overlapping/reference span
+        pass
+    snap = t.snapshot()
+    assert snap["leaf"][2] is True
+    assert snap["parent"][2] is False
 
 
 def test_reset_clears():
@@ -93,7 +105,7 @@ def test_add_records_external_duration():
     t.enabled = True
     t.add("h2d", 5000)
     t.add("h2d", 3000)
-    assert t.snapshot()["h2d"] == (8000, 2)
+    assert t.snapshot()["h2d"] == (8000, 2, True)
 
 
 def test_add_noop_when_disabled():

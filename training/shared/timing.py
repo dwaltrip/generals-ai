@@ -49,6 +49,7 @@ class Timer:
         self._tot: dict[str, int] = defaultdict(int)   # name -> total ns
         self._cnt: dict[str, int] = defaultdict(int)   # name -> recorded spans
         self._open: dict[str, int] = {}                # name -> start ns (manual)
+        self._ungrouped: set[str] = set()              # names recorded grouped=False
 
     def reset(self) -> None:
         """Clear all tallies + any dangling manual timers. Each worker calls
@@ -57,30 +58,44 @@ class Timer:
         self._tot.clear()
         self._cnt.clear()
         self._open.clear()
+        self._ungrouped.clear()
 
-    def snapshot(self) -> dict[str, tuple[int, int]]:
-        """`name -> (total_ns, calls)` — a plain dict safe to json-dump / pickle.
-        Warns if a manual timer is still open: an unbalanced `start` without a
-        `stop` is usually a buggy seam, and its time goes silently unrecorded."""
+    def snapshot(self) -> dict[str, tuple[int, int, bool]]:
+        """`name -> (total_ns, calls, grouped)` — a plain dict safe to json-dump /
+        pickle. `grouped` is False for reference spans (`section(..., grouped=
+        False)`) that overlap other spans, so the reporter keeps them out of the
+        TOTAL. Warns if a manual timer is still open: an unbalanced `start`
+        without a `stop` is usually a buggy seam, and its time goes silently
+        unrecorded."""
         if self._open:
             warnings.warn(f"snapshot with timers still open: {list(self._open)}")
-        return {n: (self._tot[n], self._cnt[n]) for n in self._tot}
+        return {
+            n: (self._tot[n], self._cnt[n], n not in self._ungrouped)
+            for n in self._tot
+        }
 
-    def _record(self, name: str, ns: int) -> None:
+    def _record(self, name: str, ns: int, grouped: bool = True) -> None:
         self._tot[name] += ns
         self._cnt[name] += 1
+        if not grouped:
+            self._ungrouped.add(name)
 
-    def section(self, name: str):
-        """Time a `with` block. No-op context when disabled."""
-        return self._section(name) if self.enabled else _NULL
+    def section(self, name: str, grouped: bool = True):
+        """Time a `with` block. No-op context when disabled.
+
+        `grouped=False` marks the span as overlapping/reference — still recorded,
+        but the reporter keeps it out of the grouped TOTAL and %share. Use it for
+        a parent span wrapping other seams (e.g. `encode_frame` over its
+        children), where summing both would double-count."""
+        return self._section(name, grouped) if self.enabled else _NULL
 
     @contextmanager
-    def _section(self, name: str):
+    def _section(self, name: str, grouped: bool = True):
         t = time.perf_counter_ns()
         try:
             yield
         finally:
-            self._record(name, time.perf_counter_ns() - t)
+            self._record(name, time.perf_counter_ns() - t, grouped)
 
     def timed(self, name: str):
         """Decorator form of `section` for whole functions. Reads `enabled` at

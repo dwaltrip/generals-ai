@@ -248,17 +248,30 @@ def _compute_producer(a: RunArtifacts) -> list[dict] | None:
         return None
     prod = a.prof["producer"]
     n = a.prof.get("n_samples") or 1
-    total_ns = sum(ns for ns, _ in prod.values())
+    # Normalize to (ns, calls, grouped); older summary.json wrote 2-tuples with
+    # no grouped flag — treat those as grouped.
+    norm = {k: (v[0], v[1], v[2] if len(v) > 2 else True) for k, v in prod.items()}
+    grouped = {k: (ns, c) for k, (ns, c, g) in norm.items() if g}
+    ungrouped = {k: (ns, c) for k, (ns, c, g) in norm.items() if not g}
+    total_ns = sum(ns for ns, _ in grouped.values())
     rows = [
         {"region": name, "us_per_sample": ns / n / 1e3,
          "share": ns / total_ns if total_ns else 0.0}
-        for name, (ns, _calls) in sorted(prod.items(), key=lambda kv: -kv[1][0])
+        for name, (ns, _calls) in sorted(grouped.items(), key=lambda kv: -kv[1][0])
     ]
     rows.append({
         "region": "TOTAL",
         "us_per_sample": total_ns / n / 1e3,
         "share": 1.0,
     })
+    # Ungrouped (`grouped=False`) spans overlap the grouped rows, so they sit
+    # below the TOTAL with share=None — reference, not part of the 100%.
+    for name, (ns, _calls) in sorted(ungrouped.items(), key=lambda kv: -kv[1][0]):
+        rows.append({
+            "region": name,
+            "us_per_sample": ns / n / 1e3,
+            "share": None,
+        })
     return rows
 
 
@@ -420,7 +433,11 @@ def _render_consumer(c: dict | None) -> str | None:
 def _render_producer(rows: list[dict] | None) -> str | None:
     if not rows:
         return None
-    table = [[r["region"], f"{r['us_per_sample']:.1f}", format_pct(r["share"])] for r in rows]
+    table = [
+        [r["region"], f"{r['us_per_sample']:.1f}",
+         format_pct(r["share"]) if r["share"] is not None else "ref"]
+        for r in rows
+    ]
     return "## Producer obs-build (µs/sample)\n\n" + md_table(
         ["region", "µs/sample", "share"], table, align=("left", "right", "right")
     )

@@ -33,7 +33,7 @@ from pathlib import Path
 from shared.timing import timer
 
 
-Tally = dict[str, tuple[int, int]]  # name -> (total_ns, calls)
+Tally = dict[str, tuple[int, int, bool]]  # name -> (total_ns, calls, grouped)
 
 
 @dataclass
@@ -80,9 +80,14 @@ def end_and_report(prof_dir: Path) -> dict:
     producer = _merge(prof_dir.glob("worker_*.json"))  # explicit glob — never summary.json
     consumer = _merge([prof_dir / "main.json"]) if main_snap else {}
 
-    # Producer seams are all once-per-sample, so the largest call count is the
+    # Per-sample seams are the most frequent, so the largest call count is the
     # sample count — the denominator that turns summed worker ns into µs/sample.
-    n_samples = max((calls for _, calls in producer.values()), default=0)
+    # Ungrouped spans are excluded: a parent like `encode_frame` shares the
+    # per-sample count, but a coarser one (per-batch/game) must not anchor it.
+    n_samples = max(
+        (calls for _ns, calls, grouped in producer.values() if grouped),
+        default=0,
+    )
     _print_producer(producer, n_samples)
     _print_consumer(consumer)
 
@@ -92,33 +97,41 @@ def end_and_report(prof_dir: Path) -> dict:
 
 
 def _merge(paths: Iterable[Path]) -> Tally:
-    """Sum `{name: [ns, calls]}` files into one tally."""
+    """Sum `{name: [ns, calls, grouped]}` files into one tally."""
     tot: dict[str, int] = {}
     cnt: dict[str, int] = {}
+    grouped: dict[str, bool] = {}
     for p in paths:
-        for name, (ns, c) in json.loads(p.read_text()).items():
+        for name, (ns, c, g) in json.loads(p.read_text()).items():
             tot[name] = tot.get(name, 0) + ns
             cnt[name] = cnt.get(name, 0) + c
-    return {name: (tot[name], cnt[name]) for name in tot}
+            grouped[name] = g
+    return {name: (tot[name], cnt[name], grouped[name]) for name in tot}
 
 
 def _print_producer(data: Tally, n_samples: int) -> None:
     """Per-region µs/sample (Σns / n_samples) — parallelism-invariant, the
     number to compare across n and before/after a fix. `%share` is within-table
     (regions are disjoint and serial within a worker); the TOTAL is the
-    per-sample obs-build cost on one core."""
+    per-sample obs-build cost on one core. Ungrouped (`grouped=False`) spans
+    overlap the grouped ones, so they print below the TOTAL as reference rows."""
     print("\nproducer (per sample, summed across workers):")
     if not data:
         print("  (no regions recorded)")
         return
-    total_ns = sum(ns for ns, _ in data.values())
+    grouped = {n: (ns, c) for n, (ns, c, g) in data.items() if g}
+    ungrouped = {n: (ns, c) for n, (ns, c, g) in data.items() if not g}
+    total_ns = sum(ns for ns, _ in grouped.values())
     print(f"  {'region':<16} {'us/sample':>10} {'calls':>9} {'share':>7}")
-    for name, (ns, calls) in sorted(data.items(), key=lambda kv: -kv[1][0]):
+    for name, (ns, calls) in sorted(grouped.items(), key=lambda kv: -kv[1][0]):
         us = ns / n_samples / 1e3 if n_samples else 0.0
         share = ns / total_ns * 100 if total_ns else 0.0
         print(f"  {name:<16} {us:>10.2f} {calls:>9,} {share:>6.1f}%")
     total_us = total_ns / n_samples / 1e3 if n_samples else 0.0
     print(f"  {'TOTAL':<16} {total_us:>10.2f} {'':>9} {100.0:>6.1f}%")
+    for name, (ns, calls) in sorted(ungrouped.items(), key=lambda kv: -kv[1][0]):
+        us = ns / n_samples / 1e3 if n_samples else 0.0
+        print(f"  {name:<16} {us:>10.2f} {calls:>9,} {'(ref)':>7}")
 
 
 def _print_consumer(data: Tally) -> None:
@@ -130,6 +143,6 @@ def _print_consumer(data: Tally) -> None:
         print("  (no regions recorded)")
         return
     print(f"  {'region':<16} {'total_ms':>10} {'calls':>9} {'mean_ms':>9}")
-    for name, (ns, calls) in sorted(data.items(), key=lambda kv: -kv[1][0]):
+    for name, (ns, calls, _grouped) in sorted(data.items(), key=lambda kv: -kv[1][0]):
         mean_ms = ns / calls / 1e6 if calls else 0.0
         print(f"  {name:<16} {ns / 1e6:>10.2f} {calls:>9,} {mean_ms:>9.3f}")
