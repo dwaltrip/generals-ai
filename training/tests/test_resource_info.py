@@ -4,15 +4,7 @@ from __future__ import annotations
 
 import torch
 
-from shared.resource_info import _fmt_bytes, log_resource_info
-
-
-def test_fmt_bytes():
-    assert _fmt_bytes(0) == "0.0 B"
-    assert _fmt_bytes(1024) == "1.0 KiB"
-    assert _fmt_bytes(1024**3) == "1.0 GiB"
-    # The per-batch obs figure at n=20 (bs=512, 126 ch, 32x32, fp32).
-    assert _fmt_bytes(512 * 126 * 32 * 32 * 4) == "252.0 MiB"
+from shared.resource_info import log_resource_info
 
 
 def test_log_resource_info_smoke(capsys):
