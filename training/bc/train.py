@@ -55,6 +55,7 @@ from shared.device import (
 from shared.gpu_sidecar import gpu_util_sidecar
 from shared.perf import compute_mfu, measure_total_flops, peak_tflops_fp32
 from shared.resource_info import log_resource_info
+from shared.timing import timer
 from shared.timing_run import active_sink
 from utils.log import abort, tee_stdio
 
@@ -93,6 +94,27 @@ def _measure_model_flops_per_sample(model: BCModel, device: torch.device) -> int
     if not was_training:
         model.eval()
     return flops
+
+
+def _move_batch_timed(
+    batch: dict[str, torch.Tensor], device: torch.device
+) -> dict[str, torch.Tensor]:
+    """`move_batch`, timed under `h2d`. On CUDA the copy is async (pinned +
+    `non_blocking`), so wall-clock would catch only the launch — CUDA events
+    time the real transfer; elsewhere a wall-clock `section` is the transfer.
+    The event path adds a per-batch sync, acceptable since the loop already
+    syncs each batch via the `.item()` logging. Inert when profiling is off."""
+    if timer.enabled and device.type == "cuda":
+        ev0 = torch.cuda.Event(enable_timing=True)
+        ev1 = torch.cuda.Event(enable_timing=True)
+        ev0.record()
+        moved = move_batch(batch, device)
+        ev1.record()
+        ev1.synchronize()
+        timer.add("h2d", int(ev0.elapsed_time(ev1) * 1e6))  # ms → ns
+        return moved
+    with timer.section("h2d"):
+        return move_batch(batch, device)
 
 
 def train_one_epoch(
@@ -146,7 +168,12 @@ def train_one_epoch(
     window_start = epoch_start
     window_samples = 0
 
+    # `fetch_wait` brackets the gap between batches — time the main loop is
+    # blocked on the producer (the starvation signal). Manual start/stop because
+    # the wait spans the `for`'s implicit `next()`. No-ops when profiling is off.
+    timer.start("fetch_wait")
     for batch_idx, batch in enumerate(loader):
+        timer.stop("fetch_wait")
         if max_batches is not None and batch_idx >= max_batches:
             break
 
@@ -155,7 +182,7 @@ def train_one_epoch(
         if warmup is not None:
             warmup.step(optim)
 
-        batch = move_batch(batch, device)
+        batch = _move_batch_timed(batch, device)
         optim.zero_grad()
         # AMP path: autocast promotes the matmul/conv-heavy forward to
         # fp16 (tensor-core eligible on CUDA); numerically-sensitive
@@ -204,6 +231,12 @@ def train_one_epoch(
             )
             window_start = time.perf_counter()
             window_samples = 0
+
+        timer.start("fetch_wait")
+    else:
+        # Loop ran to exhaustion (no max-batches break): close the wait that
+        # hit StopIteration so no timer is left open at snapshot.
+        timer.stop("fetch_wait")
 
     epoch_dur = time.perf_counter() - epoch_start
     s = acc.summary()

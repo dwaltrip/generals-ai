@@ -88,6 +88,20 @@ def test_snapshot_warns_on_open_timer():
     assert "dangling" not in snap
 
 
+def test_add_records_external_duration():
+    t = Timer()
+    t.enabled = True
+    t.add("h2d", 5000)
+    t.add("h2d", 3000)
+    assert t.snapshot()["h2d"] == (8000, 2)
+
+
+def test_add_noop_when_disabled():
+    t = Timer()  # disabled
+    t.add("h2d", 5000)
+    assert t.snapshot() == {}
+
+
 def test_timed_preserves_function_identity():
     t = Timer()
 

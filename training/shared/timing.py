@@ -116,6 +116,14 @@ class Timer:
             return
         self._record(name, time.perf_counter_ns() - t)
 
+    def add(self, name: str, ns: int) -> None:
+        """Record an already-measured duration as a single span under `name` —
+        for timings the wall-clock front-ends can't capture, e.g. an async GPU
+        copy clocked with CUDA events."""
+        if not self.enabled:
+            return
+        self._record(name, ns)
+
 
 # Process-global singleton the seams import. Each process (main + every forked
 # DataLoader worker) gets its own instance; `shared.timing_run` flips it on and

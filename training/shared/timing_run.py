@@ -69,7 +69,7 @@ def active_sink() -> FileSink | None:
     return _active
 
 
-def end_and_report(prof_dir: Path) -> dict[str, Tally]:
+def end_and_report(prof_dir: Path) -> dict:
     """Close the window (main process): flush the main-process consumer tally,
     merge it and the per-worker producer files into two tables, print them, and
     persist `summary.json`."""
@@ -80,10 +80,13 @@ def end_and_report(prof_dir: Path) -> dict[str, Tally]:
     producer = _merge(prof_dir.glob("worker_*.json"))  # explicit glob — never summary.json
     consumer = _merge([prof_dir / "main.json"]) if main_snap else {}
 
-    _print_table("producer (summed across workers)", producer)
-    _print_table("consumer (main process)", consumer)
+    # Producer seams are all once-per-sample, so the largest call count is the
+    # sample count — the denominator that turns summed worker ns into µs/sample.
+    n_samples = max((calls for _, calls in producer.values()), default=0)
+    _print_producer(producer, n_samples)
+    _print_consumer(consumer)
 
-    out = {"producer": producer, "consumer": consumer}
+    out = {"producer": producer, "consumer": consumer, "n_samples": n_samples}
     (prof_dir / "summary.json").write_text(json.dumps(out, indent=2))
     return out
 
@@ -99,18 +102,34 @@ def _merge(paths: Iterable[Path]) -> Tally:
     return {name: (tot[name], cnt[name]) for name in tot}
 
 
-def _print_table(title: str, data: Tally) -> None:
-    """Print one region table sorted by total time. `%share` is within-table —
-    valid because every region here is serial within its process. Per-sample
-    normalization (µs/sample via an anchor region's count) lands with the
-    producer seams; until then this shows totals, calls, and mean per call."""
-    print(f"\n{title}:")
+def _print_producer(data: Tally, n_samples: int) -> None:
+    """Per-region µs/sample (Σns / n_samples) — parallelism-invariant, the
+    number to compare across n and before/after a fix. `%share` is within-table
+    (regions are disjoint and serial within a worker); the TOTAL is the
+    per-sample obs-build cost on one core."""
+    print("\nproducer (per sample, summed across workers):")
     if not data:
         print("  (no regions recorded)")
         return
     total_ns = sum(ns for ns, _ in data.values())
-    print(f"  {'region':<24} {'total_ms':>10} {'calls':>9} {'mean_us':>9} {'share':>7}")
+    print(f"  {'region':<16} {'us/sample':>10} {'calls':>9} {'share':>7}")
     for name, (ns, calls) in sorted(data.items(), key=lambda kv: -kv[1][0]):
-        mean_us = ns / calls / 1e3 if calls else 0.0
+        us = ns / n_samples / 1e3 if n_samples else 0.0
         share = ns / total_ns * 100 if total_ns else 0.0
-        print(f"  {name:<24} {ns / 1e6:>10.2f} {calls:>9,} {mean_us:>9.2f} {share:>6.1f}%")
+        print(f"  {name:<16} {us:>10.2f} {calls:>9,} {share:>6.1f}%")
+    total_us = total_ns / n_samples / 1e3 if n_samples else 0.0
+    print(f"  {'TOTAL':<16} {total_us:>10.2f} {'':>9} {100.0:>6.1f}%")
+
+
+def _print_consumer(data: Tally) -> None:
+    """Main-process regions on their own (serial) denominator — wall-clock per
+    batch. `fetch_wait`'s total is the starvation signal: time the GPU sat idle
+    waiting on the producer."""
+    print("\nconsumer (main process):")
+    if not data:
+        print("  (no regions recorded)")
+        return
+    print(f"  {'region':<16} {'total_ms':>10} {'calls':>9} {'mean_ms':>9}")
+    for name, (ns, calls) in sorted(data.items(), key=lambda kv: -kv[1][0]):
+        mean_ms = ns / calls / 1e6 if calls else 0.0
+        print(f"  {name:<16} {ns / 1e6:>10.2f} {calls:>9,} {mean_ms:>9.3f}")
