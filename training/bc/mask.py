@@ -13,8 +13,10 @@ import numpy as np
 
 from bc import actions
 from bc.constants import H_PADDED, W_PADDED
+from shared.timing import timer
 
 
+@timer.timed("build_mask")
 def build_mask(
     sim: dict[str, np.ndarray],
     t: int,

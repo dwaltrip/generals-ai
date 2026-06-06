@@ -61,7 +61,8 @@ from bc.constants import (
     obs_channel_count,
 )
 from bc.obs_config import OBS_CONFIG_DEFAULTS, ObsConfig
-from game_types.state_constants import OWN_FOG, OWN_MOUNTAIN 
+from game_types.state_constants import OWN_FOG, OWN_MOUNTAIN
+from shared.timing import timer
 
 
 # ---------------------------------------------------------------------------
@@ -409,6 +410,7 @@ def init_memory_live_fog_only(
     return init_memory_live(sim, perspective_slot, H, W, OBS_CONFIG_DEFAULTS, P)
 
 
+@timer.timed("step_memory")
 def step_memory(
     state: MemoryState,
     sim: dict[str, np.ndarray],
@@ -990,38 +992,40 @@ def build_obs(
     `build_obs` is pure-read w.r.t. `state` (the only side effect is lazy
     cache fills inside `bfs.compute_or_get`, which are idempotent).
     """
-    own = sim["ownership"][t].reshape(H, W)
-    armies = sim["armies"][t].reshape(H, W)
+    with timer.section("prelude"):
+        own = sim["ownership"][t].reshape(H, W)
+        armies = sim["armies"][t].reshape(H, W)
 
-    # Cross-cat helper — bool form feeds both cat 3 (as a channel) and cat 5
-    # (the BFS passability policy treats fog-structures as impassable).
-    # cities_now_2d folds in any city that exists at tick t — initial cities
-    # plus post-capture cities (general → city per §9 line 168), whose
-    # existence is visible through fog per §5 line 87 even when the
-    # perspective doesn't have direct vision of the cell.
-    cities_now_flat = np.zeros(H * W, dtype=bool)
-    cities_now_flat[sim["cities"][sim["cities_present_at"] <= t]] = True
-    cities_now_2d = cities_now_flat.reshape(H, W)
-    structures_in_fog_mask = (
-        (state.is_structure | cities_now_2d)
-        & ~state.known_mountain
-        & ~state.known_city
-        & ~state.known_general
-    )
+        # Cross-cat helper — bool form feeds both cat 3 (as a channel) and cat 5
+        # (the BFS passability policy treats fog-structures as impassable).
+        # cities_now_2d folds in any city that exists at tick t — initial cities
+        # plus post-capture cities (general → city per §9 line 168), whose
+        # existence is visible through fog per §5 line 87 even when the
+        # perspective doesn't have direct vision of the cell.
+        cities_now_flat = np.zeros(H * W, dtype=bool)
+        cities_now_flat[sim["cities"][sim["cities_present_at"] <= t]] = True
+        cities_now_2d = cities_now_flat.reshape(H, W)
+        structures_in_fog_mask = (
+            (state.is_structure | cities_now_2d)
+            & ~state.known_mountain
+            & ~state.known_city
+            & ~state.known_general
+        )
 
-    channels = [
-        *_cat_visibility(vis),
-        *_cat_visible_state(vis, own, armies, perspective_slot, opp_slots),
-        *_cat_persistent_map(state, structures_in_fog_mask),
-        *_cat_memory(state, perspective_slot, opp_slots),
-        *_cat_bfs(state, t, perspective_slot, opp_slots, vis, own, armies,
-                  structures_in_fog_mask, bfs_cache, H, W),
-        *_cat_self_broadcast(state, t, perspective_slot, H, W),
-        *_cat_opp_broadcast(state, t, opp_slots, H, W),
-        *_cat_scoreboard(state, t, opp_slots, H, W),
-        *_cat_contact_capture(state, perspective_slot, opp_slots, H, W),
-        *_cat_dense_history(state, H, W),
-    ]
+    with timer.section("channel_build"):
+        channels = [
+            *_cat_visibility(vis),
+            *_cat_visible_state(vis, own, armies, perspective_slot, opp_slots),
+            *_cat_persistent_map(state, structures_in_fog_mask),
+            *_cat_memory(state, perspective_slot, opp_slots),
+            *_cat_bfs(state, t, perspective_slot, opp_slots, vis, own, armies,
+                      structures_in_fog_mask, bfs_cache, H, W),
+            *_cat_self_broadcast(state, t, perspective_slot, H, W),
+            *_cat_opp_broadcast(state, t, opp_slots, H, W),
+            *_cat_scoreboard(state, t, opp_slots, H, W),
+            *_cat_contact_capture(state, perspective_slot, opp_slots, H, W),
+            *_cat_dense_history(state, H, W),
+        ]
 
     n_channels = obs_channel_count(state.obs_cfg.dense_history_n)
     assert len(channels) == n_channels, (
@@ -1036,7 +1040,8 @@ def build_obs(
     # cost that scales with channel count, so collapsing it matters most for
     # large dense-history depths. The pad region stays zero; the slice
     # assignment converts any non-float32 channel exactly as `astype` did.
-    obs = np.zeros((n_channels, H_PADDED, W_PADDED), dtype=np.float32)
-    for i, ch in enumerate(channels):
-        obs[i, :H, :W] = ch
+    with timer.section("assemble"):
+        obs = np.zeros((n_channels, H_PADDED, W_PADDED), dtype=np.float32)
+        for i, ch in enumerate(channels):
+            obs[i, :H, :W] = ch
     return obs

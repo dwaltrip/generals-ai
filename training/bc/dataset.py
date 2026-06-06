@@ -130,30 +130,34 @@ def encode_frame(
     obs_np = build_obs(sim, t, perspective_slot, opp_slots, vis, state, bfs_cache, H, W)
     mask_np = build_mask(sim, t, perspective_slot, H, W)
 
-    # Per-sample [1, H_PADDED, W_PADDED] bool, True over the unpadded board
-    # region. Consumed by PassHead (masked global pool) and ValueHead (zero
-    # padded contributions before flatten) so per-game board-size variance
-    # doesn't leak into the head outputs as a magnitude effect.
-    valid_mask_np = np.zeros((1, H_PADDED, W_PADDED), dtype=np.bool_)
-    valid_mask_np[0, :H, :W] = True
+    # Mask + action target + value target + the numpy→tensor conversion. Timed
+    # as one region: it's the per-sample tail after the obs build, dominated by
+    # the `torch.from_numpy` / `torch.tensor` conversions feeding collation.
+    with timer.section("encode_tail"):
+        # Per-sample [1, H_PADDED, W_PADDED] bool, True over the unpadded board
+        # region. Consumed by PassHead (masked global pool) and ValueHead (zero
+        # padded contributions before flatten) so per-game board-size variance
+        # doesn't leak into the head outputs as a magnitude effect.
+        valid_mask_np = np.zeros((1, H_PADDED, W_PADDED), dtype=np.bool_)
+        valid_mask_np[0, :H, :W] = True
 
-    src = int(sim["actions_source"][perspective_slot, t])
-    dst = int(sim["actions_dest"][perspective_slot, t])
-    is50 = int(sim["actions_is50"][perspective_slot, t])
-    is_pass, flat_idx = actions.encode(src, dst, is50, W, W_PADDED)
+        src = int(sim["actions_source"][perspective_slot, t])
+        dst = int(sim["actions_dest"][perspective_slot, t])
+        is50 = int(sim["actions_is50"][perspective_slot, t])
+        is_pass, flat_idx = actions.encode(src, dst, is50, W, W_PADDED)
 
-    # Value target: placement is 1..P (1st through Pth); shift to a 0-indexed
-    # class label for F.cross_entropy.
-    value_target = int(meta["placement"][k]) - 1
+        # Value target: placement is 1..P (1st through Pth); shift to a 0-indexed
+        # class label for F.cross_entropy.
+        value_target = int(meta["placement"][k]) - 1
 
-    return {
-        "obs": torch.from_numpy(obs_np),
-        "mask": torch.from_numpy(mask_np),
-        "valid_mask": torch.from_numpy(valid_mask_np),
-        "action_target": torch.tensor(flat_idx, dtype=torch.int64),
-        "is_pass": torch.tensor(is_pass, dtype=torch.bool),
-        "value_target": torch.tensor(value_target, dtype=torch.int64),
-    }
+        return {
+            "obs": torch.from_numpy(obs_np),
+            "mask": torch.from_numpy(mask_np),
+            "valid_mask": torch.from_numpy(valid_mask_np),
+            "action_target": torch.tensor(flat_idx, dtype=torch.int64),
+            "is_pass": torch.tensor(is_pass, dtype=torch.bool),
+            "value_target": torch.tensor(value_target, dtype=torch.int64),
+        }
 
 
 def assert_safe_loader(loader: DataLoader) -> None:

@@ -17,7 +17,10 @@ from __future__ import annotations
 
 import numpy as np
 
+from shared.timing import timer
 
+
+@timer.timed("visibility")
 def compute_visibility(
     ownership_t: np.ndarray,
     perspective_slot: int,
