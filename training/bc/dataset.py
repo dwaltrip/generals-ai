@@ -26,6 +26,7 @@ from __future__ import annotations
 from collections.abc import Iterable, Iterator
 from pathlib import Path
 import random
+from typing import TYPE_CHECKING
 
 import numpy as np
 import torch
@@ -44,6 +45,11 @@ from bc.obs import (
 )
 from bc.obs_config import ObsConfig
 from bc.visibility import compute_visibility
+from shared.timing import timer
+
+
+if TYPE_CHECKING:
+    from shared.timing_run import FileSink
 
 
 def _group_by_path(samples: list[tuple[Path, int]]) -> list[tuple[Path, tuple[int, ...]]]:
@@ -193,6 +199,7 @@ class IterableDataset(TorchIterableDataset):
         seed: int,
         obs_cfg: ObsConfig,
         shuffle_buffer_size: int = 0,
+        prof_sink: FileSink | None = None,
     ) -> None:
         """
         `samples` is a list of `(sim_path, perspective_k)` pairs. Caller is
@@ -202,12 +209,18 @@ class IterableDataset(TorchIterableDataset):
         `obs_cfg` is the obs-encoder config (sizes the obs tensor); it must
         match the model's `in_ch`. Required — pass `config.arch.obs` from the
         training config (or `OBS_CONFIG_DEFAULTS` for default-shape diagnostics).
+
+        `prof_sink`, when set, switches on the per-worker timing profiler: each
+        worker enables `timer` for its walk and flushes a snapshot through the
+        sink on teardown. `None` (the default) keeps every timing seam inert.
+        Wired from `train.build_dataloader` via `timing_run.active_sink()`.
         """
         self._groups = _group_by_path(samples)
         self._seed = seed
         self._obs_cfg = obs_cfg
         self._shuffle_buffer_size = shuffle_buffer_size
         self._epoch = 0
+        self._prof_sink = prof_sink
 
     def set_epoch(self, epoch: int) -> None:
         """Set the epoch index used to seed the per-epoch shuffle. Call
@@ -284,14 +297,26 @@ class IterableDataset(TorchIterableDataset):
         else:
             worker_id, num_workers = worker_info.id, worker_info.num_workers
 
+        # Profiling is per-process: enable + reset this worker's own `timer` so
+        # its flushed file holds just this epoch's walk. Inert when no sink.
+        if self._prof_sink is not None:
+            timer.enabled = True
+            timer.reset()
+
         rng = random.Random(self._seed + self._epoch + worker_id * 1009)
         groups = self._iter_groups(rng, worker_id=worker_id, num_workers=num_workers)
 
         walk = self._walk(groups)
-        if self._shuffle_buffer_size > 1:
-            yield from _shuffle_buffered(walk, self._shuffle_buffer_size, rng)
-        else:
-            yield from walk
+        try:
+            if self._shuffle_buffer_size > 1:
+                yield from _shuffle_buffered(walk, self._shuffle_buffer_size, rng)
+            else:
+                yield from walk
+        finally:
+            # Runs on normal exhaustion AND early break (generator close on
+            # worker shutdown), so the snapshot always flushes.
+            if self._prof_sink is not None:
+                self._prof_sink.flush(self._epoch, worker_id, timer.snapshot())
 
     def _walk(
         self,

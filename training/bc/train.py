@@ -55,6 +55,7 @@ from shared.device import (
 from shared.gpu_sidecar import gpu_util_sidecar
 from shared.perf import compute_mfu, measure_total_flops, peak_tflops_fp32
 from shared.resource_info import log_resource_info
+from shared.timing_run import active_sink
 from utils.log import abort, tee_stdio
 
 
@@ -232,6 +233,7 @@ def build_dataloader(
         seed=config.seed,
         obs_cfg=config.arch.obs,
         shuffle_buffer_size=config.shuffle_buffer_size,
+        prof_sink=active_sink(),
     )
     dl_kwargs = dataloader_kwargs(
         num_workers=config.num_workers,

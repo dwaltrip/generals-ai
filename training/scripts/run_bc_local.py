@@ -24,6 +24,7 @@ from bc.train_cli import (
     operational_overrides,
     resume_run_dir,
 )
+from shared.timing_run import begin, end_and_report
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -42,7 +43,11 @@ def main() -> None:
     else:
         config = config_from_args(args)
         initialize_run_dir(config, Path(args.config).read_text())
+        if args.profile:
+            begin(config.run_dir / "prof")
         bc_run(config)
+        if args.profile:
+            end_and_report(config.run_dir / "prof")
 
 
 if __name__ == "__main__":

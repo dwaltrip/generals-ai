@@ -86,6 +86,20 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Skip per-epoch val pass. For perf-testing runs where it isn't needed.",
     )
 
+    # Profiling directive — not a TrainConfig field (how-we-ran, not
+    # what-we-trained). Read by the wrapper to bracket the run with the timing
+    # profiler's begin/end_and_report.
+    parser.add_argument(
+        "--profile",
+        action="store_true",
+        default=False,
+        help=(
+            "Enable the obs-pipeline timing profiler for this run: per-worker "
+            "region tallies are flushed under <run_dir>/prof/ and a merged "
+            "report prints at the end. Pair with --max-batches for a short window."
+        ),
+    )
+
     # Resume directives — not TrainConfig fields. Read by the wrapper to
     # dispatch bc_resume vs. a fresh bc_run.
     parser.add_argument(
