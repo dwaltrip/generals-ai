@@ -319,15 +319,21 @@ def _histo_percentile_ns(histo: dict[int, int], q: float) -> float | None:
 
 def _compute_dist_tails(a: RunArtifacts) -> list[dict] | None:
     """Per-span distribution tails (p50, p95, max) from histogram data.
-    Spans from both producer and consumer are included."""
+    Spans from both producer and consumer are included. When a span name
+    appears in both (num_workers=0 shares a single process), the producer
+    entry wins to avoid duplicate rows."""
     if not a.prof:
         return None
+    seen: set[str] = set()
     rows: list[dict] = []
     for section in ("producer", "consumer"):
         raw = a.prof.get(section)
         if not raw:
             continue
         for name, v in raw.items():
+            if name in seen:
+                continue
+            seen.add(name)
             s = _span_from_json(v)
             if not s.histo:
                 log.warning(

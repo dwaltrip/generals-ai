@@ -10,6 +10,8 @@ Example:
     # ... edit sweep.json and base-config.json ...
     ./training/scripts/prep_sweep.py generate training/data/sweeps/2026-06-05-dense-history-n/
 """
+# TODO: add --out-dir to run_bc_local.py and pass $SWEEP_DIR/runs/
+#   so local sweep runs land in the sweep directory, not data/runs/.
 
 from __future__ import annotations
 

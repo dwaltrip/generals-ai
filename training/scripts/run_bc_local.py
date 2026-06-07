@@ -9,6 +9,8 @@ The run's arch + recipe + data paths come from the `--config` file.
 Run from anywhere in the repo:
     training/scripts/run_bc_local.py --config <path> --max-batches 5
 """
+# TODO: add --out-dir to properly support the `prep_sweep.py` workflow
+# See TODO comment in that file.
 
 from __future__ import annotations
 
