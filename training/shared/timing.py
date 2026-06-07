@@ -39,6 +39,7 @@ from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass, field
 import functools
 import math
+import threading
 import time
 import warnings
 
@@ -205,6 +206,32 @@ class Timer:
         if not self.enabled:
             return
         self._record(name, ns)
+
+
+class LockedTimer(Timer):
+    """A `Timer` safe to record into from more than one thread.
+
+    Every front-end (`section`/`timed`/`start`/`stop`/`add`) funnels through
+    `_record`, and `snapshot`/`reset` are the only other touchers of the shared
+    dicts — so locking those three methods covers the entire mutable surface
+    with no per-front-end plumbing.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._lock = threading.Lock()
+
+    def _record(self, name: str, ns: int, grouped: bool = True) -> None:
+        with self._lock:
+            super()._record(name, ns, grouped)
+
+    def snapshot(self) -> dict[str, SpanStats]:
+        with self._lock:
+            return super().snapshot()
+
+    def reset(self) -> None:
+        with self._lock:
+            super().reset()
 
 
 # Process-global singleton the seams import. Each process (main + every forked

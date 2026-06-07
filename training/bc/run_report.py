@@ -67,6 +67,7 @@ class RunArtifacts:
     epochs: list[dict]
     gpu_util: list[dict]
     prof: dict | None
+    pin: dict | None
 
     @classmethod
     def load(cls, run_dir: Path) -> RunArtifacts:
@@ -79,6 +80,7 @@ class RunArtifacts:
             epochs=_read_jsonl(run_dir / "epochs.jsonl"),
             gpu_util=_read_jsonl(run_dir / "gpu_util.jsonl"),
             prof=_read_json(run_dir / "prof" / "summary.json"),
+            pin=_read_json(run_dir / "prof" / "pin.json"),
         )
 
 
@@ -120,6 +122,7 @@ def compute_metrics(a: RunArtifacts) -> dict:
         "gpu_util": _compute_gpu_util(a),
         "contention": _compute_contention(a),
         "consumer": _compute_consumer(a),
+        "pin": _compute_pin(a),
         "producer": _compute_producer(a),
         "dist_tails": _compute_dist_tails(a),
         "quality": _compute_quality(a),
@@ -252,6 +255,46 @@ def _compute_consumer(a: RunArtifacts) -> dict | None:
     return out or None
 
 
+def _compute_pin(a: RunArtifacts) -> dict | None:
+    """Pin-memory thread per-batch breakdown (`bc.pin_instrument`, written to
+    `prof/pin.json` on profiled runs). Each span is ms per batch on the batch
+    count (`pin_put` calls — one put per forwarded batch). `work` = copy +
+    destruct is the thread's own serial cost; `work / period` near 1.0 says the
+    pin thread is the throughput ceiling. `get` folds in startup/idle polling,
+    so it's a coarse 'blocked on workers' signal, not a clean per-batch cost."""
+    if not a.pin:
+        return None
+    spans = {k: _span_from_json(v) for k, v in a.pin.items()}
+    put = spans.get("pin_put")
+    n_batches = put.calls if put and put.calls else None
+    if not n_batches:  # put absent (unexpected) — fall back to the copy count
+        copy = spans.get("pin_copy")
+        n_batches = copy.calls if copy and copy.calls else None
+    if not n_batches:
+        return None
+
+    def ms_batch(name: str) -> float | None:
+        s = spans.get(name)
+        return s.total_ns / n_batches / 1e6 if s else None
+
+    out: dict = {
+        "get_ms": ms_batch("pin_get"),
+        "copy_ms": ms_batch("pin_copy"),
+        "destruct_ms": ms_batch("pin_destruct"),
+        "put_ms": ms_batch("pin_put"),
+    }
+    out["work_ms"] = (out["copy_ms"] or 0.0) + (out["destruct_ms"] or 0.0)
+
+    # Batch period from throughput — the budget the pin thread must beat to keep
+    # the GPU fed. work / period near 1.0 ⇒ the pin thread is the bottleneck.
+    bs = (a.args or {}).get("batch_size")
+    sps = a.epochs[-1].get("samples_per_sec") if a.epochs else None
+    if bs and sps:
+        out["period_ms"] = bs / sps * 1000
+        out["work_frac_period"] = out["work_ms"] / out["period_ms"]
+    return out
+
+
 # Byte-moving seams: annotate with effective GiB/s (obs bytes / time) so a slow
 # byte path stands out.
 _BYTE_SEAMS = frozenset({"assemble", "collate", "shm_copy"})
@@ -319,17 +362,23 @@ def _histo_percentile_ns(histo: dict[int, int], q: float) -> float | None:
 
 def _compute_dist_tails(a: RunArtifacts) -> list[dict] | None:
     """Per-span distribution tails (p50, p95, max) from histogram data.
-    Spans from both producer and consumer are included. When a span name
-    appears in both (num_workers=0 shares a single process), the producer
-    entry wins to avoid duplicate rows."""
-    if not a.prof:
+    Spans from producer, consumer, and the pin thread are included — the pin
+    spans' `max` is the freeze detector (e.g. a multi-second `pin_destruct`).
+    When a span name appears in more than one section (num_workers=0 shares a
+    single process), the first-seen entry wins to avoid duplicate rows."""
+    sources: list[tuple[str, dict]] = []
+    if a.prof:
+        for section in ("producer", "consumer"):
+            raw = a.prof.get(section)
+            if raw:
+                sources.append((section, raw))
+    if a.pin:
+        sources.append(("pin", a.pin))
+    if not sources:
         return None
     seen: set[str] = set()
     rows: list[dict] = []
-    for section in ("producer", "consumer"):
-        raw = a.prof.get(section)
-        if not raw:
-            continue
+    for section, raw in sources:
         for name, v in raw.items():
             if name in seen:
                 continue
@@ -506,6 +555,35 @@ def _render_consumer(c: dict | None) -> str | None:
     )
 
 
+def _render_pin(p: dict | None) -> str | None:
+    if not p:
+        return None
+
+    def ms(x: float | None) -> str:
+        return f"{x:.1f} ms" if x is not None else "—"
+
+    rows = [
+        ["get (wait for workers)", ms(p.get("get_ms"))],
+        ["copy (pin_memory)", ms(p.get("copy_ms"))],
+        ["destruct (free shm)", ms(p.get("destruct_ms"))],
+        ["put (wait for consumer)", ms(p.get("put_ms"))],
+        ["work (copy + destruct)", ms(p.get("work_ms"))],
+    ]
+    if p.get("period_ms") is not None:
+        rows.append(["batch period", ms(p["period_ms"])])
+    if p.get("work_frac_period") is not None:
+        rows.append(["work / period", format_pct(p["work_frac_period"])])
+    out = "## Pin-memory thread (ms/batch)\n\n" + md_table(
+        ["span", "value"], rows, align=("left", "right")
+    )
+    out += (
+        "\n\n*get/put are queue waits (blocked on workers / on the consumer); "
+        "copy+destruct is the thread's own serial work. work / period near 100% "
+        "⇒ the pin thread is the throughput ceiling.*"
+    )
+    return out
+
+
 def _render_producer(p: dict | None) -> str | None:
     if not p or not p.get("grouped"):
         return None
@@ -584,6 +662,7 @@ _SECTIONS = [
     ("gpu_util", _render_gpu_util),
     ("contention", _render_contention),
     ("consumer", _render_consumer),
+    ("pin", _render_pin),
     ("producer", _render_producer),
     ("dist_tails", _render_dist_tails),
     ("quality", _render_quality),

@@ -20,6 +20,9 @@ from shared.timing_run import begin, end_and_report
 def instrumented_run(run_dir: Path, profile: bool):
     """Profile bookend (when `profile`) + an always-on end-of-run `report.md`.
 
+    When profiling, this also patches torch's pin-memory thread to time its
+    inner loop (`bc.pin_instrument`), flushed to `prof/pin.json` for the report.
+
     `run_dir` must already exist — `begin()` mkdirs `<run_dir>/prof` under it.
     The report renders in `finally` so a partial one survives a crash, and it
     runs regardless of `--profile`: an unprofiled run still gets host draw,
@@ -29,11 +32,20 @@ def instrumented_run(run_dir: Path, profile: bool):
     prof_dir = run_dir / "prof"
     if profile:
         begin(prof_dir)
+        # Lazy import: the module's top-level torch-version guard runs here
+        # (only on profiled runs), and `enable` must precede DataLoader
+        # iteration so the patched pin loop is in place when the thread spawns.
+        from bc.pin_instrument import enable_pin_instrumentation
+
+        enable_pin_instrumentation()
     try:
         yield
     finally:
         if profile:
             end_and_report(prof_dir)
+            from bc.pin_instrument import flush as flush_pin
+
+            flush_pin(prof_dir)
         _write_report(run_dir)
 
 

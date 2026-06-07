@@ -6,11 +6,14 @@ each case is isolated from the process-global state.
 
 from __future__ import annotations
 
+import threading
+
 import pytest
 
 from shared.timing import (
     _HISTO_FLOOR_NS,
     _HISTO_MAX_BUCKET,
+    LockedTimer,
     SpanStats,
     Timer,
     histo_bucket,
@@ -235,3 +238,73 @@ def test_histo_bucket_midpoint_ns():
     mid = histo_bucket_midpoint_ns(2)
     # bucket 2: range [10*2, 10*4) = [20, 40)
     assert 20 < mid < 40
+
+
+# ---- LockedTimer (thread-safe recording) ----
+
+def test_locked_timer_no_lost_updates():
+    # The whole reason LockedTimer exists: concurrent `add`s must not drop any
+    # read-modify-write update. With the lock, the totals are exact.
+    t = LockedTimer()
+    t.enabled = True
+    n_threads, n_adds, dur = 8, 5000, 100
+
+    def worker() -> None:
+        for _ in range(n_adds):
+            t.add("x", dur)
+
+    threads = [threading.Thread(target=worker) for _ in range(n_threads)]
+    for th in threads:
+        th.start()
+    for th in threads:
+        th.join()
+
+    s = t.snapshot()["x"]
+    assert s.calls == n_threads * n_adds
+    assert s.total_ns == n_threads * n_adds * dur
+
+
+def test_locked_timer_snapshot_no_raise_during_writes():
+    # snapshot() iterates the span dicts; without the lock a concurrent add()
+    # could trigger "dict changed size during iteration". It must not.
+    t = LockedTimer()
+    t.enabled = True
+    stop = threading.Event()
+    errors: list[Exception] = []
+
+    def writer() -> None:
+        try:
+            i = 0
+            while not stop.is_set():
+                t.add(f"span_{i % 32}", 50)  # grow the dict over time
+                i += 1
+        except Exception as e:  # noqa: BLE001 - surfaced via the assert below
+            errors.append(e)
+
+    threads = [threading.Thread(target=writer) for _ in range(4)]
+    for th in threads:
+        th.start()
+    try:
+        for _ in range(500):
+            t.snapshot()
+    finally:
+        stop.set()
+        for th in threads:
+            th.join()
+
+    assert not errors
+
+
+def test_locked_timer_matches_timer_single_thread():
+    # The subclass must not change semantics: same inputs -> identical SpanStats.
+    base, locked = Timer(), LockedTimer()
+    for tm in (base, locked):
+        tm.enabled = True
+        for ns in (100, 500, 200, 5_000_000):
+            tm.add("x", ns)
+    sb, sl = base.snapshot()["x"], locked.snapshot()["x"]
+    assert (sl.calls, sl.total_ns, sl.min_ns, sl.max_ns) == (
+        sb.calls, sb.total_ns, sb.min_ns, sb.max_ns,
+    )
+    assert sl.histo == sb.histo
+    assert sl.grouped == sb.grouped
