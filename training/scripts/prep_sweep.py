@@ -14,15 +14,15 @@ Example:
 from __future__ import annotations
 
 import argparse
+from datetime import UTC, datetime
 import itertools
 import json
+from pathlib import Path
 import stat
 import sys
-from datetime import UTC, datetime
-from pathlib import Path
 
 from bc.train_config import TrainConfig
-from utils.dict_merge import deep_merge, unflatten 
+from utils.dict_merge import deep_merge, unflatten
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -97,6 +97,7 @@ def _generate_cells(
     for combo_labels, combo_values in zip(
         itertools.product(*label_lists),
         itertools.product(*value_lists),
+        strict=True,
     ):
         label = "-".join(combo_labels)
         config = _apply_axes(base_config, parsed_axes, combo=combo_values)
@@ -107,8 +108,8 @@ def _generate_cells(
 
     all_labels = [label for label, _ in cells]
     if len(set(all_labels)) != len(all_labels):
-        raise SystemExit(f"sweep.json: duplicate cell labels after grid product: "
-                         f"{sorted(l for l in all_labels if all_labels.count(l) > 1)}")
+        dupes = sorted([label for label in all_labels if all_labels.count(label) > 1])
+        raise SystemExit(f"sweep.json: duplicate cell labels: {dupes}")
 
     return cells
 
@@ -251,7 +252,7 @@ def cmd_generate(args: argparse.Namespace) -> None:
     )
 
     print(f"Generated {len(cells)} cell configs in {configs_dir.relative_to(REPO_ROOT)}/")
-    print(f"Generated run-cloud.sh, run-local.sh, fetch.sh")
+    print("Generated run-cloud.sh, run-local.sh, fetch.sh")
     print()
     print("Next steps:")
     print(f"  1. Review configs in {configs_dir.relative_to(REPO_ROOT)}/")
@@ -420,9 +421,15 @@ def main() -> None:
 
     p_init = sub.add_parser("init", help="Create a new sweep directory with templates")
     p_init.add_argument("name", help="Sweep name (e.g. dense-history-n)")
-    p_init.add_argument("--axis", help="Dotted config path to sweep (e.g. arch.obs.dense_history_n)")
+    p_init.add_argument(
+        "--axis",
+        help="Dotted config path to sweep (e.g. arch.obs.dense_history_n)",
+    )
 
-    p_gen = sub.add_parser("generate", help="Generate configs and scripts from a filled-in sweep dir")
+    p_gen = sub.add_parser(
+        "generate",
+        help="Generate configs and scripts from a filled-in sweep dir",
+    )
     p_gen.add_argument("sweep_dir", help="Path to the sweep directory")
 
     args = parser.parse_args()

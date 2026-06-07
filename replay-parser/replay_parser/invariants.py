@@ -7,7 +7,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from game_types.state_constants import OWN_MOUNTAIN 
+from game_types.state_constants import OWN_MOUNTAIN
 from replay_parser.decode import ReplayData
 from replay_parser.types import PlayerIndex, Timestep
 import sim_core

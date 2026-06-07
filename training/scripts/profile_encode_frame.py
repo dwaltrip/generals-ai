@@ -19,10 +19,10 @@ the `GAMES` list at the top of this module to point at different replays.
 
 from __future__ import annotations
 
-import sys
-import time
 from collections import defaultdict
 from pathlib import Path
+import sys
+import time
 
 import numpy as np
 
@@ -246,7 +246,8 @@ def main() -> None:
         total_wall_ns += wall
         with np.load(path) as z:
             T = z["ownership"].shape[0]
-            H = int(z["map_height"]); W = int(z["map_width"])
+            H = int(z["map_height"])
+            W = int(z["map_width"])
         lookups = per_game_cache["lookups"]
         runs = per_game_cache["bfs_runs"]
         hit_pct = (1 - runs / lookups) * 100 if lookups else 0.0

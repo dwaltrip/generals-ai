@@ -28,6 +28,7 @@ from bc.constants import CITY_TRAVERSABILITY_FACTOR
 from bc.obs import MemoryState, compute_known_passable
 from bc.obs_config import OBS_CONFIG_DEFAULTS
 
+
 H, W = 4, 4
 PERSPECTIVE = 0
 ENEMY = 1
