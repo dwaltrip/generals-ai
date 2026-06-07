@@ -412,7 +412,13 @@ def _compute_quality(a: RunArtifacts) -> list[dict] | None:
             "epoch": e.get("epoch"),
             "sps": e.get("samples_per_sec"),
             "mfu": e.get("mfu"),
+            "train_policy": e.get("policy"),
+            "train_value": e.get("value"),
+            "train_pass": e.get("pass"),
             "train_total": e.get("total"),
+            "val_policy": val.get("policy"),
+            "val_value": val.get("value"),
+            "val_pass": val.get("pass"),
             "val_total": val.get("total"),
             "val_top1": val.get("top1"),
             "val_top3": val.get("top3"),
@@ -635,16 +641,27 @@ def _render_quality(rows: list[dict] | None) -> str | None:
             r.get("epoch"),
             _num(r.get("sps")),
             format_pct(r["mfu"]) if r.get("mfu") is not None else "—",
-            _num(r.get("train_total"), 3),
-            _num(r.get("val_total"), 3),
+            _num(r.get("train_policy"), 4),
+            _num(r.get("train_value"), 4),
+            _num(r.get("train_pass"), 4),
+            _num(r.get("train_total"), 4),
+            _num(r.get("val_policy"), 4),
+            _num(r.get("val_value"), 4),
+            _num(r.get("val_pass"), 4),
+            _num(r.get("val_total"), 4),
             format_pct(r["val_top1"]) if r.get("val_top1") is not None else "—",
             format_pct(r["val_top3"]) if r.get("val_top3") is not None else "—",
         ]
         for r in rows
     ]
     return "## Training / val quality\n\n" + md_table(
-        ["epoch", "sps", "mfu", "train loss", "val loss", "val top1", "val top3"],
-        table, align=("right",) * 7,
+        [
+            "epoch", "sps", "mfu",
+            "t:policy", "t:value", "t:pass", "t:total",
+            "v:policy", "v:value", "v:pass", "v:total",
+            "v:top1", "v:top3",
+        ],
+        table, align=("right",) * 13,
     )
 
 
