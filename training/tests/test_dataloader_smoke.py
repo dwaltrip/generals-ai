@@ -63,7 +63,7 @@ def test_dataloader_pipeline_smoke(
         assert value_target.shape == (BATCH_SIZE,)
 
         # --- Dtypes ---
-        assert obs.dtype == torch.float32
+        assert obs.dtype == torch.float16  # OBS_CONFIG_DEFAULTS is fp16
         assert mask.dtype == torch.bool
         assert valid_mask.dtype == torch.bool
         assert action_target.dtype == torch.int64
@@ -108,7 +108,9 @@ def test_dataloader_pipeline_smoke(
     model = BCModel()
     model.eval()
     with torch.no_grad():
-        out = model(obs, valid_mask)
+        # fp32 model, no autocast here → upcast the (fp16-default) obs, mirroring
+        # the no-autocast branch of shared.device.obs_for_model.
+        out = model(obs.float(), valid_mask)
     assert out["policy_logits"].shape == (BATCH_SIZE, 8, H_PADDED, W_PADDED)
     assert out["pass_logit"].shape == (BATCH_SIZE,)
     assert out["value_logits"].shape == (BATCH_SIZE, 8)

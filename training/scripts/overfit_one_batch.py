@@ -156,7 +156,8 @@ def main() -> None:
     last_loss = None
     for step in range(args.steps + 1):
         optim.zero_grad()
-        out = model(batch["obs"], batch["valid_mask"])
+        # fp32 model, no autocast → upcast the (fp16-default) obs to match.
+        out = model(batch["obs"].float(), batch["valid_mask"])
         losses = bc_loss(out, batch)
         losses["total"].backward()
         optim.step()

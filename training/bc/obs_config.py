@@ -68,7 +68,7 @@ class ObsConfig:
 # by `ModelConfig.obs`'s default and by every "I want the defaults" call site.
 OBS_CONFIG_DEFAULTS = ObsConfig(
     dense_history_n=5,
-    obs_dtype="fp32",
+    obs_dtype="fp16",
 )
 
 # Default obs channel count (n=5 → 96). Convenience alias for code that builds a
