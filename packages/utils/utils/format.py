@@ -39,6 +39,32 @@ def format_duration(seconds: float) -> str:
     return f"{hours}h {minutes:02d}m"
 
 
+def format_ns(ns: float | int | None) -> str:
+    """Format a nanosecond value as a human-readable approximate duration."""
+    if ns is None:
+        return "—"
+    if ns < 1_000:
+        return f"~{ns:.0f} ns"
+    if ns < 1_000_000:
+        return f"~{ns / 1e3:.1f} µs"
+    if ns < 1_000_000_000:
+        return f"~{ns / 1e6:.1f} ms"
+    return f"~{ns / 1e9:.2f} s"
+
+
+def format_ns_exact(ns: int | None) -> str:
+    """Format an exact nanosecond value (no ~ prefix)."""
+    if ns is None:
+        return "—"
+    if ns < 1_000:
+        return f"{ns} ns"
+    if ns < 1_000_000:
+        return f"{ns / 1e3:.1f} µs"
+    if ns < 1_000_000_000:
+        return f"{ns / 1e6:.1f} ms"
+    return f"{ns / 1e9:.2f} s"
+
+
 def format_pct(fraction: float, *, digits: int = 1) -> str:
     """Format a 0–1 fraction as a percentage (`0.179 -> 17.9%`)."""
     return f"{fraction * 100:.{digits}f}%"

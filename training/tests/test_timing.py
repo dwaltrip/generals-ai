@@ -8,7 +8,16 @@ from __future__ import annotations
 
 import pytest
 
-from shared.timing import Timer, timer
+from shared.timing import (
+    _HISTO_FLOOR_NS,
+    _HISTO_MAX_BUCKET,
+    SpanStats,
+    Timer,
+    histo_bucket,
+    histo_bucket_midpoint_ns,
+    histo_bucket_upper_ns,
+    timer,
+)
 
 
 def test_disabled_records_nothing():
@@ -46,10 +55,26 @@ def test_records_when_enabled():
 
     snap = t.snapshot()
     assert set(snap) == {"sec", "man", "fn"}
-    assert snap["sec"][1] == 2  # two recorded spans
-    assert snap["man"][1] == 1
-    assert snap["fn"][1] == 1
-    assert all(ns >= 0 for ns, *_ in snap.values())
+    assert snap["sec"].calls == 2
+    assert snap["man"].calls == 1
+    assert snap["fn"].calls == 1
+    assert all(s.total_ns >= 0 for s in snap.values())
+
+
+def test_snapshot_returns_span_stats():
+    t = Timer()
+    t.enabled = True
+    with t.section("a"):
+        pass
+    snap = t.snapshot()
+    s = snap["a"]
+    assert isinstance(s, SpanStats)
+    assert s.calls == 1
+    assert s.grouped is True
+    assert s.min_ns is not None
+    assert s.max_ns is not None
+    assert isinstance(s.histo, dict)
+    assert sum(s.histo.values()) == 1
 
 
 def test_grouped_flag():
@@ -60,8 +85,36 @@ def test_grouped_flag():
     with t.section("parent", grouped=False):  # overlapping/reference span
         pass
     snap = t.snapshot()
-    assert snap["leaf"][2] is True
-    assert snap["parent"][2] is False
+    assert snap["leaf"].grouped is True
+    assert snap["parent"].grouped is False
+
+
+def test_min_max_tracking():
+    t = Timer()
+    t.enabled = True
+    t.add("x", 100)
+    t.add("x", 500)
+    t.add("x", 200)
+    snap = t.snapshot()
+    assert snap["x"].min_ns == 100
+    assert snap["x"].max_ns == 500
+
+
+def test_histogram_accumulation():
+    t = Timer()
+    t.enabled = True
+    t.add("x", 50)
+    t.add("x", 50)
+    t.add("x", 5_000_000)
+    snap = t.snapshot()
+    assert sum(snap["x"].histo.values()) == 3
+    # The two 50 ns values should land in the same bucket
+    b_small = histo_bucket(50)
+    assert snap["x"].histo[b_small] == 2
+    # The 5 ms value should land in a different bucket
+    b_big = histo_bucket(5_000_000)
+    assert b_big > b_small
+    assert snap["x"].histo[b_big] == 1
 
 
 def test_reset_clears():
@@ -105,7 +158,12 @@ def test_add_records_external_duration():
     t.enabled = True
     t.add("h2d", 5000)
     t.add("h2d", 3000)
-    assert t.snapshot()["h2d"] == (8000, 2, True)
+    s = t.snapshot()["h2d"]
+    assert s.total_ns == 8000
+    assert s.calls == 2
+    assert s.grouped is True
+    assert s.min_ns == 3000
+    assert s.max_ns == 5000
 
 
 def test_add_noop_when_disabled():
@@ -129,3 +187,51 @@ def test_timed_preserves_function_identity():
 def test_module_singleton_disabled_by_default():
     # Seams import this global; it must be inert in production runs.
     assert timer.enabled is False
+
+
+# ---- Histogram bucket helpers ----
+
+def test_histo_bucket_below_floor():
+    assert histo_bucket(0) == 0
+    assert histo_bucket(5) == 0
+    assert histo_bucket(9) == 0
+
+
+def test_histo_bucket_at_floor():
+    # 10 // 10 = 1, bit_length() = 1
+    assert histo_bucket(10) == 1
+    assert histo_bucket(19) == 1
+
+
+def test_histo_bucket_progression():
+    # 20 // 10 = 2, bit_length() = 2
+    assert histo_bucket(20) == 2
+    assert histo_bucket(39) == 2
+    # 40 // 10 = 4, bit_length() = 3
+    assert histo_bucket(40) == 3
+
+
+def test_histo_bucket_large_values():
+    # 1 second = 1e9 ns; 1e9 // 10 = 1e8, bit_length = 27
+    b = histo_bucket(1_000_000_000)
+    assert b == 27
+    # 100 seconds = 1e11 ns
+    b100 = histo_bucket(100_000_000_000)
+    assert b100 == 34
+
+
+def test_histo_bucket_clamps_at_max():
+    huge = 10**18
+    assert histo_bucket(huge) == _HISTO_MAX_BUCKET
+
+
+def test_histo_bucket_upper_ns():
+    assert histo_bucket_upper_ns(0) == _HISTO_FLOOR_NS
+    assert histo_bucket_upper_ns(1) == _HISTO_FLOOR_NS * 2
+    assert histo_bucket_upper_ns(2) == _HISTO_FLOOR_NS * 4
+
+
+def test_histo_bucket_midpoint_ns():
+    mid = histo_bucket_midpoint_ns(2)
+    # bucket 2: range [10*2, 10*4) = [20, 40)
+    assert 20 < mid < 40

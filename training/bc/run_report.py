@@ -20,16 +20,24 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
+import logging
 from pathlib import Path
 from statistics import fmean, median, pstdev
 
 from bc.constants import H_PADDED, W_PADDED, obs_channel_count
+from shared.timing import histo_bucket_midpoint_ns
+from shared.timing_run import _span_from_json
 from utils.format import (
     format_bytes,
     format_duration,
+    format_ns,
+    format_ns_exact,
     format_pct,
     md_table,
 )
+
+
+log = logging.getLogger(__name__)
 
 
 # Verdict thresholds — tunable module constants, refined as we see more runs.
@@ -113,6 +121,7 @@ def compute_metrics(a: RunArtifacts) -> dict:
         "contention": _compute_contention(a),
         "consumer": _compute_consumer(a),
         "producer": _compute_producer(a),
+        "dist_tails": _compute_dist_tails(a),
         "quality": _compute_quality(a),
     }
     metrics["verdict"] = _compute_verdict(metrics)
@@ -230,16 +239,16 @@ def _compute_consumer(a: RunArtifacts) -> dict | None:
         return None
     cons = a.prof["consumer"]
     out: dict = {}
-    fw = cons.get("fetch_wait")
-    if fw and fw[1]:
-        out["fetch_wait_ms_batch"] = fw[0] / fw[1] / 1e6
-        fw_total_s = fw[0] / 1e9
+    s = _span_from_json(cons.get("fetch_wait", {}))
+    if s.calls:
+        out["fetch_wait_ms_batch"] = s.total_ns / s.calls / 1e6
+        fw_total_s = s.total_ns / 1e9
         duration = a.epochs[-1].get("duration_sec") if a.epochs else None
         if duration:
             out["fetch_wait_frac"] = fw_total_s / duration
-    h2 = cons.get("h2d")
-    if h2 and h2[1]:
-        out["h2d_ms_batch"] = h2[0] / h2[1] / 1e6
+    s2 = _span_from_json(cons.get("h2d", {}))
+    if s2.calls:
+        out["h2d_ms_batch"] = s2.total_ns / s2.calls / 1e6
     return out or None
 
 
@@ -256,12 +265,10 @@ def _compute_producer(a: RunArtifacts) -> dict | None:
         return None
     prod = a.prof["producer"]
     n = a.prof.get("n_samples") or 1
-    # Normalize to (ns, calls, grouped); older summary.json wrote 2-tuples with
-    # no grouped flag — treat those as grouped.
-    norm = {k: (v[0], v[1], v[2] if len(v) > 2 else True) for k, v in prod.items()}
-    grouped = {k: (ns, c) for k, (ns, c, g) in norm.items() if g}
-    ungrouped = {k: (ns, c) for k, (ns, c, g) in norm.items() if not g}
-    total_ns = sum(ns for ns, _ in grouped.values())
+    spans = {k: _span_from_json(v) for k, v in prod.items()}
+    grouped = {k: s for k, s in spans.items() if s.grouped}
+    ungrouped = {k: s for k, s in spans.items() if not s.grouped}
+    total_ns = sum(s.total_ns for s in grouped.values())
 
     # Obs bytes/sample (fp32) — dominant term for the byte-moving seams (the
     # masks/scalars are <3%). None when we can't size the obs tensor.
@@ -276,11 +283,11 @@ def _compute_producer(a: RunArtifacts) -> dict | None:
         return obs_bytes / (us_per_sample * 1e-6) / 1024**3
 
     grouped_rows = []
-    for name, (ns, _calls) in sorted(grouped.items(), key=lambda kv: -kv[1][0]):
-        us = ns / n / 1e3
+    for name, s in sorted(grouped.items(), key=lambda kv: -kv[1].total_ns):
+        us = s.total_ns / n / 1e3
         grouped_rows.append({
             "region": name, "us_per_sample": us,
-            "share": ns / total_ns if total_ns else 0.0,
+            "share": s.total_ns / total_ns if total_ns else 0.0,
             "gib_s": gib_s(name, us),
         })
     grouped_rows.append({
@@ -289,10 +296,53 @@ def _compute_producer(a: RunArtifacts) -> dict | None:
     })
 
     reference_rows = [
-        {"region": name, "us_per_sample": ns / n / 1e3}
-        for name, (ns, _calls) in sorted(ungrouped.items(), key=lambda kv: -kv[1][0])
+        {"region": name, "us_per_sample": s.total_ns / n / 1e3}
+        for name, s in sorted(ungrouped.items(), key=lambda kv: -kv[1].total_ns)
     ]
     return {"grouped": grouped_rows, "reference": reference_rows}
+
+
+def _histo_percentile_ns(histo: dict[int, int], q: float) -> float | None:
+    """Approximate percentile from a log2 histogram. Returns the geometric
+    midpoint of the bucket containing the target rank, or None if empty."""
+    total = sum(histo.values())
+    if not total:
+        return None
+    target = q * (total - 1)
+    cumulative = 0
+    for bucket in sorted(histo):
+        cumulative += histo[bucket]
+        if cumulative > target:
+            return histo_bucket_midpoint_ns(bucket)
+    return histo_bucket_midpoint_ns(max(histo))
+
+
+def _compute_dist_tails(a: RunArtifacts) -> list[dict] | None:
+    """Per-span distribution tails (p50, p95, max) from histogram data.
+    Spans from both producer and consumer are included."""
+    if not a.prof:
+        return None
+    rows: list[dict] = []
+    for section in ("producer", "consumer"):
+        raw = a.prof.get(section)
+        if not raw:
+            continue
+        for name, v in raw.items():
+            s = _span_from_json(v)
+            if not s.histo:
+                log.warning(
+                    "span %r in %s has no histogram data (old format?); "
+                    "skipping distribution tails", name, section,
+                )
+                continue
+            rows.append({
+                "region": name,
+                "section": section,
+                "p50_ns": _histo_percentile_ns(s.histo, 0.5),
+                "p95_ns": _histo_percentile_ns(s.histo, 0.95),
+                "max_ns": s.max_ns,
+            })
+    return rows or None
 
 
 def _compute_quality(a: RunArtifacts) -> list[dict] | None:
@@ -469,6 +519,26 @@ def _render_producer(p: dict | None) -> str | None:
     return out
 
 
+def _render_dist_tails(rows: list[dict] | None) -> str | None:
+    if not rows:
+        return None
+    table = [
+        [
+            r["region"],
+            format_ns(r.get("p50_ns")),
+            format_ns(r.get("p95_ns")),
+            format_ns_exact(r.get("max_ns")),
+        ]
+        for r in rows
+    ]
+    out = "## Distribution tails\n\n" + md_table(
+        ["region", "p50", "p95", "max"],
+        table, align=("left", "right", "right", "right"),
+    )
+    out += "\n\n*p50/p95 estimated from log2 histogram (±2× resolution); max is exact.*"
+    return out
+
+
 def _render_quality(rows: list[dict] | None) -> str | None:
     if not rows:
         return None
@@ -509,6 +579,7 @@ _SECTIONS = [
     ("contention", _render_contention),
     ("consumer", _render_consumer),
     ("producer", _render_producer),
+    ("dist_tails", _render_dist_tails),
     ("quality", _render_quality),
     ("verdict", _render_verdict),
 ]

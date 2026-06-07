@@ -26,14 +26,45 @@ inflate the producer ~N-fold.
 from __future__ import annotations
 
 from collections.abc import Iterable
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 import json
 from pathlib import Path
 
-from shared.timing import timer
+from shared.timing import SpanStats, timer
 
 
-Tally = dict[str, tuple[int, int, bool]]  # name -> (total_ns, calls, grouped)
+Tally = dict[str, SpanStats]
+
+
+def _span_to_json(s: SpanStats) -> dict:
+    """Serialize a SpanStats to a JSON-safe dict. Histogram keys are ints in
+    Python but become strings in JSON; the read path coerces them back."""
+    return asdict(s)
+
+
+def _span_from_json(d: dict | list) -> SpanStats:
+    """Deserialize a span from JSON. Handles both the current dict format and
+    the legacy [ns, calls, grouped?] list format from older summary.json files."""
+    if isinstance(d, list):
+        return SpanStats(
+            total_ns=d[0], calls=d[1],
+            grouped=d[2] if len(d) > 2 else True,
+        )
+    histo = d.get("histo") or {}
+    return SpanStats(
+        total_ns=d["total_ns"], calls=d["calls"],
+        grouped=d.get("grouped", True),
+        min_ns=d.get("min_ns"), max_ns=d.get("max_ns"),
+        histo={int(k): v for k, v in histo.items()},
+    )
+
+
+def _tally_to_json(tally: Tally) -> dict:
+    return {name: _span_to_json(s) for name, s in tally.items()}
+
+
+def _tally_from_json(raw: dict) -> Tally:
+    return {name: _span_from_json(v) for name, v in raw.items()}
 
 
 @dataclass
@@ -44,8 +75,9 @@ class FileSink:
 
     dir: Path
 
-    def flush(self, epoch: int, wid: int, snap: Tally) -> None:
-        (self.dir / f"worker_{epoch}_{wid}.json").write_text(json.dumps(snap))
+    def flush(self, epoch: int, wid: int, snap: dict[str, SpanStats]) -> None:
+        data = {name: _span_to_json(s) for name, s in snap.items()}
+        (self.dir / f"worker_{epoch}_{wid}.json").write_text(json.dumps(data))
 
 
 _active: FileSink | None = None
@@ -75,7 +107,8 @@ def end_and_report(prof_dir: Path) -> dict:
     persist `summary.json`."""
     main_snap = timer.snapshot()
     if main_snap:
-        (prof_dir / "main.json").write_text(json.dumps(main_snap))
+        data = {name: _span_to_json(s) for name, s in main_snap.items()}
+        (prof_dir / "main.json").write_text(json.dumps(data))
 
     producer = _merge(prof_dir.glob("worker_*.json"))  # explicit glob — never summary.json
     consumer = _merge([prof_dir / "main.json"]) if main_snap else {}
@@ -85,28 +118,44 @@ def end_and_report(prof_dir: Path) -> dict:
     # Ungrouped spans are excluded: a parent like `encode_frame` shares the
     # per-sample count, but a coarser one (per-batch/game) must not anchor it.
     n_samples = max(
-        (calls for _ns, calls, grouped in producer.values() if grouped),
+        (s.calls for s in producer.values() if s.grouped),
         default=0,
     )
     _print_producer(producer, n_samples)
     _print_consumer(consumer)
 
-    out = {"producer": producer, "consumer": consumer, "n_samples": n_samples}
+    out = {
+        "producer": _tally_to_json(producer),
+        "consumer": _tally_to_json(consumer),
+        "n_samples": n_samples,
+    }
     (prof_dir / "summary.json").write_text(json.dumps(out, indent=2))
     return out
 
 
 def _merge(paths: Iterable[Path]) -> Tally:
-    """Sum `{name: [ns, calls, grouped]}` files into one tally."""
-    tot: dict[str, int] = {}
-    cnt: dict[str, int] = {}
-    grouped: dict[str, bool] = {}
+    """Merge per-worker span files into one tally: sum totals/counts/histograms,
+    take min of mins, max of maxes."""
+    merged: dict[str, SpanStats] = {}
     for p in paths:
-        for name, (ns, c, g) in json.loads(p.read_text()).items():
-            tot[name] = tot.get(name, 0) + ns
-            cnt[name] = cnt.get(name, 0) + c
-            grouped[name] = g
-    return {name: (tot[name], cnt[name], grouped[name]) for name in tot}
+        for name, s in _tally_from_json(json.loads(p.read_text())).items():
+            if name not in merged:
+                merged[name] = SpanStats(
+                    total_ns=s.total_ns, calls=s.calls, grouped=s.grouped,
+                    min_ns=s.min_ns, max_ns=s.max_ns,
+                    histo=dict(s.histo),
+                )
+            else:
+                m = merged[name]
+                m.total_ns += s.total_ns
+                m.calls += s.calls
+                if s.min_ns is not None:
+                    m.min_ns = s.min_ns if m.min_ns is None else min(m.min_ns, s.min_ns)
+                if s.max_ns is not None:
+                    m.max_ns = s.max_ns if m.max_ns is None else max(m.max_ns, s.max_ns)
+                for bucket, count in s.histo.items():
+                    m.histo[bucket] = m.histo.get(bucket, 0) + count
+    return merged
 
 
 def _print_producer(data: Tally, n_samples: int) -> None:
@@ -119,19 +168,19 @@ def _print_producer(data: Tally, n_samples: int) -> None:
     if not data:
         print("  (no regions recorded)")
         return
-    grouped = {n: (ns, c) for n, (ns, c, g) in data.items() if g}
-    ungrouped = {n: (ns, c) for n, (ns, c, g) in data.items() if not g}
-    total_ns = sum(ns for ns, _ in grouped.values())
+    grouped = {n: s for n, s in data.items() if s.grouped}
+    ungrouped = {n: s for n, s in data.items() if not s.grouped}
+    total_ns = sum(s.total_ns for s in grouped.values())
     print(f"  {'region':<16} {'us/sample':>10} {'calls':>9} {'share':>7}")
-    for name, (ns, calls) in sorted(grouped.items(), key=lambda kv: -kv[1][0]):
-        us = ns / n_samples / 1e3 if n_samples else 0.0
-        share = ns / total_ns * 100 if total_ns else 0.0
-        print(f"  {name:<16} {us:>10.2f} {calls:>9,} {share:>6.1f}%")
+    for name, s in sorted(grouped.items(), key=lambda kv: -kv[1].total_ns):
+        us = s.total_ns / n_samples / 1e3 if n_samples else 0.0
+        share = s.total_ns / total_ns * 100 if total_ns else 0.0
+        print(f"  {name:<16} {us:>10.2f} {s.calls:>9,} {share:>6.1f}%")
     total_us = total_ns / n_samples / 1e3 if n_samples else 0.0
     print(f"  {'TOTAL':<16} {total_us:>10.2f} {'':>9} {100.0:>6.1f}%")
-    for name, (ns, calls) in sorted(ungrouped.items(), key=lambda kv: -kv[1][0]):
-        us = ns / n_samples / 1e3 if n_samples else 0.0
-        print(f"  {name:<16} {us:>10.2f} {calls:>9,} {'(ref)':>7}")
+    for name, s in sorted(ungrouped.items(), key=lambda kv: -kv[1].total_ns):
+        us = s.total_ns / n_samples / 1e3 if n_samples else 0.0
+        print(f"  {name:<16} {us:>10.2f} {s.calls:>9,} {'(ref)':>7}")
 
 
 def _print_consumer(data: Tally) -> None:
@@ -143,6 +192,6 @@ def _print_consumer(data: Tally) -> None:
         print("  (no regions recorded)")
         return
     print(f"  {'region':<16} {'total_ms':>10} {'calls':>9} {'mean_ms':>9}")
-    for name, (ns, calls, _grouped) in sorted(data.items(), key=lambda kv: -kv[1][0]):
-        mean_ms = ns / calls / 1e6 if calls else 0.0
-        print(f"  {name:<16} {ns / 1e6:>10.2f} {calls:>9,} {mean_ms:>9.3f}")
+    for name, s in sorted(data.items(), key=lambda kv: -kv[1].total_ns):
+        mean_ms = s.total_ns / s.calls / 1e6 if s.calls else 0.0
+        print(f"  {name:<16} {s.total_ns / 1e6:>10.2f} {s.calls:>9,} {mean_ms:>9.3f}")

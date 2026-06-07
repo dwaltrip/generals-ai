@@ -3,12 +3,18 @@
 A `Timer` accumulates wall-clock time under string labels — a lightweight,
 opt-in alternative to a full profiler for when you want a handful of named
 spans ("obs assembly vs the BFS") rather than a per-call trace of everything.
-Three front-ends record into the same `name -> (total_ns, calls)` table:
+Three front-ends record into the same per-span accumulator:
 
   - `@timer.timed(name)`         — decorate a whole function (the common seam)
   - `with timer.section(name):`  — time a block
   - `timer.start(name)` / `timer.stop(name)` — a manual pair, for spans that
     don't nest cleanly in a `with` (e.g. start and stop in different functions)
+
+Each span tracks total/count (for means), min/max (for extremes), and a
+sparse log2 histogram (for approximate percentiles). The histogram uses
+power-of-2 buckets indexed by `(ns // 10).bit_length()`, flooring at 10 ns
+and capping at bucket 39 (~5.5 TiB ns ≈ unreachable). Bucket b covers
+the range `[10 * 2^(b-1), 10 * 2^b)` for b >= 1; bucket 0 holds 0–9 ns.
 
 Off by default and switched on per-process — `shared.timing_run` owns
 enablement, the cross-worker file fan-out, and reporting. When disabled every
@@ -30,7 +36,9 @@ from __future__ import annotations
 
 from collections import defaultdict
 from contextlib import contextmanager, nullcontext
+from dataclasses import dataclass, field
 import functools
+import math
 import time
 import warnings
 
@@ -40,6 +48,48 @@ import warnings
 # when sections nest.
 _NULL = nullcontext()
 
+_HISTO_MAX_BUCKET = 39
+_HISTO_FLOOR_NS = 10
+
+
+def histo_bucket(ns: int) -> int:
+    """Map a duration in nanoseconds to a log2 histogram bucket index.
+
+    Floors at 10 ns (anything below goes to bucket 0), then uses
+    `bit_length()` as a fast integer log2. Clamped to [0, 39]."""
+    if ns < _HISTO_FLOOR_NS:
+        return 0
+    return min((ns // _HISTO_FLOOR_NS).bit_length(), _HISTO_MAX_BUCKET)
+
+
+def histo_bucket_upper_ns(bucket: int) -> int:
+    """Upper bound (exclusive) of a histogram bucket, in nanoseconds."""
+    if bucket <= 0:
+        return _HISTO_FLOOR_NS
+    return _HISTO_FLOOR_NS * (1 << bucket)
+
+
+def histo_bucket_midpoint_ns(bucket: int) -> float:
+    """Geometric midpoint of a histogram bucket, in nanoseconds."""
+    if bucket <= 0:
+        return _HISTO_FLOOR_NS / 2.0
+    lo = _HISTO_FLOOR_NS * (1 << (bucket - 1))
+    hi = _HISTO_FLOOR_NS * (1 << bucket)
+    return math.sqrt(lo * hi)
+
+
+@dataclass
+class SpanStats:
+    """Per-span accumulated statistics. Returned by `Timer.snapshot()`,
+    serialized to JSON by `FileSink`, merged across workers by `timing_run`."""
+
+    total_ns: int
+    calls: int
+    grouped: bool
+    min_ns: int | None = None
+    max_ns: int | None = None
+    histo: dict[int, int] = field(default_factory=dict)
+
 
 class Timer:
     """Accumulates elapsed ns under string labels. See the module docstring."""
@@ -48,8 +98,11 @@ class Timer:
         self.enabled = False
         self._tot: dict[str, int] = defaultdict(int)   # name -> total ns
         self._cnt: dict[str, int] = defaultdict(int)   # name -> recorded spans
-        self._open: dict[str, int] = {}                # name -> start ns (manual)
-        self._ungrouped: set[str] = set()              # names recorded grouped=False
+        self._min: dict[str, int] = {}                  # name -> min ns
+        self._max: dict[str, int] = {}                  # name -> max ns
+        self._histo: dict[str, dict[int, int]] = defaultdict(lambda: defaultdict(int))
+        self._open: dict[str, int] = {}                 # name -> start ns (manual)
+        self._ungrouped: set[str] = set()               # names recorded grouped=False
 
     def reset(self) -> None:
         """Clear all tallies + any dangling manual timers. Each worker calls
@@ -57,26 +110,40 @@ class Timer:
         epoch's work alone."""
         self._tot.clear()
         self._cnt.clear()
+        self._min.clear()
+        self._max.clear()
+        self._histo.clear()
         self._open.clear()
         self._ungrouped.clear()
 
-    def snapshot(self) -> dict[str, tuple[int, int, bool]]:
-        """`name -> (total_ns, calls, grouped)` — a plain dict safe to json-dump /
-        pickle. `grouped` is False for reference spans (`section(..., grouped=
-        False)`) that overlap other spans, so the reporter keeps them out of the
-        TOTAL. Warns if a manual timer is still open: an unbalanced `start`
-        without a `stop` is usually a buggy seam, and its time goes silently
-        unrecorded."""
+    def snapshot(self) -> dict[str, SpanStats]:
+        """`name -> SpanStats` — a plain dict safe to serialize. Warns if a
+        manual timer is still open: an unbalanced `start` without a `stop` is
+        usually a buggy seam, and its time goes silently unrecorded."""
         if self._open:
             warnings.warn(f"snapshot with timers still open: {list(self._open)}")
         return {
-            n: (self._tot[n], self._cnt[n], n not in self._ungrouped)
+            n: SpanStats(
+                total_ns=self._tot[n],
+                calls=self._cnt[n],
+                grouped=n not in self._ungrouped,
+                min_ns=self._min.get(n),
+                max_ns=self._max.get(n),
+                histo=dict(self._histo.get(n, {})),
+            )
             for n in self._tot
         }
 
     def _record(self, name: str, ns: int, grouped: bool = True) -> None:
         self._tot[name] += ns
         self._cnt[name] += 1
+        prev_min = self._min.get(name)
+        if prev_min is None or ns < prev_min:
+            self._min[name] = ns
+        prev_max = self._max.get(name)
+        if prev_max is None or ns > prev_max:
+            self._max[name] = ns
+        self._histo[name][histo_bucket(ns)] += 1
         if not grouped:
             self._ungrouped.add(name)
 
