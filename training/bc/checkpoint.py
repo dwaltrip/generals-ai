@@ -8,7 +8,7 @@ lives in one module rather than being duplicated across call sites.
 
 from __future__ import annotations
 
-from dataclasses import replace
+from dataclasses import asdict, replace
 from pathlib import Path
 from typing import Any, TypeGuard
 
@@ -25,10 +25,14 @@ from bc.obs_config import ObsConfig
 # would silently mis-load every old checkpoint. They're equal today and allowed
 # to diverge — hence the literals here rather than default references.
 #
-# LEGACY_OBS_CFG is the single home for the pre-`obs`-key dense-history depth: it
-# backs both LEGACY_ARCH.obs (pre-`arch` checkpoints) and the `_arch_for_load`
-# fill (arch-bearing-but-pre-`obs` checkpoints, e.g. the early width sweep).
-LEGACY_OBS_CFG = ObsConfig(dense_history_n=5)
+# LEGACY_OBS_CFG is the single home for the historical obs contract: the
+# pre-`obs`-key dense-history depth AND the pre-`obs_dtype`-field element dtype
+# (always fp32 before that field existed). It backs LEGACY_ARCH.obs (pre-`arch`
+# checkpoints), the `_arch_for_load` whole-`obs` fill (arch-bearing-but-pre-`obs`
+# checkpoints), and the per-sub-key back-fill (checkpoints with `obs` but missing
+# newer keys like `obs_dtype`). `obs_dtype="fp32"` here is the first field where
+# this diverges from the live default — recording history, not editing a value.
+LEGACY_OBS_CFG = ObsConfig(dense_history_n=5, obs_dtype="fp32")
 LEGACY_ARCH = ModelConfig(
     outer_width=128, middle_width=128, inner_width=160,
     n_outer=2, m_middle=2, m_inner=2,
@@ -90,13 +94,22 @@ def _arch_for_load(obj: object, value_head_variant: str) -> ModelConfig:
     since legacy checkpoints don't record their variant (it lived in the run
     dir's `args.json`, and the ones on disk are a mix of direct/pyramid).
 
-    Arch dicts written before the `obs` key existed get `LEGACY_OBS_CFG` filled
-    in (those checkpoints were all dense_history_n=5) — pinned to the historical
-    value, not the live default, so a future re-default doesn't re-describe them.
+    Obs keys are filled from `LEGACY_OBS_CFG`, not the live defaults, at two
+    granularities: a checkpoint missing the `obs` key entirely gets the whole
+    legacy config; one with an `obs` block missing newer sub-keys (e.g.
+    `obs_dtype`, added later) gets those back-filled. Both pin to the historical
+    value because a checkpoint lacking a key predates that field. Filling from
+    the live defaults instead would silently re-describe old checkpoints (e.g.
+    an fp32-obs checkpoint loaded as fp16); `ModelConfig.__post_init__`'s default
+    merge would do exactly that, so we back-fill from legacy before it runs.
     """
     if is_combined_checkpoint(obj) and "arch" in obj:
         arch_dict = dict(obj["arch"])
-        arch_dict.setdefault("obs", LEGACY_OBS_CFG)
+        obs = arch_dict.get("obs")
+        if isinstance(obs, dict):
+            arch_dict["obs"] = {**asdict(LEGACY_OBS_CFG), **obs}
+        else:
+            arch_dict.setdefault("obs", LEGACY_OBS_CFG)
         # in_ch is a recorded checksum (TrainingState.save), derived from obs.
         # Validate it here — the one place a count baked into trained weights
         # meets a possibly-changed obs-channel formula — for a clear error rather

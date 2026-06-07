@@ -149,11 +149,13 @@ def _sps_series(batches: list[dict]) -> list[float]:
 
 def _compute_header(a: RunArtifacts) -> dict:
     args = a.args or {}
-    n = (args.get("arch", {}).get("obs", {}) or {}).get("dense_history_n")
+    obs = args.get("arch", {}).get("obs", {}) or {}
+    n = obs.get("dense_history_n")
     return {
         "run_id": a.run_dir.name,
         "dense_history_n": n,
         "obs_channels": obs_channel_count(n) if n is not None else None,
+        "obs_dtype": obs.get("obs_dtype"),
         "batch_size": args.get("batch_size"),
         "num_workers": args.get("num_workers"),
         "precision": args.get("precision"),
@@ -466,6 +468,8 @@ def _render_header(h: dict | None) -> str | None:
         parts.append(f"n={h['dense_history_n']}")
     if h.get("obs_channels"):
         parts.append(f"{h['obs_channels']} ch")
+    if h.get("obs_dtype"):
+        parts.append(str(h["obs_dtype"]))
     if h.get("batch_size"):
         parts.append(f"bs={h['batch_size']}")
     if h.get("num_workers") is not None:

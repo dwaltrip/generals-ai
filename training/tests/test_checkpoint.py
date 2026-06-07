@@ -10,9 +10,15 @@ from dataclasses import asdict, replace
 import pytest
 import torch
 
-from bc.checkpoint import LEGACY_ARCH, is_legacy_checkpoint, load_bc_model
+from bc.checkpoint import (
+    LEGACY_ARCH,
+    LEGACY_OBS_CFG,
+    is_legacy_checkpoint,
+    load_bc_model,
+)
 from bc.model import BCModel
 from bc.model_config import MODEL_CONFIG_DEFAULTS, build_model_cfg
+from bc.obs_config import OBS_CONFIG_DEFAULTS
 
 
 def test_load_bc_model_bare_state_dict(tmp_path):
@@ -94,3 +100,57 @@ def test_is_legacy_checkpoint_detection(tmp_path):
 
     assert is_legacy_checkpoint(legacy) is True
     assert is_legacy_checkpoint(combined) is False
+
+
+# --- obs sub-config back-fill: load → legacy, fresh → live default ---------
+#
+# When a new ObsConfig field is added (obs_dtype is the first), a checkpoint's
+# `obs` block predates it. The load path must back-fill the missing key from the
+# FROZEN legacy snapshot, while fresh construction fills from the LIVE defaults.
+# These tests force `DEFAULTS != LEGACY` so they discriminate regardless of what
+# the current live default happens to be.
+
+
+def test_load_missing_obs_dtype_uses_legacy(tmp_path, monkeypatch):
+    """A checkpoint whose `obs` block lacks `obs_dtype` back-fills it from the
+    legacy snapshot, not the live default — so flipping the default never
+    silently re-describes an old checkpoint's obs precision."""
+    monkeypatch.setattr(
+        "bc.model_config.OBS_CONFIG_DEFAULTS",
+        replace(OBS_CONFIG_DEFAULTS, obs_dtype="fp16"),
+    )
+    cfg = build_model_cfg()
+    src = BCModel(cfg)
+    arch = asdict(cfg)
+    del arch["obs"]["obs_dtype"]  # simulate a pre-obs_dtype checkpoint
+    ckpt = tmp_path / "epoch_001.pt"
+    torch.save({"model": src.state_dict(), "arch": arch, "epoch": 1}, ckpt)
+
+    loaded = load_bc_model(ckpt, torch.device("cpu"))
+    assert loaded.cfg.obs.obs_dtype == LEGACY_OBS_CFG.obs_dtype  # legacy, not the fp16 default
+
+
+def test_load_preserves_explicit_obs_dtype(tmp_path):
+    """An `obs_dtype` explicitly recorded in a checkpoint's arch survives load —
+    neither the legacy back-fill nor the default merge overrides it."""
+    cfg = build_model_cfg()
+    src = BCModel(cfg)
+    arch = asdict(cfg)
+    arch["obs"]["obs_dtype"] = "fp16"
+    ckpt = tmp_path / "epoch_001.pt"
+    torch.save({"model": src.state_dict(), "arch": arch, "epoch": 1}, ckpt)
+
+    loaded = load_bc_model(ckpt, torch.device("cpu"))
+    assert loaded.cfg.obs.obs_dtype == "fp16"
+
+
+def test_fresh_partial_obs_uses_live_default(monkeypatch):
+    """A fresh config from a partial `obs` dict (not a checkpoint load) fills
+    `obs_dtype` from the live defaults — the complement of the load-path
+    back-fill above."""
+    monkeypatch.setattr(
+        "bc.model_config.OBS_CONFIG_DEFAULTS",
+        replace(OBS_CONFIG_DEFAULTS, obs_dtype="fp16"),
+    )
+    cfg = build_model_cfg(obs={"dense_history_n": 5})
+    assert cfg.obs.obs_dtype == "fp16"  # live default, not legacy fp32

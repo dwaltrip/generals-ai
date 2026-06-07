@@ -62,6 +62,23 @@ def move_batch(
     return {k: v.to(device, non_blocking=True) for k, v in batch.items()}
 
 
+def obs_for_model(
+    batch: dict[str, torch.Tensor], amp_dtype: torch.dtype | None
+) -> torch.Tensor:
+    """The obs tensor in the dtype the model's first conv expects.
+
+    Obs is built fp16 or fp32 (`ObsConfig.obs_dtype`) to control bytes on the
+    handoff path; the model's compute dtype is a separate axis. Under autocast
+    (`amp_dtype` set), the conv casts its own input, so fp16 obs flows straight
+    in (and fp32 obs would be cast down anyway) — pass it through. With autocast
+    off (`amp_dtype is None`: fp32 / MPS), upcast here, on-device after the
+    cheaper fp16 h2d, so fp16 obs doesn't dtype-clash with fp32 weights. `.float()`
+    is a no-op when obs is already fp32, so this is inert on the all-fp32 path.
+    """
+    obs = batch["obs"]
+    return obs if amp_dtype is not None else obs.float()
+
+
 def dataloader_kwargs(
     *,
     num_workers: int,

@@ -176,6 +176,7 @@ def log_resource_info(
     device: torch.device,
     batch_size: int,
     obs_channels: int,
+    obs_dtype: str,
     spatial: tuple[int, int],
     num_workers: int,
     prefetch_factor: int | None,
@@ -186,7 +187,8 @@ def log_resource_info(
     and (when `run_dir` is given) dump the envelope to `host_info.json`.
 
     Called once at startup (from `build_dataloader`, under the run-log tee).
-    `spatial` is the padded (H, W); obs tensors are fp32 (4 bytes/element).
+    `spatial` is the padded (H, W); `obs_dtype` ("fp32"/"fp16") sets the
+    per-element size for the footprint math.
     """
     info = host_info(device)
     if run_dir is not None:
@@ -228,14 +230,15 @@ def log_resource_info(
 
     # --- pipeline host-memory footprint ---
     h, w = spatial
-    per_batch = batch_size * obs_channels * h * w * 4  # fp32 obs tensor
+    bytes_per_el = {"fp16": 2, "fp32": 4}[obs_dtype]
+    per_batch = batch_size * obs_channels * h * w * bytes_per_el
     in_flight_batches = (
         num_workers * (prefetch_factor or 1) if num_workers > 0 else 1
     )
     print("pipeline host-memory footprint:")
     print(
         f"  per-batch obs: {format_bytes(per_batch)}  "
-        f"(bs={batch_size} × {obs_channels}ch × {h}×{w} × fp32)"
+        f"(bs={batch_size} × {obs_channels}ch × {h}×{w} × {obs_dtype})"
     )
     detail = (
         f"{num_workers} workers × prefetch {prefetch_factor or 1} "

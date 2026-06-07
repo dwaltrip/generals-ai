@@ -121,11 +121,14 @@ class BCModelHandle:
     ) -> ModelOutput:
         """Run one forward over a stacked batch; return the raw batched output.
 
-        obs_batch:   float32 [B, OBS_CHANNELS, H_PADDED, W_PADDED]
-        valid_batch: bool    [B, 1, H_PADDED, W_PADDED]
+        obs_batch:   fp16/fp32 [B, OBS_CHANNELS, H_PADDED, W_PADDED]
+        valid_batch: bool      [B, 1, H_PADDED, W_PADDED]
         Returns {policy_logits [B,8,H,W], pass_logit [B], value_logits [B,8]}.
         """
-        obs_t = torch.from_numpy(obs_batch).to(self.device)
+        # Inference runs fp32 (no autocast), so coerce obs to fp32 — a no-op for
+        # an fp32 obs, an on-device upcast for an fp16 one (matches the training
+        # consumer's `obs_for_model` no-autocast branch).
+        obs_t = torch.from_numpy(obs_batch).to(self.device).float()
         valid_t = torch.from_numpy(valid_batch).to(self.device)
         with torch.no_grad():
             return self.model(obs_t, valid_t)

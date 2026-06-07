@@ -9,6 +9,7 @@ on non-pass frames, split-independence.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from itertools import islice
 from pathlib import Path
 
@@ -111,3 +112,37 @@ def test_dataloader_pipeline_smoke(
     assert out["policy_logits"].shape == (BATCH_SIZE, 8, H_PADDED, W_PADDED)
     assert out["pass_logit"].shape == (BATCH_SIZE,)
     assert out["value_logits"].shape == (BATCH_SIZE, 8)
+
+
+def test_obs_fp16_matches_fp32_downcast(samples: list[tuple[Path, int]]) -> None:
+    """fp16-built obs is bit-identical to the fp32 build cast to fp16 — the
+    invariant behind "fp16 obs is free under autocast" (docs/2026-06/6.06-7).
+
+    Under CUDA autocast the model's first conv casts the fp32 obs to fp16 with
+    round-to-nearest; building obs as fp16 just applies that same rounding at
+    assembly instead. Comparing the fp16-built obs against `o32.half()` proves
+    both halves at once: the numpy assembly downcast matches torch's cast (so
+    the conv sees identical bits), and no channel overflows fp16's range.
+
+    `shuffle_buffer_size=0` is the deterministic per-perspective walk, so the
+    two datasets yield frame-aligned batches and can be zipped.
+    """
+    ds32 = IterableDataset(
+        samples=samples, seed=0, shuffle_buffer_size=0,
+        obs_cfg=replace(OBS_CONFIG_DEFAULTS, obs_dtype="fp32"),
+    )
+    ds16 = IterableDataset(
+        samples=samples, seed=0, shuffle_buffer_size=0,
+        obs_cfg=replace(OBS_CONFIG_DEFAULTS, obs_dtype="fp16"),
+    )
+    loader32 = DataLoader(ds32, batch_size=BATCH_SIZE)
+    loader16 = DataLoader(ds16, batch_size=BATCH_SIZE)
+
+    checked = 0
+    for b32, b16 in islice(zip(loader32, loader16, strict=False), 10):
+        o32, o16 = b32["obs"], b16["obs"]
+        assert o32.dtype == torch.float32 and o16.dtype == torch.float16
+        assert torch.isfinite(o16).all(), "fp16 obs has inf: a channel exceeds fp16 range"
+        assert torch.equal(o16, o32.half()), "fp16-built obs != fp32 build cast to fp16"
+        checked += o32.shape[0]
+    assert checked > 0, "no frames compared — corpus walk produced nothing"

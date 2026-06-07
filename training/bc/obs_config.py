@@ -3,9 +3,8 @@ tensor a model is trained on.
 
 `ObsConfig` is nested inside `ModelConfig` (so it rides into every checkpoint's
 `arch` key) and the encoder reads it off `MemoryState`. It carries the knobs
-that determine the *input contract* — currently just `dense_history_n`, which
-sets the depth of the recent-spatial-history window and therefore the total
-channel count (`obs_channel_count`).
+that determine the *input contract*: the channel count (via `dense_history_n`
+→ `obs_channel_count`) and the tensor's element dtype (`obs_dtype`).
 
 Defaults are policy, not structure, so they live here as a named instance
 (`OBS_CONFIG_DEFAULTS`) rather than as inline field defaults — symmetric with
@@ -36,6 +35,14 @@ class ObsConfig:
     # channels. `0` ablates history entirely.
     dense_history_n: int
 
+    # Element dtype of the assembled obs tensor: "fp32" or "fp16". fp16 halves
+    # every host-side byte on the worker→GPU handoff path (the measured n=20
+    # throughput ceiling; see docs/2026-06/6.06-7). Under CUDA autocast the conv
+    # consumes fp16 directly; the fp32/no-autocast path upcasts at the model
+    # boundary (`shared.device.obs_for_model`). String, not a torch.dtype, to
+    # keep this module torch-free.
+    obs_dtype: str
+
     @property
     def obs_channels(self) -> int:
         """Total obs-tensor channel count implied by this config."""
@@ -51,12 +58,17 @@ class ObsConfig:
             raise ValueError(
                 f"dense_history_n must be >= 0; got {self.dense_history_n}"
             )
+        if self.obs_dtype not in ("fp32", "fp16"):
+            raise ValueError(
+                f"obs_dtype must be 'fp32' or 'fp16'; got {self.obs_dtype!r}"
+            )
 
 
 # Live default policy — the single home for the current default `n`. Referenced
 # by `ModelConfig.obs`'s default and by every "I want the defaults" call site.
 OBS_CONFIG_DEFAULTS = ObsConfig(
     dense_history_n=5,
+    obs_dtype="fp32",
 )
 
 # Default obs channel count (n=5 → 96). Convenience alias for code that builds a

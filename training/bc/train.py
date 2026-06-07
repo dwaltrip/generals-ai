@@ -49,6 +49,7 @@ from shared.device import (
     dataloader_kwargs,
     disable_mps_fallback,
     move_batch,
+    obs_for_model,
     pick_device,
     resolve_precision,
 )
@@ -195,7 +196,7 @@ def train_one_epoch(
             dtype=amp_dtype or torch.float32,
             enabled=amp_dtype is not None,
         ):
-            out = model(batch["obs"], batch["valid_mask"])
+            out = model(obs_for_model(batch, amp_dtype), batch["valid_mask"])
             losses = bc_loss(out, batch)
         scaler.scale(losses["total"]).backward()
         scaler.step(optim)
@@ -288,6 +289,7 @@ def build_dataloader(
         device=device,
         batch_size=config.batch_size,
         obs_channels=config.arch.obs.obs_channels,
+        obs_dtype=config.arch.obs.obs_dtype,
         spatial=(H_PADDED, W_PADDED),
         num_workers=dl_kwargs["num_workers"],
         prefetch_factor=dl_kwargs.get("prefetch_factor"),

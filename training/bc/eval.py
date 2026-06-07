@@ -46,7 +46,7 @@ from torch.utils.data import DataLoader
 from bc.dataset import IterableDataset, assert_safe_loader
 from bc.loss import LossAccumulator, bc_loss, flatten_policy_logits
 from bc.obs_config import ObsConfig
-from shared.device import dataloader_kwargs, move_batch
+from shared.device import dataloader_kwargs, move_batch, obs_for_model
 
 
 # 8-bucket action histogram keys. Index = `flat_action_idx % 8` =
@@ -126,7 +126,7 @@ def run_val(
                 dtype=amp_dtype or torch.float32,
                 enabled=amp_dtype is not None,
             ):
-                out = model(batch["obs"], batch["valid_mask"])
+                out = model(obs_for_model(batch, amp_dtype), batch["valid_mask"])
                 losses = bc_loss(out, batch)
             B = batch["obs"].shape[0]
             acc.update(losses, batch_size=B)

@@ -968,6 +968,11 @@ def _cat_dense_history(
 # ---------------------------------------------------------------------------
 
 
+# `ObsConfig.obs_dtype` ("fp32"/"fp16") → the numpy dtype of the assembled obs
+# buffer. fp16 halves every host-side byte on the worker→GPU handoff path.
+_NP_OBS_DTYPE = {"fp32": np.float32, "fp16": np.float16}
+
+
 def build_obs(
     sim: dict[str, np.ndarray],
     t: int,
@@ -1034,14 +1039,18 @@ def build_obs(
     )
 
     # Write each channel straight into its slot of one preallocated padded
-    # buffer. Equivalent to `np.stack(channels).astype(float32)` followed by a
+    # buffer. Equivalent to `np.stack(channels).astype(obs_dtype)` followed by a
     # pad copy, but in a single write pass instead of three (stack gather +
     # astype copy + pad copy) — the assembly's per-sample memory traffic is the
     # cost that scales with channel count, so collapsing it matters most for
-    # large dense-history depths. The pad region stays zero; the slice
-    # assignment converts any non-float32 channel exactly as `astype` did.
+    # large dense-history depths. The pad region stays zero; the slice assignment
+    # dtype-converts each (float32) channel into the buffer exactly as `.astype`
+    # would — including the fp32→fp16 downcast when obs_dtype="fp16".
     with timer.section("assemble"):
-        obs = np.zeros((n_channels, H_PADDED, W_PADDED), dtype=np.float32)
+        obs = np.zeros(
+            (n_channels, H_PADDED, W_PADDED),
+            dtype=_NP_OBS_DTYPE[state.obs_cfg.obs_dtype],
+        )
         for i, ch in enumerate(channels):
             obs[i, :H, :W] = ch
     return obs
