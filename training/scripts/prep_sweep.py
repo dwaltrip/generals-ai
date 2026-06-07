@@ -78,18 +78,12 @@ def _validate_axes(axes: dict) -> list[tuple[str, list, list[str]]]:
 def _apply_axes(
     base_config: dict,
     parsed_axes: list[tuple[str, list, list[str]]],
-    index: int | None = None,
-    combo: tuple | None = None,
+    combo: tuple,
 ) -> dict:
-    """Build a resolved config by merging axis values into the base.
-
-    Pass *index* to pick that index from each axis (for validation).
-    Pass *combo* (a tuple of values, one per axis) for grid-product cells.
-    """
+    """Build a resolved config by merging axis values into the base."""
     config = base_config
-    for i, (axis_path, values, _labels) in enumerate(parsed_axes):
-        value = values[index] if combo is None else combo[i]
-        config = deep_merge(config, unflatten(axis_path, value))
+    for i, (axis_path, _values, _labels) in enumerate(parsed_axes):
+        config = deep_merge(config, unflatten(axis_path, combo[i]))
     return config
 
 
@@ -218,7 +212,8 @@ def cmd_generate(args: argparse.Namespace) -> None:
         )
 
     # Validate axis paths by checking a sample resolved config.
-    sample = _apply_axes(base_config, parsed_axes, index=0)
+    sample_combo = tuple(values[0] for _, values, _ in parsed_axes)
+    sample = _apply_axes(base_config, parsed_axes, combo=sample_combo)
     errors = TrainConfig.validate_partial(sample)
     if errors:
         raise SystemExit(
