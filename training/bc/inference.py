@@ -298,6 +298,18 @@ class BCPerspective:
         )
         self._bfs_cache = bc_bfs.init_bfs_cache(P)
 
+        # init_memory_live seeded the per-tick history (snapshot + scoreboard
+        # rows) from the t=0 view to build the scaffolding above. encode() is the
+        # *single* appender of per-tick history, so drop those seed rows and let
+        # encode add tick 0 on its first call. Clear in place — self._sim and
+        # self._memory alias these list objects — so a fresh `= []` wouldn't
+        # rebind their references. One, and only one, place appends per-tick
+        # state; that's what keeps the live obs from drifting a tick stale.
+        self._ownership.clear()
+        self._armies.clear()
+        self._memory.land_count_history.clear()
+        self._memory.army_count_history.clear()
+
         self.n_passed = 0
         self.n_moved = 0
         self.n_no_legal = 0
@@ -324,9 +336,19 @@ class BCPerspective:
         t = view.timestep
         H, W = self._H, self._W
 
-        # 1. Append latest snapshot row.
         own_t = np.asarray(view.ownership_t, dtype=np.int8)
         arm_t = np.asarray(view.armies_t, dtype=np.int16)
+
+        # encode() is the single owner of per-tick history (reset() leaves it
+        # empty): exactly one snapshot + scoreboard row per tick, appended in
+        # order. Assert that contract so a runner sequencing bug fails loudly
+        # here rather than silently feeding the model a tick-stale board — the
+        # failure this single-owner contract exists to prevent.
+        assert t == len(self._ownership), (
+            f"encode() out of order: {len(self._ownership)} ticks recorded, got t={t}"
+        )
+
+        # 1. Append latest snapshot row.
         self._ownership.append(own_t)
         self._armies.append(arm_t)
 
