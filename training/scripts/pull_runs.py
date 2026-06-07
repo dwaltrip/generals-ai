@@ -45,15 +45,15 @@ def _ls(run: str) -> list[dict]:
     return json.loads(out.stdout)
 
 
-def pull(run: str, skip_checkpoints: bool, force: bool) -> None:
+def pull(run: str, dest: Path, skip_checkpoints: bool, force: bool) -> None:
     if not skip_checkpoints:
-        _get(f"/{run}", DEST, force)  # modal creates runs-cloud/<run>/ under DEST
+        _get(f"/{run}", dest, force)  # modal creates <dest>/<run>/ under dest
         return
 
     # Per-entry so we can drop checkpoints/. The dest run dir must exist first:
     # `modal volume get` collapses a multi-file dir onto one path when the local
     # destination is missing (it appends the basename when the dest exists).
-    run_dest = DEST / run
+    run_dest = dest / run
     run_dest.mkdir(parents=True, exist_ok=True)
     for entry in _ls(run):
         name = entry["Filename"].rsplit("/", 1)[-1]
@@ -70,6 +70,10 @@ def main() -> None:
     )
     parser.add_argument("runs", nargs="+", help="run dir name(s) on the volume")
     parser.add_argument(
+        "--dest", type=Path, default=DEST,
+        help=f"local directory to pull into (default: {DEST.relative_to(REPO_ROOT)})",
+    )
+    parser.add_argument(
         "--no-checkpoints", action="store_true", help="skip the checkpoints/ subdir"
     )
     parser.add_argument(
@@ -77,10 +81,11 @@ def main() -> None:
         help="overwrite existing local files (modal aborts on conflicts otherwise)",
     )
     args = parser.parse_args()
+    dest = args.dest.resolve()
     for run in args.runs:
         run = run.strip("/")
-        print(f"{run} -> {DEST / run}")
-        pull(run, args.no_checkpoints, args.force)
+        print(f"{run} -> {dest / run}")
+        pull(run, dest, args.no_checkpoints, args.force)
 
 
 if __name__ == "__main__":
