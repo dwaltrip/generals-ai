@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from bc.splits import (
+from training.bc.splits import (
     MANIFEST_VERSION,
     build_manifest,
     load_manifest,

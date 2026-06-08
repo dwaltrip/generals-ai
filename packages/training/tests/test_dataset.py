@@ -9,10 +9,10 @@ import random
 import numpy as np
 import pytest
 
-from bc.constants import ELIGIBLE_PLAYER_COUNT, MAX_BOARD_SIDE
-from bc.dataset import IterableDataset, _shuffle_buffered
-from bc.filters import is_eligible
-from bc.obs_config import OBS_CONFIG_DEFAULTS
+from training.bc.constants import ELIGIBLE_PLAYER_COUNT, MAX_BOARD_SIDE
+from training.bc.dataset import IterableDataset, _shuffle_buffered
+from training.bc.filters import is_eligible
+from training.bc.obs_config import OBS_CONFIG_DEFAULTS
 
 
 class _IdentityDataset(IterableDataset):

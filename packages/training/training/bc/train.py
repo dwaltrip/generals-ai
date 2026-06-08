@@ -33,19 +33,19 @@ import time
 import torch
 from torch.utils.data import DataLoader
 
-from bc.checkpoint import ckpt_name
-from bc.constants import H_PADDED, W_PADDED
-from bc.dataset import IterableDataset, assert_safe_loader, timed_collate
-from bc.eval import run_val
-from bc.loss import LossAccumulator, bc_loss
-from bc.model import BCModel
-from bc.resume_warmup import WarmupSchedule
-from bc.run_dir import RunArtifacts
-from bc.run_logger import RunLogger
-from bc.splits import load_manifest, samples_for_split
-from bc.state import TrainingState
-from bc.train_config import TrainConfig
-from shared.device import (
+from training.bc.checkpoint import ckpt_name
+from training.bc.constants import H_PADDED, W_PADDED
+from training.bc.dataset import IterableDataset, assert_safe_loader, timed_collate
+from training.bc.eval import run_val
+from training.bc.loss import LossAccumulator, bc_loss
+from training.bc.model import BCModel
+from training.bc.resume_warmup import WarmupSchedule
+from training.bc.run_dir import RunArtifacts
+from training.bc.run_logger import RunLogger
+from training.bc.splits import load_manifest, samples_for_split
+from training.bc.state import TrainingState
+from training.bc.train_config import TrainConfig
+from training.shared.device import (
     dataloader_kwargs,
     disable_mps_fallback,
     move_batch,
@@ -53,11 +53,11 @@ from shared.device import (
     pick_device,
     resolve_precision,
 )
-from shared.gpu_sidecar import gpu_util_sidecar
-from shared.perf import compute_mfu, measure_total_flops, peak_tflops_fp32
-from shared.resource_info import log_resource_info
-from shared.timing import timer
-from shared.timing_run import active_sink
+from training.shared.gpu_sidecar import gpu_util_sidecar
+from training.shared.perf import compute_mfu, measure_total_flops, peak_tflops_fp32
+from training.shared.resource_info import log_resource_info
+from training.shared.timing import timer
+from training.shared.timing_run import active_sink
 from utils.log import abort, tee_stdio
 
 

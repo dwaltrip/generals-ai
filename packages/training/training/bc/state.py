@@ -18,11 +18,11 @@ from pathlib import Path
 
 import torch
 
-from bc.checkpoint import ckpt_name, is_combined_checkpoint, load_bc_model
-from bc.model import BCModel
-from bc.resume_warmup import WarmupSchedule
-from bc.train_config import TrainConfig
-from shared.device import resolve_precision
+from training.bc.checkpoint import ckpt_name, is_combined_checkpoint, load_bc_model
+from training.bc.model import BCModel
+from training.bc.resume_warmup import WarmupSchedule
+from training.bc.train_config import TrainConfig
+from training.shared.device import resolve_precision
 
 
 def _build_optim(model: BCModel, config: TrainConfig) -> torch.optim.Optimizer:

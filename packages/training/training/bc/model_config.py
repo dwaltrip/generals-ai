@@ -28,8 +28,8 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, fields, replace
 from typing import Any
 
-from bc.constants import H_PADDED, W_PADDED
-from bc.obs_config import OBS_CONFIG_DEFAULTS, ObsConfig
+from training.bc.constants import H_PADDED, W_PADDED
+from training.bc.obs_config import OBS_CONFIG_DEFAULTS, ObsConfig
 
 
 VALUE_HEAD_VARIANTS = ("direct", "pyramid")

@@ -16,7 +16,7 @@ import numpy as np
 # fog-tracking module if this coupling becomes painful.
 from bc import obs as bc_obs
 from bc import visibility
-from bc.obs import MemoryState, pad_initial_generals
+from training.bc.obs import MemoryState, pad_initial_generals
 from eval_bot.bfs import bfs_distances
 from eval_bot.bot_config import BotConfig
 from game_runner.sim_adapter import capture_events_to_array

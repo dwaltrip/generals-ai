@@ -18,7 +18,7 @@ from pathlib import Path
 
 import torch
 
-from bc.inference import BCModelHandle, default_device
+from training.bc.inference import BCModelHandle, default_device
 from game_runner import seed_map, viewer
 from self_play import driver
 

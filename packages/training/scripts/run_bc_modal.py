@@ -25,14 +25,14 @@ import socket
 
 import modal
 
-from bc.train_cli import (
+from training.bc.train_cli import (
     build_arg_parser,
     config_from_args,
     load_config_overlay,
     operational_overrides,
     resume_run_dir,
 )
-from bc.train_config import TrainConfig
+from training.bc.train_config import TrainConfig
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -82,10 +82,10 @@ def train_remote(
     contract doesn't know: the GPU class, the device CUDA surfaced, the Modal
     region the container landed in, and the hostname.
     """
-    from bc.resume import bc_resume
-    from bc.run_dir import initialize_run_dir, prepare_resume
-    from bc.run_instrumentation import instrumented_run
-    from bc.train import bc_run
+    from training.bc.resume import bc_resume
+    from training.bc.run_dir import initialize_run_dir, prepare_resume
+    from training.bc.run_instrumentation import instrumented_run
+    from training.bc.train import bc_run
 
     if resume_run_dir is not None:
         # Compute the suffix once so the cloud-only provenance lands on the

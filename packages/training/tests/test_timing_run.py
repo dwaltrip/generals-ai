@@ -10,8 +10,8 @@ import json
 
 import pytest
 
-from shared.timing import SpanStats, timer
-from shared.timing_run import FileSink, _span_from_json, active_sink, begin, end_and_report
+from training.shared.timing import SpanStats, timer
+from training.shared.timing_run import FileSink, _span_from_json, active_sink, begin, end_and_report
 
 
 @pytest.fixture(autouse=True)

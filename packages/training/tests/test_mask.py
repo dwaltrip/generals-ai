@@ -11,7 +11,7 @@ from __future__ import annotations
 import numpy as np
 
 from bc import actions
-from bc.mask import build_mask
+from training.bc.mask import build_mask
 
 
 def test_build_mask_legality_conditions():

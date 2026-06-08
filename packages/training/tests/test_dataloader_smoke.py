@@ -17,10 +17,10 @@ import pytest
 import torch
 from torch.utils.data import DataLoader
 
-from bc.constants import H_PADDED, W_PADDED
-from bc.dataset import IterableDataset
-from bc.model import BCModel
-from bc.obs_config import OBS_CHANNELS, OBS_CONFIG_DEFAULTS
+from training.bc.constants import H_PADDED, W_PADDED
+from training.bc.dataset import IterableDataset
+from training.bc.model import BCModel
+from training.bc.obs_config import OBS_CHANNELS, OBS_CONFIG_DEFAULTS
 
 
 BATCH_SIZE = 64

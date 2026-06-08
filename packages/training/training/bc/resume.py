@@ -15,17 +15,17 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from bc.model_config import build_model_cfg
-from bc.resume_warmup import WarmupSchedule
-from bc.run_dir import (
+from training.bc.model_config import build_model_cfg
+from training.bc.resume_warmup import WarmupSchedule
+from training.bc.run_dir import (
     ResumeInfo,
     check_drift,
     load_parent_config,
     write_args_resume,
 )
-from bc.state import TrainingState
-from bc.train import run_training
-from bc.train_config import TrainConfig
+from training.bc.state import TrainingState
+from training.bc.train import run_training
+from training.bc.train_config import TrainConfig
 from utils.log import abort
 
 

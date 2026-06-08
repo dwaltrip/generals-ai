@@ -29,7 +29,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from bc.model_config import MODEL_CONFIG_DEFAULTS, VALUE_HEAD_VARIANTS, ModelConfig
+from training.bc.model_config import MODEL_CONFIG_DEFAULTS, VALUE_HEAD_VARIANTS, ModelConfig
 
 
 # GroupNorm preferred group count. The trunk uses {64, 80, 128, 160}-channel

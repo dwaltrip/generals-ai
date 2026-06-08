@@ -24,7 +24,7 @@ from pathlib import Path
 
 import numpy as np
 
-from bc.splits import load_manifest, samples_for_split
+from training.bc.splits import load_manifest, samples_for_split
 from utils.docstring import doc_summary
 
 

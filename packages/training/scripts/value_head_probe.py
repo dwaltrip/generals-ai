@@ -50,12 +50,12 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from bc.checkpoint import load_bc_model
-from bc.constants import H_PADDED, W_PADDED
-from bc.dataset import IterableDataset
-from bc.obs_config import OBS_CONFIG_DEFAULTS
-from bc.splits import load_manifest, samples_for_split
-from shared.device import disable_mps_fallback, pick_device
+from training.bc.checkpoint import load_bc_model
+from training.bc.constants import H_PADDED, W_PADDED
+from training.bc.dataset import IterableDataset
+from training.bc.obs_config import OBS_CONFIG_DEFAULTS
+from training.bc.splits import load_manifest, samples_for_split
+from training.shared.device import disable_mps_fallback, pick_device
 from utils.docstring import doc_summary
 
 

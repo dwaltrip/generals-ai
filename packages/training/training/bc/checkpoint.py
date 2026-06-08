@@ -14,9 +14,9 @@ from typing import Any, TypeGuard
 
 import torch
 
-from bc.model import BCModel
-from bc.model_config import ModelConfig, build_model_cfg
-from bc.obs_config import ObsConfig
+from training.bc.model import BCModel
+from training.bc.model_config import ModelConfig, build_model_cfg
+from training.bc.obs_config import ObsConfig
 
 
 # Historical facts about on-disk checkpoints, NOT live defaults. DO NOT EDIT.

@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from shared.timing import timer
+from training.shared.timing import timer
 
 
 @timer.timed("visibility")

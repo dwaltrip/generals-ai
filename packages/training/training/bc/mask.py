@@ -12,8 +12,8 @@ from __future__ import annotations
 import numpy as np
 
 from bc import actions
-from bc.constants import H_PADDED, W_PADDED
-from shared.timing import timer
+from training.bc.constants import H_PADDED, W_PADDED
+from training.shared.timing import timer
 
 
 @timer.timed("build_mask")

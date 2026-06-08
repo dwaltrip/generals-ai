@@ -19,8 +19,8 @@ import argparse
 from pathlib import Path
 import shutil
 
-from bc.splits import load_manifest
-from bc.utils import meta_path_for, sim_path_for
+from training.bc.splits import load_manifest
+from training.bc.utils import meta_path_for, sim_path_for
 from utils.docstring import doc_summary
 
 

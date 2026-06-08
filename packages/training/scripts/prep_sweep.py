@@ -23,7 +23,7 @@ from pathlib import Path
 import stat
 import sys
 
-from bc.train_config import TrainConfig
+from training.bc.train_config import TrainConfig
 from utils.dict_merge import deep_merge, unflatten
 
 

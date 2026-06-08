@@ -46,8 +46,8 @@ from pathlib import Path
 import random
 import subprocess
 
-from bc.filters import DROP_REASONS, FILTER_VERSION, eligible_perspectives
-from bc.utils import list_sim_paths, meta_path_for
+from training.bc.filters import DROP_REASONS, FILTER_VERSION, eligible_perspectives
+from training.bc.utils import list_sim_paths, meta_path_for
 from utils.docstring import doc_summary
 from utils.json_io import write_json
 from utils.player_name_lists import load_union

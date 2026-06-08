@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import torch
 
-from bc.constants import H_PADDED, W_PADDED
-from bc.model import BCModel
-from bc.obs_config import OBS_CHANNELS
-from bc.state import TrainingState
-from bc.train_config import TrainConfig
+from training.bc.constants import H_PADDED, W_PADDED
+from training.bc.model import BCModel
+from training.bc.obs_config import OBS_CHANNELS
+from training.bc.state import TrainingState
+from training.bc.train_config import TrainConfig
 
 
 def _config(tmp_path):

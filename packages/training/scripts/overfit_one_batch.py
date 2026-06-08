@@ -25,15 +25,15 @@ import time
 import torch
 from torch.utils.data import DataLoader
 
-from bc.dataset import IterableDataset
-from bc.filters import eligible_perspectives
-from bc.loss import bc_loss
-from bc.model import BCModel
-from bc.model_config import build_model_cfg
-from bc.obs_config import OBS_CONFIG_DEFAULTS
-from bc.splits import load_curated_names
-from bc.utils import list_sim_paths, meta_path_for
-from shared.device import disable_mps_fallback, move_batch, pick_device
+from training.bc.dataset import IterableDataset
+from training.bc.filters import eligible_perspectives
+from training.bc.loss import bc_loss
+from training.bc.model import BCModel
+from training.bc.model_config import build_model_cfg
+from training.bc.obs_config import OBS_CONFIG_DEFAULTS
+from training.bc.splits import load_curated_names
+from training.bc.utils import list_sim_paths, meta_path_for
+from training.shared.device import disable_mps_fallback, move_batch, pick_device
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent

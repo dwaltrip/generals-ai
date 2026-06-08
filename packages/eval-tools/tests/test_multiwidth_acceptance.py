@@ -16,8 +16,8 @@ from pathlib import Path
 import pytest
 import torch
 
-from bc.model import BCModel
-from bc.model_config import ModelConfig, build_model_cfg
+from training.bc.model import BCModel
+from training.bc.model_config import ModelConfig, build_model_cfg
 
 
 def _save_arch_checkpoint(path: Path, cfg: ModelConfig) -> None:
@@ -40,7 +40,7 @@ def test_two_widths_coexist_and_play_head_to_head(tmp_path: Path) -> None:
     replay_id = _corpus_2p_replay_id()
     if replay_id is None:
         pytest.skip("replay corpus not available")
-    from bc.inference import BCModelHandle
+    from training.bc.inference import BCModelHandle
     from eval_tools.policy_spec import parse_policy_spec
     from game_runner.batched import PendingGame, run_batched
     from game_runner.seed_map import load_static_from_db

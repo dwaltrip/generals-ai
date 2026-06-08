@@ -28,11 +28,11 @@ import time
 
 import torch
 
-from bc.constants import H_PADDED, OBS_CHANNELS, W_PADDED
-from bc.inference import default_device
-from bc.loss import flatten_policy_logits
-from bc.model import BCModel
-from bc.model_config import build_model_cfg
+from training.bc.constants import H_PADDED, OBS_CHANNELS, W_PADDED
+from training.bc.inference import default_device
+from training.bc.loss import flatten_policy_logits
+from training.bc.model import BCModel
+from training.bc.model_config import build_model_cfg
 
 
 P = 8

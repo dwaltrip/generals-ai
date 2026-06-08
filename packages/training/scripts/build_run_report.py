@@ -14,7 +14,7 @@ import argparse
 from pathlib import Path
 import sys
 
-from bc.run_report import build_report
+from training.bc.run_report import build_report
 
 
 def main() -> None:

@@ -17,8 +17,8 @@ from __future__ import annotations
 import pytest
 import torch
 
-from bc.actions import _PASS_FLAT_IDX
-from bc.loss import LAMBDA_VALUE, MU_PASS, LossAccumulator, bc_loss
+from training.bc.actions import _PASS_FLAT_IDX
+from training.bc.loss import LAMBDA_VALUE, MU_PASS, LossAccumulator, bc_loss
 
 
 def _fake_losses(

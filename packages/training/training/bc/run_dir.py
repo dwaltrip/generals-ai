@@ -16,9 +16,9 @@ import json
 from pathlib import Path
 import re
 
-from bc.checkpoint import is_legacy_checkpoint
-from bc.run_logger import RunLogger
-from bc.train_config import TrainConfig, json_default
+from training.bc.checkpoint import is_legacy_checkpoint
+from training.bc.run_logger import RunLogger
+from training.bc.train_config import TrainConfig, json_default
 from utils.log import abort
 
 

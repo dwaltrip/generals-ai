@@ -15,8 +15,8 @@ from pathlib import Path
 
 import pytest
 
-from bc.train_cli import build_arg_parser, config_from_args
-from bc.train_config import TrainConfig
+from training.bc.train_cli import build_arg_parser, config_from_args
+from training.bc.train_config import TrainConfig
 
 
 def _write_config(tmp_path: Path, **fields: object) -> Path:

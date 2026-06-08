@@ -24,7 +24,7 @@ import time
 import torch
 from torch import nn
 
-from shared.device import disable_mps_fallback
+from training.shared.device import disable_mps_fallback
 
 
 IN_CHANNELS = 96

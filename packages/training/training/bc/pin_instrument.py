@@ -46,8 +46,8 @@ from torch._utils import ExceptionWrapper
 from torch.utils.data._utils import MP_STATUS_CHECK_INTERVAL
 from torch.utils.data._utils.pin_memory import pin_memory
 
-from shared.timing import LockedTimer
-from shared.timing_run import _tally_to_json
+from training.shared.timing import LockedTimer
+from training.shared.timing_run import _tally_to_json
 
 
 # The torch version whose `_pin_memory_loop` `_do_one_step` below mirrors. The

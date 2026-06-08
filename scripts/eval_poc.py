@@ -15,7 +15,7 @@ from pathlib import Path
 import random
 import time
 
-from bc.inference import BCModelHandle, BCPerspective, default_device
+from training.bc.inference import BCModelHandle, BCPerspective, default_device
 from eval_bot.bot_config import BotConfig
 from eval_bot.eval_bot_agent import EvalBotAgent
 from game_runner.policy import GameResult

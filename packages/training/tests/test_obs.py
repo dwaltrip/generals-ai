@@ -10,7 +10,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from bc.obs import (
+from training.bc.obs import (
     _encode_army_delta,
     _encode_ownership_transition,
     canonical_slot_order,

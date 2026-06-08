@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import torch
 
-from shared.resource_info import log_resource_info
+from training.shared.resource_info import log_resource_info
 
 
 def test_log_resource_info_smoke(capsys):

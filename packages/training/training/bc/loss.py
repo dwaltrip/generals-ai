@@ -29,7 +29,7 @@ from dataclasses import dataclass
 import torch
 import torch.nn.functional as F
 
-from bc.actions import _PASS_FLAT_IDX
+from training.bc.actions import _PASS_FLAT_IDX
 
 
 # Loss head weights. Tentative v1 spike defaults from

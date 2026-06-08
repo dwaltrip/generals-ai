@@ -27,9 +27,9 @@ import time
 import numpy as np
 
 from bc import actions, bfs
-from bc.constants import H_PADDED, W_PADDED, obs_channel_count
-from bc.mask import build_mask
-from bc.obs import (
+from training.bc.constants import H_PADDED, W_PADDED, obs_channel_count
+from training.bc.mask import build_mask
+from training.bc.obs import (
     MemoryState,
     _cat_bfs,
     _cat_contact_capture,
@@ -45,8 +45,8 @@ from bc.obs import (
     init_memory,
     step_memory,
 )
-from bc.obs_config import OBS_CONFIG_DEFAULTS
-from bc.visibility import compute_visibility
+from training.bc.obs_config import OBS_CONFIG_DEFAULTS
+from training.bc.visibility import compute_visibility
 
 
 GAMES = [

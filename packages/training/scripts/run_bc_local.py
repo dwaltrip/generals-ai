@@ -16,11 +16,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from bc.resume import bc_resume
-from bc.run_dir import initialize_run_dir, prepare_resume
-from bc.run_instrumentation import instrumented_run
-from bc.train import bc_run
-from bc.train_cli import (
+from training.bc.resume import bc_resume
+from training.bc.run_dir import initialize_run_dir, prepare_resume
+from training.bc.run_instrumentation import instrumented_run
+from training.bc.train import bc_run
+from training.bc.train_cli import (
     build_arg_parser,
     config_from_args,
     load_config_overlay,

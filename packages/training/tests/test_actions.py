@@ -2,7 +2,7 @@
 
 import pytest
 
-from bc.actions import decode, encode
+from training.bc.actions import decode, encode
 
 
 # Round-trip cases. Format: (source, dest, is50, W_unpadded, W_padded).

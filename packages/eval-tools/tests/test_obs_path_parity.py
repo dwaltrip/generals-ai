@@ -38,10 +38,10 @@ import torch
 import sim_core
 from bc import bfs as bc_bfs
 from bc import obs as bc_obs
-from bc.inference import BCPerspective
-from bc.mask import build_mask
-from bc.obs_config import OBS_CONFIG_DEFAULTS
-from bc.visibility import compute_visibility
+from training.bc.inference import BCPerspective
+from training.bc.mask import build_mask
+from training.bc.obs_config import OBS_CONFIG_DEFAULTS
+from training.bc.visibility import compute_visibility
 from game_runner.ascii_map import load_ascii_map
 from game_runner.save import write_eval_game
 from game_runner.sim_adapter import state_to_view

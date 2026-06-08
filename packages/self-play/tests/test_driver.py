@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-from bc.inference import BCModelHandle, default_device
+from training.bc.inference import BCModelHandle, default_device
 from game_runner import seed_map, viewer
 from self_play import driver
 from settings import DB_PATH

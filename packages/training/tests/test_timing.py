@@ -10,7 +10,7 @@ import threading
 
 import pytest
 
-from shared.timing import (
+from training.shared.timing import (
     _HISTO_FLOOR_NS,
     _HISTO_MAX_BUCKET,
     LockedTimer,

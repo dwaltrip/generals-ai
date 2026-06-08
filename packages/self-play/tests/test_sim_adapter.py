@@ -12,7 +12,7 @@ import numpy as np
 import pytest
 
 from bc import mask
-from bc.constants import H_PADDED, W_PADDED
+from training.bc.constants import H_PADDED, W_PADDED
 from game_runner import seed_map, sim_adapter
 from settings import DB_PATH
 import sim_core

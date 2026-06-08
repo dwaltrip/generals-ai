@@ -43,10 +43,10 @@ import time
 import torch
 from torch.utils.data import DataLoader
 
-from bc.dataset import IterableDataset, assert_safe_loader
-from bc.loss import LossAccumulator, bc_loss, flatten_policy_logits
-from bc.obs_config import ObsConfig
-from shared.device import dataloader_kwargs, move_batch, obs_for_model
+from training.bc.dataset import IterableDataset, assert_safe_loader
+from training.bc.loss import LossAccumulator, bc_loss, flatten_policy_logits
+from training.bc.obs_config import ObsConfig
+from training.shared.device import dataloader_kwargs, move_batch, obs_for_model
 
 
 # 8-bucket action histogram keys. Index = `flat_action_idx % 8` =

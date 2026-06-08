@@ -47,7 +47,7 @@ import time
 
 import torch
 
-from bc.inference import default_device
+from training.bc.inference import default_device
 from eval_tools.metrics_collector import MetricsCollector
 from eval_tools.policy_spec import build_policy_names, parse_policy_spec
 from game_runner.batched import FinishedGame, PendingGame, run_batched

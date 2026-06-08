@@ -64,7 +64,7 @@ def bench_pin(dense_history_n: int) -> dict:
 
     import torch
 
-    from bc.constants import obs_channel_count
+    from training.bc.constants import obs_channel_count
 
     assert torch.cuda.is_available()
     dev = torch.device("cuda")
@@ -155,7 +155,7 @@ def bench_contention(dense_history_n: int, load_levels: list[int]) -> dict:
 
     import torch
 
-    from bc.constants import obs_channel_count
+    from training.bc.constants import obs_channel_count
 
     assert torch.cuda.is_available()
     torch.zeros(1, device="cuda")  # init CUDA context

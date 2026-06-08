@@ -22,7 +22,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, fields
 
-from bc.constants import obs_channel_count
+from training.bc.constants import obs_channel_count
 
 
 @dataclass(frozen=True)

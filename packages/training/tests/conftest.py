@@ -12,9 +12,9 @@ from pathlib import Path
 
 import pytest
 
-from bc.filters import eligible_perspectives
-from bc.splits import load_curated_names
-from bc.utils import list_sim_paths, meta_path_for
+from training.bc.filters import eligible_perspectives
+from training.bc.splits import load_curated_names
+from training.bc.utils import list_sim_paths, meta_path_for
 
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent

@@ -44,9 +44,9 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from bc.obs import init_memory, step_memory
-from bc.obs_config import OBS_CONFIG_DEFAULTS
-from bc.visibility import compute_visibility
+from training.bc.obs import init_memory, step_memory
+from training.bc.obs_config import OBS_CONFIG_DEFAULTS
+from training.bc.visibility import compute_visibility
 
 
 H, W = 5, 6

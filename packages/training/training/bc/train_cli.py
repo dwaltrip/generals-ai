@@ -20,7 +20,7 @@ import argparse
 import json
 from pathlib import Path
 
-from bc.train_config import TrainConfig, make_run_id
+from training.bc.train_config import TrainConfig, make_run_id
 
 
 def build_arg_parser() -> argparse.ArgumentParser:

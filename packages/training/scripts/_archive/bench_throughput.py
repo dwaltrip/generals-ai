@@ -112,7 +112,7 @@ def _flops_per_sample(model, device) -> int:
     """
     import torch
 
-    from shared.perf import measure_total_flops
+    from training.shared.perf import measure_total_flops
 
     def fwd_bwd() -> torch.Tensor:
         x = torch.zeros(1, model.cfg.in_ch, model.cfg.H, model.cfg.W, device=device)
@@ -158,10 +158,10 @@ def bench_gpu_ceiling(
 
     import torch
 
-    from bc.loss import bc_loss
-    from bc.model import BCModel
-    from bc.model_config import build_model_cfg
-    from shared.perf import compute_mfu, peak_tflops_fp16, peak_tflops_fp32
+    from training.bc.loss import bc_loss
+    from training.bc.model import BCModel
+    from training.bc.model_config import build_model_cfg
+    from training.shared.perf import compute_mfu, peak_tflops_fp16, peak_tflops_fp32
 
     # Fixed input shapes -> autotune the best kernels once, reuse them. Correct
     # for this workload; note that train.py does NOT set this today.
@@ -316,9 +316,9 @@ def bench_dataloader(
     import torch
     from torch.utils.data import DataLoader
 
-    from bc.dataset import IterableDataset
-    from bc.model_config import MODEL_CONFIG_DEFAULTS
-    from bc.splits import load_manifest, samples_for_split
+    from training.bc.dataset import IterableDataset
+    from training.bc.model_config import MODEL_CONFIG_DEFAULTS
+    from training.bc.splits import load_manifest, samples_for_split
 
     torch.set_num_threads(1)
 

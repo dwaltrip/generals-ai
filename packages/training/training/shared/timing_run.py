@@ -30,7 +30,7 @@ from dataclasses import asdict, dataclass
 import json
 from pathlib import Path
 
-from shared.timing import SpanStats, timer
+from training.shared.timing import SpanStats, timer
 
 
 Tally = dict[str, SpanStats]

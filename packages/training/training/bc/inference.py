@@ -34,12 +34,12 @@ from bc import actions, visibility
 from bc import bfs as bc_bfs
 from bc import mask as bc_mask
 from bc import obs as bc_obs
-from bc.checkpoint import is_arch_bearing, load_bc_model
-from bc.constants import H_PADDED, W_PADDED
-from bc.loss import flatten_policy_logits
-from bc.model import BCModel
-from bc.obs import pad_initial_generals
-from bc.obs_config import ObsConfig
+from training.bc.checkpoint import is_arch_bearing, load_bc_model
+from training.bc.constants import H_PADDED, W_PADDED
+from training.bc.loss import flatten_policy_logits
+from training.bc.model import BCModel
+from training.bc.obs import pad_initial_generals
+from training.bc.obs_config import ObsConfig
 from game_types import ObsBundle, PlayerView
 
 

@@ -10,15 +10,15 @@ from dataclasses import asdict, replace
 import pytest
 import torch
 
-from bc.checkpoint import (
+from training.bc.checkpoint import (
     LEGACY_ARCH,
     LEGACY_OBS_CFG,
     is_legacy_checkpoint,
     load_bc_model,
 )
-from bc.model import BCModel
-from bc.model_config import MODEL_CONFIG_DEFAULTS, build_model_cfg
-from bc.obs_config import OBS_CONFIG_DEFAULTS
+from training.bc.model import BCModel
+from training.bc.model_config import MODEL_CONFIG_DEFAULTS, build_model_cfg
+from training.bc.obs_config import OBS_CONFIG_DEFAULTS
 
 
 def test_load_bc_model_bare_state_dict(tmp_path):

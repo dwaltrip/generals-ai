@@ -16,7 +16,7 @@ from pathlib import Path
 
 import torch
 
-from bc.inference import BCModelHandle, BCPerspective
+from training.bc.inference import BCModelHandle, BCPerspective
 from eval_bot.bot_config import BotConfig
 from eval_bot.eval_bot_agent import EvalBotAgent
 from game_runner.policy import Policy

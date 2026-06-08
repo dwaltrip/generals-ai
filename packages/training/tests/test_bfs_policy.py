@@ -24,9 +24,9 @@ from __future__ import annotations
 
 import numpy as np
 
-from bc.constants import CITY_TRAVERSABILITY_FACTOR
-from bc.obs import MemoryState, compute_known_passable
-from bc.obs_config import OBS_CONFIG_DEFAULTS
+from training.bc.constants import CITY_TRAVERSABILITY_FACTOR
+from training.bc.obs import MemoryState, compute_known_passable
+from training.bc.obs_config import OBS_CONFIG_DEFAULTS
 
 
 H, W = 4, 4

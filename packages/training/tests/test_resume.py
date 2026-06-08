@@ -15,10 +15,10 @@ from pathlib import Path
 import pytest
 import torch
 
-from bc.model_config import build_model_cfg
-from bc.resume import _resume_config, bc_resume
-from bc.run_dir import ResumeInfo, check_drift, prepare_resume
-from bc.train_config import TrainConfig, json_default
+from training.bc.model_config import build_model_cfg
+from training.bc.resume import _resume_config, bc_resume
+from training.bc.run_dir import ResumeInfo, check_drift, prepare_resume
+from training.bc.train_config import TrainConfig, json_default
 
 
 def _config(**overrides: object) -> TrainConfig:

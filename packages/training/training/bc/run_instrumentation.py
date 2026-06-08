@@ -12,8 +12,8 @@ from __future__ import annotations
 from contextlib import contextmanager
 from pathlib import Path
 
-from bc.run_report import build_report
-from shared.timing_run import begin, end_and_report
+from training.bc.run_report import build_report
+from training.shared.timing_run import begin, end_and_report
 
 
 @contextmanager
@@ -35,7 +35,7 @@ def instrumented_run(run_dir: Path, profile: bool):
         # Lazy import: the module's top-level torch-version guard runs here
         # (only on profiled runs), and `enable` must precede DataLoader
         # iteration so the patched pin loop is in place when the thread spawns.
-        from bc.pin_instrument import enable_pin_instrumentation
+        from training.bc.pin_instrument import enable_pin_instrumentation
 
         enable_pin_instrumentation()
     try:
@@ -43,7 +43,7 @@ def instrumented_run(run_dir: Path, profile: bool):
     finally:
         if profile:
             end_and_report(prof_dir)
-            from bc.pin_instrument import flush as flush_pin
+            from training.bc.pin_instrument import flush as flush_pin
 
             flush_pin(prof_dir)
         _write_report(run_dir)

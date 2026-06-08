@@ -54,15 +54,15 @@ from dataclasses import dataclass, field
 import numpy as np
 
 from bc import bfs
-from bc.constants import (
+from training.bc.constants import (
     CITY_TRAVERSABILITY_FACTOR,
     H_PADDED,
     W_PADDED,
     obs_channel_count,
 )
-from bc.obs_config import OBS_CONFIG_DEFAULTS, ObsConfig
+from training.bc.obs_config import OBS_CONFIG_DEFAULTS, ObsConfig
 from game_types.state_constants import OWN_FOG, OWN_MOUNTAIN
-from shared.timing import timer
+from training.shared.timing import timer
 
 
 # ---------------------------------------------------------------------------

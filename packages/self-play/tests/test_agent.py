@@ -9,10 +9,10 @@ from pathlib import Path
 import pytest
 import torch
 
-from bc.checkpoint import load_bc_model
-from bc.constants import H_PADDED, W_PADDED
-from bc.inference import default_device
-from bc.obs_config import OBS_CHANNELS
+from training.bc.checkpoint import load_bc_model
+from training.bc.constants import H_PADDED, W_PADDED
+from training.bc.inference import default_device
+from training.bc.obs_config import OBS_CHANNELS
 
 
 # packages/self-play/tests/ → repo root is 3 levels up.

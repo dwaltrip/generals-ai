@@ -17,7 +17,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from bc.model_config import ModelConfig, build_model_cfg
+from training.bc.model_config import ModelConfig, build_model_cfg
 
 
 @dataclass(frozen=True)

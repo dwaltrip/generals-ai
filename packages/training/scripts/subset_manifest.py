@@ -27,7 +27,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from bc.splits import load_manifest
+from training.bc.splits import load_manifest
 from utils.docstring import doc_summary
 from utils.json_io import write_json
 

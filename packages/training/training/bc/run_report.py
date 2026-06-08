@@ -24,9 +24,9 @@ import logging
 from pathlib import Path
 from statistics import fmean, median, pstdev
 
-from bc.constants import H_PADDED, W_PADDED, obs_channel_count
-from shared.timing import histo_bucket_midpoint_ns
-from shared.timing_run import _span_from_json
+from training.bc.constants import H_PADDED, W_PADDED, obs_channel_count
+from training.shared.timing import histo_bucket_midpoint_ns
+from training.shared.timing_run import _span_from_json
 from utils.format import (
     format_bytes,
     format_duration,

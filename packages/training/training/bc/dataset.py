@@ -34,22 +34,22 @@ from torch.utils.data import DataLoader, default_collate
 from torch.utils.data import IterableDataset as TorchIterableDataset
 
 from bc import actions, bfs
-from bc.constants import H_PADDED, W_PADDED
-from bc.mask import build_mask
-from bc.obs import (
+from training.bc.constants import H_PADDED, W_PADDED
+from training.bc.mask import build_mask
+from training.bc.obs import (
     MemoryState,
     build_obs,
     canonical_slot_order,
     init_memory,
     step_memory,
 )
-from bc.obs_config import ObsConfig
-from bc.visibility import compute_visibility
-from shared.timing import timer
+from training.bc.obs_config import ObsConfig
+from training.bc.visibility import compute_visibility
+from training.shared.timing import timer
 
 
 if TYPE_CHECKING:
-    from shared.timing_run import FileSink
+    from training.shared.timing_run import FileSink
 
 
 def _group_by_path(samples: list[tuple[Path, int]]) -> list[tuple[Path, tuple[int, ...]]]:

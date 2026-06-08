@@ -16,7 +16,7 @@ from pathlib import Path
 
 import numpy as np
 
-from bc.constants import ELIGIBLE_PLAYER_COUNT, MAX_BOARD_SIDE
+from training.bc.constants import ELIGIBLE_PLAYER_COUNT, MAX_BOARD_SIDE
 
 
 FILTER_VERSION = "v2"

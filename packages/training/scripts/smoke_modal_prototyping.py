@@ -60,9 +60,9 @@ def smoke() -> dict:
 
     # The actual import-chain check — resolves bc + shared (from training)
     # and the workspace cross-dep utils.
-    from bc.train import bc_run  # noqa: F401
-    from bc.train_cli import build_arg_parser, config_from_args  # noqa: F401
-    from bc.train_config import TrainConfig, make_run_id  # noqa: F401
+    from training.bc.train import bc_run  # noqa: F401
+    from training.bc.train_cli import build_arg_parser, config_from_args  # noqa: F401
+    from training.bc.train_config import TrainConfig, make_run_id  # noqa: F401
 
     return {
         "python": sys.version.split()[0],
@@ -78,8 +78,8 @@ def smoke_volume() -> dict:
     """Step-2 smoke: open the manifest from the mounted Volume, load one sample."""
     import numpy as np
 
-    from bc.splits import load_manifest, samples_for_split
-    from bc.utils import meta_path_for
+    from training.bc.splits import load_manifest, samples_for_split
+    from training.bc.utils import meta_path_for
 
     manifest = load_manifest(Path("/data/probe_500.json"))
     samples = samples_for_split(manifest, "train", Path("/data/intermediate"))
@@ -118,7 +118,7 @@ def smoke_outputs() -> dict:
     import platform
     import socket
 
-    from bc.train_config import make_run_id
+    from training.bc.train_config import make_run_id
 
     run_id = make_run_id()
     run_dir = Path("/runs") / run_id

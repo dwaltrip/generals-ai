@@ -18,10 +18,10 @@ from __future__ import annotations
 import pytest
 import torch
 
-from bc.constants import H_PADDED, W_PADDED
-from bc.model import BCModel, PassHead, ValueHead
-from bc.model_config import build_model_cfg
-from bc.obs_config import OBS_CHANNELS
+from training.bc.constants import H_PADDED, W_PADDED
+from training.bc.model import BCModel, PassHead, ValueHead
+from training.bc.model_config import build_model_cfg
+from training.bc.obs_config import OBS_CHANNELS
 
 
 def test_pass_head_full_board_matches_plain_global_pool() -> None:

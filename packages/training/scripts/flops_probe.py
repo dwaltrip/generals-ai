@@ -22,10 +22,10 @@ import argparse
 
 import torch
 
-from bc.constants import H_PADDED, W_PADDED
-from bc.model import BCModel
-from bc.model_config import build_model_cfg
-from shared.perf import measure_total_flops
+from training.bc.constants import H_PADDED, W_PADDED
+from training.bc.model import BCModel
+from training.bc.model_config import build_model_cfg
+from training.shared.perf import measure_total_flops
 from utils.docstring import doc_summary
 
 
