@@ -355,7 +355,7 @@ requires-dist = [
     { name = "numpy", specifier = ">=2.0" },
     { name = "self-play", editable = "packages/self-play" },
     { name = "sim-core", editable = "sim-core" },
-    { name = "training", editable = "training" },
+    { name = "training", editable = "packages/training" },
 ]
 
 [[package]]
@@ -549,7 +549,7 @@ requires-dist = [
     { name = "self-play", editable = "packages/self-play" },
     { name = "settings", editable = "packages/settings" },
     { name = "sim-core", editable = "sim-core" },
-    { name = "training", editable = "training" },
+    { name = "training", editable = "packages/training" },
     { name = "utils", editable = "packages/utils" },
 ]
 
@@ -1383,7 +1383,7 @@ requires-dist = [
     { name = "replay-collector", editable = "replay-collector" },
     { name = "replay-parser", editable = "replay-parser" },
     { name = "sim-core", editable = "sim-core" },
-    { name = "training", editable = "training" },
+    { name = "training", editable = "packages/training" },
 ]
 
 [[package]]
@@ -1491,12 +1491,13 @@ wheels = [
 [[package]]
 name = "training"
 version = "0.1.0"
-source = { editable = "training" }
+source = { editable = "packages/training" }
 dependencies = [
     { name = "game-types" },
     { name = "matplotlib" },
     { name = "numpy" },
     { name = "nvidia-ml-py" },
+    { name = "settings" },
     { name = "torch" },
     { name = "utils" },
 ]
@@ -1507,6 +1508,7 @@ requires-dist = [
     { name = "matplotlib", specifier = ">=3.10.9" },
     { name = "numpy", specifier = ">=2.0" },
     { name = "nvidia-ml-py", specifier = ">=12.0" },
+    { name = "settings", editable = "packages/settings" },
     { name = "torch", specifier = ">=2.12" },
     { name = "utils", editable = "packages/utils" },
 ]

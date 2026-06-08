@@ -40,11 +40,11 @@ def test_two_widths_coexist_and_play_head_to_head(tmp_path: Path) -> None:
     replay_id = _corpus_2p_replay_id()
     if replay_id is None:
         pytest.skip("replay corpus not available")
-    from training.bc.inference import BCModelHandle
     from eval_tools.policy_spec import parse_policy_spec
     from game_runner.batched import PendingGame, run_batched
     from game_runner.seed_map import load_static_from_db
     from self_play.nn_agent import NNAgent
+    from training.bc.inference import BCModelHandle
 
     device = torch.device("cpu")
     wide = build_model_cfg()  # default 128/128/160

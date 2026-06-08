@@ -89,7 +89,7 @@ Groups (expand to all in category):  train  val  top
 Naming: t_* is short for train_*, v_* for val_*"""
 
 
-def _build_cols(dp: int | None) -> list[ColDef]:
+def build_cols(dp: int | None) -> list[ColDef]:
     def loss(d: dict, key: str) -> str | None:
         v = d.get(key)
         return format_loss(v, dp=dp) if v is not None else None

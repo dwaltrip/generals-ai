@@ -57,7 +57,7 @@ _EXPECTED_TORCH = "2.12.0"
 _running_torch = torch.__version__.split("+")[0]  # strip the +cuXXX build suffix
 if _running_torch != _EXPECTED_TORCH:
     raise RuntimeError(
-        f"bc.pin_instrument vendors torch {_EXPECTED_TORCH}'s _pin_memory_loop; "
+        f"training.bc.pin_instrument vendors torch {_EXPECTED_TORCH}'s _pin_memory_loop; "
         f"running torch is {torch.__version__}. Re-vendor _pin_memory_loop from "
         f"the new version and bump _EXPECTED_TORCH before profiling."
     )

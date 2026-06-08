@@ -15,13 +15,13 @@ from pathlib import Path
 import random
 import time
 
-from training.bc.inference import BCModelHandle, BCPerspective, default_device
 from eval_bot.bot_config import BotConfig
 from eval_bot.eval_bot_agent import EvalBotAgent
 from game_runner.policy import GameResult
 from game_runner.runner import run_game
 from game_runner.seed_map import list_two_player_replay_ids, load_static_from_db
 from self_play.nn_agent import NNAgent
+from training.bc.inference import BCModelHandle, BCPerspective, default_device
 
 
 def run_eval(

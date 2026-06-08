@@ -46,6 +46,7 @@ from pathlib import Path
 import random
 import subprocess
 
+from settings import PROJECT_ROOT
 from training.bc.filters import DROP_REASONS, FILTER_VERSION, eligible_perspectives
 from training.bc.utils import list_sim_paths, meta_path_for
 from utils.docstring import doc_summary
@@ -55,11 +56,7 @@ from utils.player_name_lists import load_union
 
 MANIFEST_VERSION = 1
 DEFAULT_VAL_FRAC = 0.05
-
-# Repo-relative path to the curated-list manifest. Resolved here so callers
-# (build_manifest's default, CLI) don't each recompute the same walk.
-_REPO_ROOT = Path(__file__).resolve().parent.parent.parent
-CURATED_LISTS_MANIFEST = _REPO_ROOT / "curated-player-lists.txt"
+CURATED_LISTS_MANIFEST = PROJECT_ROOT / "curated-player-lists.txt"
 
 
 def load_curated_names() -> set[str]:
@@ -70,7 +67,7 @@ def load_curated_names() -> set[str]:
     Callers can pass an explicit `curated_names=` to `build_manifest` to
     override — useful for tests that want a small known fixture set.
     """
-    return set(load_union(CURATED_LISTS_MANIFEST, _REPO_ROOT))
+    return set(load_union(CURATED_LISTS_MANIFEST, PROJECT_ROOT))
 
 
 def _git_sha() -> str:
@@ -284,7 +281,7 @@ def _cmd_build(args: argparse.Namespace) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(prog="bc.splits", description=doc_summary(__doc__, 1))
+    parser = argparse.ArgumentParser(prog="training.bc.splits", description=doc_summary(__doc__, 1))
     sub = parser.add_subparsers(dest="cmd", required=True)
 
     build = sub.add_parser("build", help="Build a new train/val split manifest")
@@ -293,7 +290,7 @@ def main() -> None:
     build.add_argument(
         "--intermediate",
         type=Path,
-        default=_REPO_ROOT / "replay-parser" / "data" / "intermediate",
+        default=PROJECT_ROOT / "replay-parser" / "data" / "intermediate",
         help="Intermediate corpus root (defaults to replay-parser/data/intermediate).",
     )
     build.add_argument("--val-frac", type=float, default=DEFAULT_VAL_FRAC)

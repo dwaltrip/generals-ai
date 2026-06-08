@@ -14,10 +14,10 @@ from pathlib import Path
 
 import pytest
 
-from training.bc.inference import BCModelHandle, default_device
 from game_runner import seed_map, viewer
 from self_play import driver
 from settings import DB_PATH
+from training.bc.inference import BCModelHandle, default_device
 
 
 # packages/self-play/tests/ → repo root is 3 levels up.

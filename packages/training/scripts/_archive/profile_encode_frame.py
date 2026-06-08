@@ -26,7 +26,7 @@ import time
 
 import numpy as np
 
-from bc import actions, bfs
+from training.bc import actions, bfs
 from training.bc.constants import H_PADDED, W_PADDED, obs_channel_count
 from training.bc.mask import build_mask
 from training.bc.obs import (

@@ -1,6 +1,5 @@
-extend = "../ruff.toml"
+extend = "../../ruff.toml"
 
-# `training/` ships top-level packages (`bc`, `shared`, …) rather than a
-# single `training` package. `src = ["."]` tells ruff to auto-detect them as
-# first-party for files under this directory — no need to enumerate names.
+# `src = ["."]` marks this member dir as a first-party root so ruff's import
+# sorting recognizes the `training` package (alongside `scripts/`, `tests/`).
 src = ["."]

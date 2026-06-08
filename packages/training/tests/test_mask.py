@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from bc import actions
+from training.bc import actions
 from training.bc.mask import build_mask
 
 

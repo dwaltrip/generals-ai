@@ -116,7 +116,7 @@ def test_load_missing_obs_dtype_uses_legacy(tmp_path, monkeypatch):
     legacy snapshot, not the live default — so flipping the default never
     silently re-describes an old checkpoint's obs precision."""
     monkeypatch.setattr(
-        "bc.model_config.OBS_CONFIG_DEFAULTS",
+        "training.bc.model_config.OBS_CONFIG_DEFAULTS",
         replace(OBS_CONFIG_DEFAULTS, obs_dtype="fp16"),
     )
     cfg = build_model_cfg()
@@ -149,7 +149,7 @@ def test_fresh_partial_obs_uses_live_default(monkeypatch):
     `obs_dtype` from the live defaults — the complement of the load-path
     back-fill above."""
     monkeypatch.setattr(
-        "bc.model_config.OBS_CONFIG_DEFAULTS",
+        "training.bc.model_config.OBS_CONFIG_DEFAULTS",
         replace(OBS_CONFIG_DEFAULTS, obs_dtype="fp16"),
     )
     cfg = build_model_cfg(obs={"dense_history_n": 5})

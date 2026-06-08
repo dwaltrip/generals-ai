@@ -31,6 +31,6 @@ regen() {
         >> "$LOG"
 }
 
-regen training training/modal_requirements.txt
+regen training packages/training/modal_requirements.txt
 
 echo "(uv export stdout captured in $LOG)"

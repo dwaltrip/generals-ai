@@ -23,7 +23,7 @@ min time per sample = FLOPs per sample / effective TFLOPS of the GPU
 ```
 
 Worked example with our model on a T4 in FP32:
-- Model fwd+bwd: **10.57 GFLOPs/sample** (measured by `training/scripts/flops_probe.py`)
+- Model fwd+bwd: **10.57 GFLOPs/sample** (measured by `packages/training/scripts/flops_probe.py`)
 - T4 peak FP32: **8.1 TFLOPS** (vendor-published — always optimistic)
 - Theoretical max: 8.1e12 / 10.57e9 = **766 sps**
 - Actual measured: **238 sps** (T4 baseline, bs=256 nw=4)
@@ -116,11 +116,11 @@ A quick checklist for "is this run as fast as it should be":
 1. **Is AMP on?** (CUDA only.) `grep precision args.json` or scan `console.log`. If you're on FP32 on a tensor-core GPU, that's likely the biggest unclaimed win.
 2. **What's the current MFU?** Per-epoch summary line. <15% on a non-trivial model → investigate; 30–40% → reasonable.
 3. **Is the GPU actually busy?** `gpu_util.jsonl` sidecar (CUDA-only). If `gpu_util_pct` is bouncing between 0 and 100, you're likely data-starved (waiting between batches) rather than compute-bound.
-4. **Did you measure FLOPs/sample after model changes?** `./training/scripts/flops_probe.py`. Without this, MFU is wrong.
+4. **Did you measure FLOPs/sample after model changes?** `./packages/training/scripts/flops_probe.py`. Without this, MFU is wrong.
 
 ## Related
 
 - [`working-with-modal-cloud-gpu.md`](./working-with-modal-cloud-gpu.md) — evergreen Modal reference (image setup, lockfile workflow, gotchas).
 - [`2026-05/5.22-2-cloud-real-mvp.md`](./2026-05/5.22-2-cloud-real-mvp.md) — cloud spike tracker; carries the per-platform measured numbers this doc references.
-- `training/scripts/flops_probe.py` — CLI tool for measuring FLOPs/sample of `BCModel`.
-- `training/shared/perf.py` — MFU + peak-TFLOPS helpers used by the training runner.
+- `packages/training/scripts/flops_probe.py` — CLI tool for measuring FLOPs/sample of `BCModel`.
+- `packages/training/training/shared/perf.py` — MFU + peak-TFLOPS helpers used by the training runner.

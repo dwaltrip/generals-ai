@@ -18,9 +18,9 @@ from pathlib import Path
 
 import torch
 
-from training.bc.inference import BCModelHandle, default_device
 from game_runner import seed_map, viewer
 from self_play import driver
+from training.bc.inference import BCModelHandle, default_device
 
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]

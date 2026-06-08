@@ -38,7 +38,7 @@ members = [
     "packages/self-play",
     "packages/settings",
     "sim-core",
-    "training",
+    "packages/training",
     "packages/utils",
 ]
 
@@ -73,7 +73,7 @@ testpaths = [
     "replay-collector/tests",
     "replay-parser/tests",
     "packages/self-play/tests",
-    "training/tests",
+    "packages/training/tests",
     "packages/utils/tests",
 ]
 

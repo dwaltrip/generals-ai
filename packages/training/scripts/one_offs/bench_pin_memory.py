@@ -51,7 +51,7 @@ TRAINING_REQS = REPO_ROOT / "training" / "modal_requirements.txt"
 image = (
     modal.Image.debian_slim(python_version="3.14")
     .uv_pip_install(requirements=[str(TRAINING_REQS)])
-    .add_local_python_source("bc", "shared", "utils")
+    .add_local_python_source("training", "settings", "utils")
 )
 
 app = modal.App("bc-train", image=image)

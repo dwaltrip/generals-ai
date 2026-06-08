@@ -36,12 +36,12 @@ TRAINING_REQS = REPO_ROOT / "training" / "modal_requirements.txt"
 #   1. pinned external deps — rarely changes, big install (torch + transitives)
 #   2. our source packages — change every iteration, mounted at runtime via
 #      `add_local_python_source` (no layer rebuild on edit). Modal looks the
-#      modules up via Python import, so this works because `bc`, `shared`,
-#      and `utils` are installed as workspace members in the local env.
+#      modules up via Python import, so this works because `training` and
+#      `utils` are installed as workspace members in the local env.
 image = (
     modal.Image.debian_slim(python_version="3.14")
     .uv_pip_install(requirements=[str(TRAINING_REQS)])
-    .add_local_python_source("bc", "shared", "utils")
+    .add_local_python_source("training", "settings", "utils")
 )
 
 app = modal.App("bc-train", image=image)

@@ -33,7 +33,7 @@ import torch
 from torch.utils.data import DataLoader, default_collate
 from torch.utils.data import IterableDataset as TorchIterableDataset
 
-from bc import actions, bfs
+from training.bc import actions, bfs
 from training.bc.constants import H_PADDED, W_PADDED
 from training.bc.mask import build_mask
 from training.bc.obs import (

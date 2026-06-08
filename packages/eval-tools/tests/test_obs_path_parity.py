@@ -30,25 +30,23 @@ No checkpoint or DB needed: `encode` is pure numpy, so both paths run on an
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import numpy as np
 import torch
 
+from game_runner.ascii_map import load_ascii_map
+from game_runner.save import write_eval_game
+from game_runner.sim_adapter import state_to_view
+from settings import PROJECT_ROOT
 import sim_core
-from bc import bfs as bc_bfs
-from bc import obs as bc_obs
+from training.bc import bfs as bc_bfs
+from training.bc import obs as bc_obs
 from training.bc.inference import BCPerspective
 from training.bc.mask import build_mask
 from training.bc.obs_config import OBS_CONFIG_DEFAULTS
 from training.bc.visibility import compute_visibility
-from game_runner.ascii_map import load_ascii_map
-from game_runner.save import write_eval_game
-from game_runner.sim_adapter import state_to_view
 
-# packages/self-play/tests/ → repo root is 3 levels up.
-_REPO_ROOT = Path(__file__).resolve().parents[3]
-_FIXTURE = _REPO_ROOT / "training" / "tests" / "fixtures" / "small-1.txt"
+
+_FIXTURE = PROJECT_ROOT / "packages" / "training" / "tests" / "fixtures" / "small-1.txt"
 
 _N_TICKS = 16
 _MARCH_THRESHOLD = 5  # army the general accumulates before pushing out

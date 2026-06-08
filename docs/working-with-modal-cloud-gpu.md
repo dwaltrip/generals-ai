@@ -7,7 +7,7 @@ Official docs: [Modal guide root](https://modal.com/docs/guide) · [Image refere
 > **NOTE — partially stale.** A few sections lag the current cloud entry implementation:
 > - **Native vs shell-out** — code example shows a two-parser `parse_known_args` shape; we ship the extended-parser shape (cloud-only flags `add_argument`'d to the shared training parser). The "Flag collisions" caveat is also inverted: collisions raise `argparse.ArgumentError` at startup, they don't silently consume.
 > - **Volumes** — example uses placeholder name `"generals-corpus"`. Real Volumes: `generals-ai.parsed-replays` (RO inputs) and `generals-ai.training-runs` (RW outputs); naming convention is `generals-ai.<role>` as a pseudo-namespace.
-> - **"`modal_entry.py` is auto-mounted" gotcha** — references the prototype filename; current entry is `training/scripts/run_bc_modal.py`.
+> - **"`modal_entry.py` is auto-mounted" gotcha** — references the prototype filename; current entry is `packages/training/scripts/run_bc_modal.py`.
 >
 > TODO: refresh these in one pass once the data-pipeline pattern (DataLoader workers / staging-to-local-SSD) is settled, so the update captures the full cloud story rather than rewriting in two passes.
 
@@ -156,7 +156,7 @@ def cli(*arglist):
 
 Two practical notes:
 
-- **`modal run script.py --help`** only shows Modal-level help (the `--gpu` flag, in this case). For the full set of training flags, invoke the local CLI wrapper's `--help` directly: `./training/scripts/run_bc_local.py --help`.
+- **`modal run script.py --help`** only shows Modal-level help (the `--gpu` flag, in this case). For the full set of training flags, invoke the local CLI wrapper's `--help` directly: `./packages/training/scripts/run_bc_local.py --help`.
 - **Flag collisions.** If the runner's parser already defines a flag that the cloud parser also wants (e.g. `--gpu`), the cloud parser consumes it first. Namespace cloud-only flags (e.g. `--modal-gpu`) if there's any risk of overlap.
 
 ## Volumes (state across runs)

@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from bc import actions
+from training.bc import actions
 from training.bc.constants import H_PADDED, W_PADDED
 from training.shared.timing import timer
 

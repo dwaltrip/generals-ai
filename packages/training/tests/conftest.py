@@ -12,13 +12,13 @@ from pathlib import Path
 
 import pytest
 
+from settings import PROJECT_ROOT
 from training.bc.filters import eligible_perspectives
 from training.bc.splits import load_curated_names
 from training.bc.utils import list_sim_paths, meta_path_for
 
 
-_REPO_ROOT = Path(__file__).resolve().parent.parent.parent
-INTERMEDIATE_DIR = _REPO_ROOT / "replay-parser" / "data" / "intermediate"
+INTERMEDIATE_DIR = PROJECT_ROOT / "replay-parser" / "data" / "intermediate"
 
 # Cap how many sim files the `samples` fixture scans. Tests only ever pull
 # a few hundred frames at most; full-corpus scans cost minutes for no benefit.

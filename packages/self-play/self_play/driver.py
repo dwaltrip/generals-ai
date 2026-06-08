@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from training.bc.inference import BCModelHandle, BCPerspective
 from game_runner.runner import run_game
 from self_play.nn_agent import NNAgent
+from training.bc.inference import BCModelHandle, BCPerspective
 
 
 if TYPE_CHECKING:

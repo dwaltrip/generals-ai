@@ -27,11 +27,11 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from training.bc.inference import BCModelHandle, BCPerspective
-from training.bc.loss import flatten_policy_logits
 from game_runner.seed_map import list_replay_ids_by_player_count, load_static_from_db
 from game_runner.sim_adapter import state_to_view
 import sim_core
+from training.bc.inference import BCModelHandle, BCPerspective
+from training.bc.loss import flatten_policy_logits
 
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]

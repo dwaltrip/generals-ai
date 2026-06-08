@@ -14,7 +14,7 @@ import threading
 import pytest
 from torch._utils import ExceptionWrapper
 
-from bc import pin_instrument
+from training.bc import pin_instrument
 
 
 @pytest.fixture(autouse=True)
