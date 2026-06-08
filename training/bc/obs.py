@@ -214,7 +214,8 @@ class MemoryState:
     general_locations: np.ndarray
     # list of (P,) int32 arrays: per-tick land count (cells owned).
     # Training: precomputed for all T rows in init_memory.
-    # Live inference: row 0 from init_memory_live, appended per tick.
+    # Live inference: appended per tick by the caller (single owner), so index t
+    # is the scoreboard for snapshot t.
     land_count_history: list[np.ndarray]
     # list of (P,) int64 arrays: per-tick total army. Same shape/lifecycle.
     army_count_history: list[np.ndarray]
@@ -277,16 +278,22 @@ class MemoryState:
     army_delta_buf: deque = field(default_factory=deque)
 
 
-def _init_memory_common(
+def init_memory_common(
     sim: Mapping[str, np.ndarray | list[np.ndarray]],
     perspective_slot: int,
     H: int,
     W: int,
-    P: int,
     obs_cfg: ObsConfig,
+    P: int = 8,
 ) -> MemoryState:
-    """Shared setup for init_memory / init_memory_live. Returns a
-    MemoryState with empty scoreboard lists (caller fills them)."""
+    """Per-game memory scaffolding with empty scoreboard history — the shared
+    base of both memory-init paths.
+
+    The live path (BC inference / eval bot) calls this directly and is the single
+    owner of per-tick history: it appends one row per tick via `scoreboard_row` +
+    `step_memory`, so `*_count_history[t]` is the scoreboard for snapshot t. The
+    training path (`init_memory`) extends this by precomputing all rows at once.
+    """
     HW = H * W
 
     # The static "is this cell a structure" mask: mountains + initial cities
@@ -356,8 +363,10 @@ def init_memory(
     obs_cfg: ObsConfig,
     P: int = 8,
 ) -> MemoryState:
-    """Training path: precompute scoreboard for all T rows."""
-    state = _init_memory_common(sim, perspective_slot, H, W, P, obs_cfg)
+    """Training variant: init_memory_common + precompute the scoreboard for all
+    T rows off the full [T, HW] array (vectorized — the live path can't, it gets
+    rows one tick at a time)."""
+    state = init_memory_common(sim, perspective_slot, H, W, obs_cfg, P)
 
     ownership = sim["ownership"]  # [T, HW] int8
     armies = sim["armies"]  # [T, HW] int16
@@ -374,25 +383,6 @@ def init_memory(
     return state
 
 
-def init_memory_live(
-    sim: Mapping[str, np.ndarray | list[np.ndarray]],
-    perspective_slot: int,
-    H: int,
-    W: int,
-    obs_cfg: ObsConfig,
-    P: int = 8,
-) -> MemoryState:
-    """Live inference path: compute scoreboard for row 0 only.
-    Caller appends subsequent rows each tick."""
-    state = _init_memory_common(sim, perspective_slot, H, W, P, obs_cfg)
-
-    land_0, army_0 = scoreboard_row(sim["ownership"][0], sim["armies"][0], P)
-    state.land_count_history = [land_0]
-    state.army_count_history = [army_0]
-
-    return state
-
-
 def init_memory_live_fog_only(
     sim: Mapping[str, np.ndarray | list[np.ndarray]],
     perspective_slot: int,
@@ -400,14 +390,14 @@ def init_memory_live_fog_only(
     W: int,
     P: int = 8,
 ) -> MemoryState:
-    """Live `init_memory_live` for consumers that track fog memory but never
-    encode the dense-history obs channels (e.g. the heuristic eval bot's
-    `WorldModel`). The obs-encoder config is immaterial to them, so this fills
-    the default — they read `MemoryState`'s fog/scoreboard fields, never the
-    dense-history buffers. NN inference must use `init_memory_live` with the
-    checkpoint's own `obs_cfg` instead, so its obs matches the model's `in_ch`.
+    """`init_memory_common` for consumers that track fog memory but never encode
+    the dense-history obs channels (e.g. the heuristic eval bot's `WorldModel`).
+    The obs-encoder config is immaterial to them, so this fills the default —
+    they read `MemoryState`'s fog/scoreboard fields, never the dense-history
+    buffers. NN inference must call `init_memory_common` with the checkpoint's
+    own `obs_cfg` instead, so its obs matches the model's `in_ch`.
     """
-    return init_memory_live(sim, perspective_slot, H, W, OBS_CONFIG_DEFAULTS, P)
+    return init_memory_common(sim, perspective_slot, H, W, OBS_CONFIG_DEFAULTS, P)
 
 
 @timer.timed("step_memory")

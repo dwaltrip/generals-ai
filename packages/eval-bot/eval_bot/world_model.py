@@ -97,8 +97,11 @@ class WorldModel:
 
         self._H, self._W = H, W
 
-        self._ownership = [np.asarray(state.snapshots_ownership[0], dtype=np.int8)]
-        self._armies = [np.asarray(state.snapshots_armies[0], dtype=np.int16)]
+        # update() is the single owner of per-tick history — it appends one
+        # snapshot + scoreboard row per tick, starting at tick 0. Start empty;
+        # self._sim and self._memory's history alias these lists.
+        self._ownership = []
+        self._armies = []
 
         ig_padded = pad_initial_generals(
             map_data.initial_generals, self.perspective_slot,
@@ -137,6 +140,15 @@ class WorldModel:
 
         t = state.timestep
         H, W = self._H, self._W
+
+        # update() is the single owner of per-tick history: exactly one row per
+        # tick, appended in order, so `_count_history[t]` — read by absolute t in
+        # attack.py — is the scoreboard for snapshot t. Assert the contract so an
+        # out-of-order or repeat call fails loudly rather than silently shifting
+        # the history a tick stale.
+        assert t == len(self._ownership), (
+            f"update() out of order: {len(self._ownership)} ticks recorded, got t={t}"
+        )
 
         # 1. append latest snapshot
         own_flat = np.asarray(state.snapshots_ownership[t], dtype=np.int8)

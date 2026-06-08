@@ -274,8 +274,13 @@ class BCPerspective:
         """Initialize per-game state from the t=0 view."""
         H, W = view.H, view.W
         self._H, self._W = H, W
-        self._ownership = [np.asarray(view.ownership_t, dtype=np.int8)]
-        self._armies = [np.asarray(view.armies_t, dtype=np.int16)]
+        # encode() is the single owner of per-tick history — it appends one
+        # snapshot + scoreboard row per tick, starting at tick 0 (the t=0 view
+        # arrives again on encode's first call). Start empty; self._sim and
+        # self._memory's history alias these lists, so encode's appends show up
+        # through both.
+        self._ownership = []
+        self._armies = []
 
         # initial_generals is length num_players; the BC encoder was trained on
         # 8-player FFA and unconditionally indexes slots 0..P-1. Pad unused slots
@@ -293,22 +298,10 @@ class BCPerspective:
             "cities_present_at": np.asarray(view.cities_present_at, dtype=np.int32),
             "capture_events": np.asarray(view.capture_events, dtype=np.int32),
         }
-        self._memory = bc_obs.init_memory_live(
+        self._memory = bc_obs.init_memory_common(
             self._sim, self.perspective_slot, H, W, self.obs_cfg, P,
         )
         self._bfs_cache = bc_bfs.init_bfs_cache(P)
-
-        # init_memory_live seeded the per-tick history (snapshot + scoreboard
-        # rows) from the t=0 view to build the scaffolding above. encode() is the
-        # *single* appender of per-tick history, so drop those seed rows and let
-        # encode add tick 0 on its first call. Clear in place — self._sim and
-        # self._memory alias these list objects — so a fresh `= []` wouldn't
-        # rebind their references. One, and only one, place appends per-tick
-        # state; that's what keeps the live obs from drifting a tick stale.
-        self._ownership.clear()
-        self._armies.clear()
-        self._memory.land_count_history.clear()
-        self._memory.army_count_history.clear()
 
         self.n_passed = 0
         self.n_moved = 0
