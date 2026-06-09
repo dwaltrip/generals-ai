@@ -3,7 +3,7 @@
 Takes a validated `TrainConfig`, drives an end-to-end training run.
 Pure runner: no CLI, no environment-specific defaults. CLI scaffolding
 lives in `bc.train_cli`; the config dataclass + run-id factory live in
-`bc.train_config`; entry-point wrappers in `training/scripts/`.
+`bc.train_config`; entry-point wrappers in `packages/training/scripts/`.
 
 Reads a split manifest produced by `bc.splits build`, walks the train split
 via `IterableDataset`, runs N epochs of AdamW SGD with `bc_loss`. After each

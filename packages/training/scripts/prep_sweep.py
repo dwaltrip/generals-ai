@@ -401,7 +401,8 @@ mkdir -p "$RUNS_DIR"
 
 while read -r label run_id; do
   echo "--- fetching $label ($run_id) ---"
-  $REPO_ROOT/packages/training/scripts/pull_runs.py --dest "$RUNS_DIR" "${{EXTRA_ARGS[@]}}" "$run_id"
+  $REPO_ROOT/packages/training/scripts/pull_runs.py \
+    --dest "$RUNS_DIR" "${{EXTRA_ARGS[@]}}" "$run_id"
   ln -sfn "$run_id" "$RUNS_DIR/$label"
 done < "$RUN_IDS_FILE"
 

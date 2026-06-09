@@ -5,10 +5,10 @@ for N steps. If the loss drops to near-zero, gradients are flowing
 correctly end-to-end (obs → trunk → heads → loss → backward). If it
 doesn't, the bug is local enough to debug here, not in a corpus run.
 
-Run from repo root:
-    uv run python training/scripts/overfit_one_batch.py
-    uv run python training/scripts/overfit_one_batch.py --steps 1000 --batch-size 8
-    uv run python training/scripts/overfit_one_batch.py --device cpu
+Example usage:
+    overfit_one_batch.py
+    overfit_one_batch.py --steps 1000 --batch-size 8
+    overfit_one_batch.py --device cpu
 
 The script unsets `PYTORCH_ENABLE_MPS_FALLBACK` so unsupported MPS ops
 error loudly rather than silently degrading to CPU. If you hit a fallback

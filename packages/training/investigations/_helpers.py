@@ -1,4 +1,4 @@
-"""Shared helpers for training/investigations/* scripts.
+"""Shared helpers for packages/training/investigations/* scripts.
 
 TODO: load_replay_months() reaches into replay-collector's sqlite DB to fetch
 the per-replay `started` timestamp, because that timestamp is NOT stored in

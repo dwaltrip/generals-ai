@@ -10,7 +10,7 @@ is why the obs-pipeline blind spot is profiled in-process (cProfile inside the
 DataLoader worker) instead. Archived as the record behind that call.
 
 CPU-only — sandbox behavior isn't GPU-specific.
-Run: `uv run modal run training/scripts/_archive/pyspy_probe.py`.
+Run: `uv run modal run training/scripts/_archive/pyspy_probe.py`
 """
 
 import modal

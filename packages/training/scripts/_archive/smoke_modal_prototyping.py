@@ -15,10 +15,11 @@ Three smoke functions, none of them does training:
 
 Real training runs (GPU + actual `bc_run`) land in subsequent commits.
 
-Run:
-    uv run modal run training/scripts/run_bc_modal.py                   # smoke
-    uv run modal run training/scripts/run_bc_modal.py::smoke_volume     # inputs
-    uv run modal run training/scripts/run_bc_modal.py::smoke_outputs    # outputs
+Example usage:
+    $SCRIPT_DIR=packages/training/scripts
+    uv run modal run $SCRIPT_DIR/smoke_modal_prototyping.py                 # smoke
+    uv run modal run $SCRIPT_DIR/smoke_modal_prototyping.py::smoke_volume   # inputs
+    uv run modal run $SCRIPT_DIR/smoke_modal_prototyping.py::smoke_outputs  # outputs
 """
 
 from __future__ import annotations

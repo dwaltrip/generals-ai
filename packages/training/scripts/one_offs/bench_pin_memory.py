@@ -30,8 +30,7 @@ contention — by timing the pinned copy while N background threads hammer memor
 mimicking the 8 workers' collate. If the copy slows toward ~233 ms as N→8,
 contention is confirmed, and the dose-response sizes the fp16 payoff.
 
-Run:
-    uv run modal run training/scripts/one_offs/bench_pin_memory.py
+Run: uv run modal run packages/training/scripts/one_offs/bench_pin_memory.py
 """
 
 from __future__ import annotations

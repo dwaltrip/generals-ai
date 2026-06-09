@@ -15,16 +15,16 @@
 # Output lands in a gitignored scratch run dir that is recreated each call.
 set -euo pipefail
 
-repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+repo_root="$(git rev-parse --show-toplevel)"
 cd "$repo_root"
 
-smoke_dir="training/data/runs/_smoke"
+smoke_dir="packages/training/data/runs/_smoke"
 rm -rf "$smoke_dir"
 
 # Run quietly (stdout -> /dev/null); the run still tees to its run.log, and
 # errors surface on stderr. set -e aborts the script on a non-zero exit.
-training/scripts/run_bc_local.py \
-  --config training/scripts/smoke-config.json \
+packages/training/scripts/run_bc_local.py \
+  --config packages/training/scripts/smoke-config.json \
   --out-dir "$smoke_dir" \
   --max-batches 5 --skip-val --num-workers 0 \
   >/dev/null

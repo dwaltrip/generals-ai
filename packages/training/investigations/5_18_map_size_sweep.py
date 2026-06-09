@@ -6,9 +6,6 @@ Plan thresholds for >32-side fraction:
   <1%:  drop them at dataloader time.
   1-10%: pad to 36x36 instead of 32x32.
   >10%: pad to actual max + variable masking.
-
-Run from repo root:
-    uv run python training/investigations/5_18_map_size_sweep.py
 """
 
 from collections import Counter, defaultdict

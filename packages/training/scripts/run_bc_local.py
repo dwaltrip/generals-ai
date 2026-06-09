@@ -6,8 +6,8 @@ then hands off to `bc.train.bc_run` (fresh) or `bc.resume.bc_resume` (resume).
 The same wiring shape is used by the cloud entry point (`run_bc_modal.py`).
 The run's arch + recipe + data paths come from the `--config` file.
 
-Run from anywhere in the repo:
-    training/scripts/run_bc_local.py --config <path> --max-batches 5
+Example usage:
+    run_bc_local.py --config <path> --max-batches 5
 """
 # TODO: add --out-dir to properly support the `prep_sweep.py` workflow
 # See TODO comment in that file.

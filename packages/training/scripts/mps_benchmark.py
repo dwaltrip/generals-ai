@@ -11,9 +11,9 @@ We explicitly unset PYTORCH_ENABLE_MPS_FALLBACK before running; without
 that env var, unsupported MPS ops raise NotImplementedError. That's the
 signal we want — silent CPU fallback would defeat the benchmark.
 
-Run from repo root:
-    uv run python training/scripts/mps_benchmark.py
-    uv run python training/scripts/mps_benchmark.py --warmup 10 --measure 50
+Example usage:
+    mps_benchmark.py
+    mps_benchmark.py --warmup 10 --measure 50
 
 Note: The example config of 10, 50 currentlyruns in a bit over 1 minute.
 """

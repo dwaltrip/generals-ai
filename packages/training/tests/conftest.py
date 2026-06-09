@@ -1,5 +1,5 @@
 """
-Session-scoped fixtures shared across `training/tests/`.
+Session-scoped fixtures shared across `packages/training/tests/`.
 
 `list_sim_paths` walks ~165k file entries under the intermediate corpus —
 ~2.5s per call. Sharing the result across tests drops corpus-hitting tests

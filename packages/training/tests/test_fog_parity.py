@@ -11,7 +11,7 @@ catches silent semantic bugs (wrong sentinel values, monotonic accumulator
 regressions, mishandled capture events, etc.) that would silently corrupt
 the obs tensor going into training.
 
-Board geometry (see also: training/tests/fixtures/small-1.txt):
+Board geometry (see also: packages/training/tests/fixtures/small-1.txt):
 
   row 0:  ·  M  ·  ·  ·  M
   row 1:  ·  ·  ·  ·  G1 ·

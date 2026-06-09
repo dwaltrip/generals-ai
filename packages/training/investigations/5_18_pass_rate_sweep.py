@@ -4,9 +4,9 @@
 Plan napkin: 33-45% pass frames; one observed sample was 56.7%. This
 script reports the corpus aggregate + by-month breakdown.
 
-Run from repo root:
-    uv run python training/investigations/5_18_pass_rate_sweep.py
-    uv run python training/investigations/5_18_pass_rate_sweep.py --n-samples 50000
+Example usage:
+    5_18_pass_rate_sweep.py
+    5_18_pass_rate_sweep.py --n-samples 50000
 """
 
 import argparse

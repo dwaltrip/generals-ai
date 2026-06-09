@@ -15,11 +15,11 @@ Output preserves all source fields (seed, filter_version, git_sha, etc.)
 except `train`, `val`, and `kept_pairs` — those fields still describe the
 upstream build, which is still true of any prefix-subset.
 
-Run:
-    training/scripts/subset_manifest.py \\
-        --in training/data/splits/cloud_24k.json \\
+Example usage:
+    subset_manifest.py \\
+        --in packages/training/data/splits/cloud_24k.json \\
         --max-pairs 5000 \\
-        --out training/data/splits/cloud_5k.json
+        --out packages/training/data/splits/cloud_5k.json
 """
 
 from __future__ import annotations

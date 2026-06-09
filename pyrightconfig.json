@@ -21,7 +21,7 @@
     // torch's stubs don't explicitly re-export its C-level symbols (device, zeros, Tensor, ...),
     // so reportPrivateImportUsage fires on every use. Scope the rule off in the torch-using roots
     // only; it stays an error everywhere else.
-    // extraPath lets training/investigations scripts sibling-import `_helpers`.
+    // extraPath lets packages/training/investigations scripts sibling-import `_helpers`.
     { "root": "packages/training", "reportPrivateImportUsage": "none", "extraPaths": ["packages/training/investigations"] },
     { "root": "packages/eval-tools", "reportPrivateImportUsage": "none" },
     { "root": "packages/self-play",  "reportPrivateImportUsage": "none" },

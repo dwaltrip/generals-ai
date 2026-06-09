@@ -7,9 +7,9 @@ copies each game's `.npz` + `.meta.npz` into a slice directory, preserving the
 alongside so the slice is a self-contained bundle ready to upload to a Modal
 Volume (or anywhere else).
 
-Run:
-    training/scripts/build_cloud_slice.py \\
-        --manifest training/data/splits/probe_500.json \\
+Example usage:
+    build_cloud_slice.py \\
+        --manifest packages/training/data/splits/probe_500.json \\
         --out tmp/cloud-smoke-slice
 """
 

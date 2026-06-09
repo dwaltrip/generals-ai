@@ -1,7 +1,7 @@
 """
 Train/val split manifest for the BC training corpus.
 
-Produces and consumes `training/data/splits/<name>.json` — a deterministic,
+Produces and consumes `packages/training/data/splits/<name>.json` — a deterministic,
 seeded shuffle of eligible `(replay_id, perspective_index)` pairs split 95/5.
 
 The manifest is the contract for what a training run learns from. Training
@@ -33,8 +33,8 @@ Manifest JSON schema (v1):
   - `train` (list[[str, int]]): list of `[replay_id, perspective_index]`.
   - `val` (list[[str, int]]): same shape.
 
-CLI:
-    uv run python -m bc.splits build --seed 42 --out training/data/splits/v1.json
+Usage via CLI:
+    uv run python -m training.bc.splits build --seed 42 --out <data-dir>/splits/v1.json
 """
 
 from __future__ import annotations
