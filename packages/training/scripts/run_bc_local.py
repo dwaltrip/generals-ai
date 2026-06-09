@@ -27,15 +27,12 @@ from training.bc.train_cli import (
     operational_overrides,
     resume_run_dir,
 )
-
-
-REPO_ROOT = Path(__file__).resolve().parent.parent.parent
-LOCAL_RUNS_DIR = REPO_ROOT / "training" / "data" / "runs"
+from training.settings import RUNS_DIR
 
 
 def main() -> None:
     parser = build_arg_parser()
-    parser.set_defaults(out_dir=LOCAL_RUNS_DIR, device="mps")
+    parser.set_defaults(out_dir=RUNS_DIR, device="mps")
     args = parser.parse_args()
     if args.resume:
         run_dir = resume_run_dir(args)

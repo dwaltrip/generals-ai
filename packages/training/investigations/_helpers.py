@@ -16,10 +16,7 @@ import random
 import sqlite3
 from typing import Literal
 
-
-_REPO_ROOT = Path(__file__).resolve().parent.parent.parent
-INTERMEDIATE_DIR = _REPO_ROOT / "replay-parser" / "data" / "intermediate"
-DB_PATH = _REPO_ROOT / "replay-collector" / "data" / "generals.sqlite"
+from settings import DB_PATH, INTERMEDIATE_DIR
 
 
 FileKind = Literal["sim", "meta"]

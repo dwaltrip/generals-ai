@@ -3,9 +3,9 @@
 Reads `epochs.jsonl` + `batches.jsonl` from a run dir and writes PNGs to
 `<run_dir>/plots/`. No interactive display; safe to run headless.
 
-Run from repo root:
-    uv run python training/scripts/plot_run.py training/data/runs/20260521-005930
-    uv run python training/scripts/plot_run.py <run_dir> --out <other_dir>
+Example usage:
+    plot_run.py packages/training/data/runs/20260521-005930
+    plot_run.py <run_dir> --out <other_dir>
 
 Plots produced:
   - per_batch_loss.png       4-panel (policy/value/pass/total), EMA + raw,

@@ -1,11 +1,11 @@
 #!/usr/bin/env -S uv run python
-"""CLI wrapper around `bc.run_report.build_report`.
+"""CLI wrapper around `training.bc.run_report.build_report`.
 
 Point it at a pulled run dir; prints the markdown report to stdout, or writes
 it to a file with `-o PATH`.
 
-    training/scripts/build_run_report.py training/data/runs-cloud/<run>
-    training/scripts/build_run_report.py <run> -o report.md
+    build_run_report.py packages/training/data/runs-cloud/<run>
+    build_run_report.py <run> -o report.md
 """
 
 from __future__ import annotations

@@ -11,9 +11,9 @@ The frame-weighted entropy is the apples-to-apples floor to compare against
 the val value loss in `epochs.jsonl`. A model that has converged but ignores
 the board ("input-agnostic, learned-the-marginal") would bottom out here.
 
-Run from repo root:
-    uv run python training/scripts/marginal_entropy.py training/data/splits/poc_2kish_perspecs.json
-    uv run python training/scripts/marginal_entropy.py <manifest> --intermediate <path>
+Example usage:
+    marginal_entropy.py packages/training/data/splits/poc_2kish_perspecs.json
+    marginal_entropy.py <manifest> --intermediate <path>
 """
 
 from __future__ import annotations
@@ -24,6 +24,7 @@ from pathlib import Path
 
 import numpy as np
 
+from settings import INTERMEDIATE_DIR
 from training.bc.splits import load_manifest, samples_for_split
 from utils.docstring import doc_summary
 
@@ -90,8 +91,8 @@ def main() -> None:
     p.add_argument("manifest", type=Path)
     p.add_argument(
         "--intermediate", type=Path,
-        default=Path("replay-parser/data/intermediate"),
-        help="Path to intermediate corpus root",
+        default=INTERMEDIATE_DIR,
+        help=f"Path to intermediate corpus root (default: {INTERMEDIATE_DIR})",
     )
     p.add_argument("--include-train", action="store_true",
                    help="Also compute train marginal (slower; 95%% of corpus)")

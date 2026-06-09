@@ -19,13 +19,10 @@ import argparse
 from pathlib import Path
 import shutil
 
+from settings import INTERMEDIATE_DIR
 from training.bc.splits import load_manifest
 from training.bc.utils import meta_path_for, sim_path_for
 from utils.docstring import doc_summary
-
-
-REPO_ROOT = Path(__file__).resolve().parent.parent.parent
-LOCAL_INTERMEDIATE = REPO_ROOT / "replay-parser" / "data" / "intermediate"
 
 
 def build_slice(manifest_path: Path, intermediate_root: Path, out_dir: Path) -> None:
@@ -71,8 +68,8 @@ def main() -> None:
     parser.add_argument(
         "--intermediate",
         type=Path,
-        default=LOCAL_INTERMEDIATE,
-        help=f"source intermediate corpus root (default: {LOCAL_INTERMEDIATE})",
+        default=INTERMEDIATE_DIR,
+        help=f"source intermediate corpus root (default: {INTERMEDIATE_DIR})",
     )
     parser.add_argument("--out", type=Path, required=True, help="slice output directory")
     args = parser.parse_args()

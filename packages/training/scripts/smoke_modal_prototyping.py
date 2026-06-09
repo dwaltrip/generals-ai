@@ -28,9 +28,8 @@ from pathlib import Path
 
 import modal
 
+from training.settings import TRAINING_REQS
 
-REPO_ROOT = Path(__file__).resolve().parent.parent.parent
-TRAINING_REQS = REPO_ROOT / "training" / "modal_requirements.txt"
 
 # Two layers, in cache-friendly order:
 #   1. pinned external deps — rarely changes, big install (torch + transitives)

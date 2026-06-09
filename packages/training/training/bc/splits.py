@@ -46,7 +46,7 @@ from pathlib import Path
 import random
 import subprocess
 
-from settings import PROJECT_ROOT
+from settings import CURATED_LISTS_MANIFEST, INTERMEDIATE_DIR, PROJECT_ROOT
 from training.bc.filters import DROP_REASONS, FILTER_VERSION, eligible_perspectives
 from training.bc.utils import list_sim_paths, meta_path_for
 from utils.docstring import doc_summary
@@ -56,7 +56,6 @@ from utils.player_name_lists import load_union
 
 MANIFEST_VERSION = 1
 DEFAULT_VAL_FRAC = 0.05
-CURATED_LISTS_MANIFEST = PROJECT_ROOT / "curated-player-lists.txt"
 
 
 def load_curated_names() -> set[str]:
@@ -290,8 +289,8 @@ def main() -> None:
     build.add_argument(
         "--intermediate",
         type=Path,
-        default=PROJECT_ROOT / "replay-parser" / "data" / "intermediate",
-        help="Intermediate corpus root (defaults to replay-parser/data/intermediate).",
+        default=INTERMEDIATE_DIR,
+        help=f"Intermediate corpus root (default: {INTERMEDIATE_DIR}).",
     )
     build.add_argument("--val-frac", type=float, default=DEFAULT_VAL_FRAC)
     build.add_argument(

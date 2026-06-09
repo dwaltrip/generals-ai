@@ -25,6 +25,7 @@ import time
 import torch
 from torch.utils.data import DataLoader
 
+from settings import INTERMEDIATE_DIR
 from training.bc.dataset import IterableDataset
 from training.bc.filters import eligible_perspectives
 from training.bc.loss import bc_loss
@@ -36,10 +37,6 @@ from training.bc.utils import list_sim_paths, meta_path_for
 from training.shared.device import disable_mps_fallback, move_batch, pick_device
 
 
-REPO_ROOT = Path(__file__).resolve().parent.parent.parent
-DEFAULT_INTERMEDIATE = REPO_ROOT / "replay-parser" / "data" / "intermediate"
-
-
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--batch-size", type=int, default=16)
@@ -49,7 +46,7 @@ def main() -> None:
     parser.add_argument("--weight-decay", type=float, default=1e-4)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--device", choices=("auto", "mps", "cpu"), default="auto")
-    parser.add_argument("--intermediate", type=Path, default=DEFAULT_INTERMEDIATE)
+    parser.add_argument("--intermediate", type=Path, default=INTERMEDIATE_DIR)
     parser.add_argument(
         "--min-non-pass-frac",
         type=float,

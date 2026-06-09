@@ -24,11 +24,8 @@ Modes:
     trunk. For variants that pass Mode A. Tells us whether the trunk encodes
     board-conditional placement signal at all.
 
-Run from training/:
-    uv run python scripts/value_head_probe.py \\
-        --checkpoint data/runs/20260521-005930/checkpoints/epoch_005.pt \\
-        --manifest data/splits/poc_2kish_perspecs.json \\
-        --mode overfit
+Example usage:
+    value_head_probe.py --checkpoint <filepath> --manifest <filepath> --mode overfit
 """
 
 from __future__ import annotations
@@ -50,18 +47,16 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from settings import INTERMEDIATE_DIR
 from training.bc.checkpoint import load_bc_model
 from training.bc.constants import H_PADDED, W_PADDED
 from training.bc.dataset import IterableDataset
 from training.bc.obs_config import OBS_CONFIG_DEFAULTS
 from training.bc.splits import load_manifest, samples_for_split
+from training.settings import PROBES_DIR
 from training.shared.device import disable_mps_fallback, pick_device
 from utils.docstring import doc_summary
 
-
-REPO_ROOT = Path(__file__).resolve().parent.parent.parent
-DEFAULT_INTERMEDIATE = REPO_ROOT / "replay-parser" / "data" / "intermediate"
-DEFAULT_OUT_ROOT = REPO_ROOT / "training" / "data" / "probes"
 
 # Frame-weighted marginal placement entropy on the PoC val split. Source:
 # 5.21-1; reproducible via `scripts/marginal_entropy.py`. A constant
@@ -804,7 +799,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=doc_summary(__doc__))
     parser.add_argument("--checkpoint", type=Path, required=True)
     parser.add_argument("--manifest", type=Path, required=True)
-    parser.add_argument("--intermediate", type=Path, default=DEFAULT_INTERMEDIATE)
+    parser.add_argument("--intermediate", type=Path, default=INTERMEDIATE_DIR)
     parser.add_argument(
         "--mode", choices=("overfit", "probe"), default="overfit",
         help="overfit = Mode A (single stratified batch); probe = Mode B (deferred).",
@@ -827,7 +822,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--device", choices=("auto", "mps", "cpu"), default="auto")
-    parser.add_argument("--out-root", type=Path, default=DEFAULT_OUT_ROOT)
+    parser.add_argument("--out-root", type=Path, default=PROBES_DIR)
     parser.add_argument(
         "--value-head",
         choices=("direct", "pyramid"),

@@ -36,17 +36,10 @@ Run:
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import modal
 
+from training.settings import TRAINING_REQS
 
-# training/scripts/one_offs/<this file> → repo root is four parents up locally.
-# Chained `.parent` (not `parents[4]`) so this doesn't raise at import inside the
-# container, where __file__ is /root/<file>; the path is only used locally to
-# build the image, so saturating at "/" remotely is harmless.
-REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
-TRAINING_REQS = REPO_ROOT / "training" / "modal_requirements.txt"
 
 image = (
     modal.Image.debian_slim(python_version="3.14")

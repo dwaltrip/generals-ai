@@ -4,13 +4,13 @@
 By default this mirrors the usual whole-run `modal volume get`. With
 --no-checkpoints it pulls every top-level entry *except* the (large)
 checkpoints/ subdir — for when you only want logs, metrics, the report, and the
-profiler summary. Each run lands under training/data/runs-cloud/<run>/.
+profiler summary. Each run lands under packages/training/data/runs-cloud/<run>/.
 
-    training/scripts/pull_runs.py <run_name> [<run_name> ...]
-    training/scripts/pull_runs.py --no-checkpoints <run_name> [<run_name> ...]
+Example usage:
+    pull_runs.py <run_name> [<run_name> ...]
+    pull_runs.py --no-checkpoints <run_name> [<run_name> ...]
 
-Shells out to `uv run modal`; run it from inside the repo so uv resolves the
-workspace.
+Shells out to `uv run modal`.
 """
 
 from __future__ import annotations
@@ -20,10 +20,12 @@ import json
 from pathlib import Path
 import subprocess
 
+from settings import PROJECT_ROOT
+from training.settings import RUNS_CLOUD_DIR
+
 
 VOLUME = "generals-ai.training-runs"
-REPO_ROOT = Path(__file__).resolve().parent.parent.parent
-DEST = REPO_ROOT / "training" / "data" / "runs-cloud"
+DEST = RUNS_CLOUD_DIR
 
 
 def _get(remote: str, local: Path, force: bool) -> None:
@@ -32,7 +34,7 @@ def _get(remote: str, local: Path, force: bool) -> None:
     force_flag = ["--force"] if force else []
     subprocess.run(
         ["uv", "run", "modal", "volume", "get", *force_flag, VOLUME, remote, str(local)],
-        cwd=REPO_ROOT, check=True,
+        cwd=PROJECT_ROOT, check=True,
     )
 
 
@@ -40,7 +42,7 @@ def _ls(run: str) -> list[dict]:
     """Top-level entries of a run dir as modal's `--json` records."""
     out = subprocess.run(
         ["uv", "run", "modal", "volume", "ls", "--json", VOLUME, f"/{run}"],
-        cwd=REPO_ROOT, check=True, capture_output=True, text=True,
+        cwd=PROJECT_ROOT, check=True, capture_output=True, text=True,
     )
     return json.loads(out.stdout)
 
@@ -71,7 +73,7 @@ def main() -> None:
     parser.add_argument("runs", nargs="+", help="run dir name(s) on the volume")
     parser.add_argument(
         "--dest", type=Path, default=DEST,
-        help=f"local directory to pull into (default: {DEST.relative_to(REPO_ROOT)})",
+        help=f"local directory to pull into (default: {DEST.relative_to(PROJECT_ROOT)})",
     )
     parser.add_argument(
         "--no-checkpoints", action="store_true", help="skip the checkpoints/ subdir"

@@ -10,8 +10,8 @@ provenance.
 Run with `--detach` so the spawned training survives the local process —
 without it, Modal stops the ephemeral app when the local entrypoint returns
 and cancels the in-flight run (the function uses `.spawn()`, fire-and-forget):
-    uv run modal run --detach training/scripts/run_bc_modal.py \\
-        --config training/configs/my_run.json --max-batches 5
+    uv run modal run --detach packages/training/scripts/run_bc_modal.py \\
+        --config packages/training/configs/my_run.json --max-batches 5
 """
 
 from __future__ import annotations
@@ -25,6 +25,7 @@ import socket
 
 import modal
 
+from settings import PROJECT_ROOT
 from training.bc.train_cli import (
     build_arg_parser,
     config_from_args,
@@ -33,10 +34,8 @@ from training.bc.train_cli import (
     resume_run_dir,
 )
 from training.bc.train_config import TrainConfig
+from training.settings import RUNS_CLOUD_DIR, TRAINING_REQS
 
-
-REPO_ROOT = Path(__file__).resolve().parent.parent.parent
-TRAINING_REQS = REPO_ROOT / "training" / "modal_requirements.txt"
 
 image = (
     modal.Image.debian_slim(python_version="3.14")
@@ -174,7 +173,7 @@ def train(*arglist: str) -> None:
     print("Once the run is done, pull artifacts:")
     print(
         "  uv run modal volume get generals-ai.training-runs",
-        f"/{run_dir.name} training/data/runs-cloud",
+        f"/{run_dir.name} {RUNS_CLOUD_DIR.relative_to(PROJECT_ROOT)}",
     )
 
     train_remote.with_options(gpu=gpu).spawn(

@@ -21,6 +21,7 @@ from pathlib import Path
 
 from game_types import StaticMap
 
+
 DEFAULT_CITY_ARMY = 40
 _NEUTRAL = {"·", "."}
 

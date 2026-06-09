@@ -20,21 +20,15 @@ from replay_parser.driver import (
     run_corpus_driver,
 )
 from replay_parser.git_state import DirtyWorkingTreeError
-from settings import DB_PATH
+from settings import CURATED_LISTS_MANIFEST, DB_PATH, INTERMEDIATE_DIR, PROJECT_ROOT
 from utils.player_name_lists import load_union
-
-
-# Project-root-relative path to the curated-list manifest.
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-CURATED_LISTS_MANIFEST = PROJECT_ROOT / "curated-player-lists.txt"
-DEFAULT_OUTPUT_DIR = Path(__file__).resolve().parent.parent / "data" / "intermediate"
 
 
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--limit", type=int, default=None, help="Cap candidate count for smoke runs.")
     ap.add_argument("--workers", type=int, default=8)
-    ap.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
+    ap.add_argument("--output-dir", type=Path, default=INTERMEDIATE_DIR)
     ap.add_argument("--manifest", type=Path, default=CURATED_LISTS_MANIFEST)
     ap.add_argument("--rolling-1st-floor", type=float, default=DEFAULT_ROLLING_1ST_FLOOR)
     ap.add_argument("--rolling-top3-floor", type=float, default=DEFAULT_ROLLING_TOP3_FLOOR)
