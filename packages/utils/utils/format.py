@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
+import tabulate as _tabulate
 from tabulate import tabulate
 
 
@@ -101,4 +102,15 @@ def md_table(
     kwargs: dict = {"headers": list(headers), "tablefmt": "github", "disable_numparse": True}
     if align is not None:
         kwargs["colalign"] = tuple(align)
-    return tabulate(rows, **kwargs)
+    # tabulate sizes each column to max(len(header) + MIN_PADDING, widest cell),
+    # with MIN_PADDING defaulting to 2 — so columns sized by their header (wider
+    # than the data) carry 2 extra spaces. We drop it to 0 for tighter tables and
+    # restore the value afterwards so we don't affect other tabulate callers.
+    # NOTE: mutating the global is not thread-safe — concurrent md_table calls
+    # would race on MIN_PADDING. Fine for synchronous CLI use.
+    saved_min_padding = _tabulate.MIN_PADDING
+    _tabulate.MIN_PADDING = 0
+    try:
+        return tabulate(rows, **kwargs)
+    finally:
+        _tabulate.MIN_PADDING = saved_min_padding

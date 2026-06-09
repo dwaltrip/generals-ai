@@ -89,8 +89,10 @@ def main() -> None:
         parser.error(str(exc))
 
     runs: list[tuple[str, list[dict]]] = []
-    for raw in args.runs:
+    for i, raw  in enumerate(args.runs):
         run_dir, label = parse_run_arg(raw, args.base)
+        if not label:
+            label = f"run-{i+1}"
         if not run_dir.is_dir():
             parser.error(f"not a directory: {run_dir}")
         epochs = load_epochs(run_dir)
@@ -101,7 +103,9 @@ def main() -> None:
         print("no epochs found", file=sys.stderr)
         sys.exit(1)
 
-    if args.wide:
+    # --wide only matters if there are multiple runs to pivot into sub-columns;
+    # for a single run, ignore the flag so it collapses to the normal table.
+    if args.wide and len(runs) > 1:
         print(build_wide_table(runs, cols))
     else:
         print(build_table(runs, cols))

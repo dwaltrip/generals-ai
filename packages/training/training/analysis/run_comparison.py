@@ -196,16 +196,14 @@ def resolve_cols(
 # Run loading
 # ---------------------------------------------------------------------------
 
-def parse_run_arg(raw: str, base: Path | None) -> tuple[Path, str]:
+def parse_run_arg(raw: str, base: Path | None) -> tuple[Path, str | None]:
     if "," in raw:
         path_str, label = raw.rsplit(",", 1)
     else:
-        path_str, label = raw, ""
+        path_str, label = raw, None
     p = Path(path_str)
     if base is not None and not p.is_absolute() and not p.exists():
         p = base / path_str
-    if not label:
-        label = p.name
     return p, label
 
 
@@ -244,9 +242,11 @@ def _extract(
     return max_epochs, grid
 
 
-def build_table(runs: list[tuple[str, list[dict]]], cols: list[ColDef]) -> None:
-    headers = ["epoch", "run"] + [col.display_name for col in cols]
-    aligns = ["right", "left"] + [col.align for col in cols]
+def build_table(runs: list[tuple[str, list[dict]]], cols: list[ColDef]) -> str:
+    # A single run needs no "run" column to disambiguate rows — drop it.
+    single = len(runs) == 1
+    headers = ["epoch"] + ([] if single else ["run"]) + [col.display_name for col in cols]
+    aligns = ["right"] + ([] if single else ["left"]) + [col.align for col in cols]
 
     max_epochs, grid = _extract(runs, cols)
     labels = [label for label, _ in runs]
@@ -254,12 +254,13 @@ def build_table(runs: list[tuple[str, list[dict]]], cols: list[ColDef]) -> None:
     for ei in range(max_epochs):
         for ri, label in enumerate(labels):
             cells = [grid[ei][ci][ri] for ci in range(len(cols))]
-            rows.append([ei + 1, label] + cells)
+            prefix = [ei + 1] if single else [ei + 1, label]
+            rows.append(prefix + cells)
 
-    print(md_table(headers, rows, align=aligns))
+    return md_table(headers, rows, align=aligns)
 
 
-def build_wide_table(runs: list[tuple[str, list[dict]]], cols: list[ColDef]) -> None:
+def build_wide_table(runs: list[tuple[str, list[dict]]], cols: list[ColDef]) -> str:
     labels = [label for label, _ in runs]
     n_runs = len(runs)
 
@@ -284,4 +285,4 @@ def build_wide_table(runs: list[tuple[str, list[dict]]], cols: list[ColDef]) -> 
         data_rows.append(row)
 
     aligns = ["right"] * len(headers)
-    print(md_table(headers, [label_row] + data_rows, align=aligns))
+    return md_table(headers, [label_row] + data_rows, align=aligns)
