@@ -4,7 +4,7 @@ Reads `epochs.jsonl` + `batches.jsonl` from a run dir and writes PNGs to
 `<run_dir>/plots/`. No interactive display; safe to run headless.
 
 Example usage:
-    plot_run.py packages/training/data/runs/20260521-005930
+    plot_run.py data/training/runs/20260521-005930
     plot_run.py <run_dir> --out <other_dir>
 
 Plots produced:

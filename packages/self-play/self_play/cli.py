@@ -3,7 +3,7 @@
 Usage (from repo root):
 
     uv run python -m self_play.cli \\
-        --checkpoint training/data/runs-cloud/2026-05-23T23-40-14Z/checkpoints/epoch_005.pt \\
+        --checkpoint data/training/runs-cloud/2026-05-23T23-40-14Z/checkpoints/epoch_005.pt \\
         --sample --temperature 1.0
 
 If --replay-id is omitted, picks the longest 2-player replay in the
@@ -23,8 +23,7 @@ from self_play import driver
 from training.bc.inference import BCModelHandle, default_device
 
 
-_REPO_ROOT = Path(__file__).resolve().parents[2]
-_DEFAULT_TMP = _REPO_ROOT / "self-play" / "tmp"
+_DEFAULT_TMP = Path(__file__).resolve().parent.parent / "tmp"
 
 
 def _resolve_device(name: str) -> torch.device:

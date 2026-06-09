@@ -4,7 +4,7 @@
 Point it at a pulled run dir; prints the markdown report to stdout, or writes
 it to a file with `-o PATH`.
 
-    build_run_report.py packages/training/data/runs-cloud/<run>
+    build_run_report.py data/training/runs-cloud/<run>
     build_run_report.py <run> -o report.md
 """
 

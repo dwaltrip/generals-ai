@@ -20,8 +20,7 @@ import json
 from pathlib import Path
 import subprocess
 
-from settings import PROJECT_ROOT
-from training.settings import RUNS_CLOUD_DIR
+from settings import PROJECT_ROOT, RUNS_CLOUD_DIR
 
 
 VOLUME = "generals-ai.training-runs"

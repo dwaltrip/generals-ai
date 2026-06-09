@@ -4,21 +4,17 @@ The live single-tick inference path is exercised end-to-end by `test_driver`
 (full game loop) and the `test_parity` oracle in eval-tools.
 """
 
-from pathlib import Path
-
 import pytest
 import torch
 
+from settings import RUNS_CLOUD_DIR
 from training.bc.checkpoint import load_bc_model
 from training.bc.constants import H_PADDED, W_PADDED
 from training.bc.inference import default_device
 from training.bc.obs_config import OBS_CHANNELS
 
 
-# packages/self-play/tests/ → repo root is 3 levels up.
-_REPO_ROOT = Path(__file__).resolve().parents[3]
-_CHECKPOINT = _REPO_ROOT / "training" / "data" / "runs-cloud" \
-    / "2026-05-23T23-40-14Z" / "checkpoints" / "epoch_005.pt"
+_CHECKPOINT = RUNS_CLOUD_DIR / "2026-05-23T23-40-14Z" / "checkpoints" / "epoch_005.pt"
 
 
 def test_load_checkpoint_smoke():

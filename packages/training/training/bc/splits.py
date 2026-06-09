@@ -1,7 +1,7 @@
 """
 Train/val split manifest for the BC training corpus.
 
-Produces and consumes `packages/training/data/splits/<name>.json` — a deterministic,
+Produces and consumes `data/training/splits/<name>.json` — a deterministic,
 seeded shuffle of eligible `(replay_id, perspective_index)` pairs split 95/5.
 
 The manifest is the contract for what a training run learns from. Training

@@ -12,7 +12,7 @@ the val value loss in `epochs.jsonl`. A model that has converged but ignores
 the board ("input-agnostic, learned-the-marginal") would bottom out here.
 
 Example usage:
-    marginal_entropy.py packages/training/data/splits/poc_2kish_perspecs.json
+    marginal_entropy.py data/training/splits/poc_2kish_perspecs.json
     marginal_entropy.py <manifest> --intermediate <path>
 """
 

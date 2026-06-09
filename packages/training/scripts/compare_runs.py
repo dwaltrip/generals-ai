@@ -4,7 +4,7 @@
 Usage examples:
 
     compare_runs.py run1[,label1] run2[,label2] ...
-    compare_runs.py --base packages/training/data/runs ts1 ts2
+    compare_runs.py --base data/training/runs ts1 ts2
     compare_runs.py --wide run1[,label1] run2[,label2] ...
     compare_runs.py --cols t_pol,v_pol,top1 run1 run2
     compare_runs.py --cols val,sps run1 run2

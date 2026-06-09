@@ -16,15 +16,12 @@ import pytest
 
 from game_runner import seed_map, viewer
 from self_play import driver
-from settings import DB_PATH
+from settings import DB_PATH, RUNS_CLOUD_DIR
 from training.bc.inference import BCModelHandle, default_device
 
 
-# packages/self-play/tests/ → repo root is 3 levels up.
-_REPO_ROOT = Path(__file__).resolve().parents[3]
-_CHECKPOINT = _REPO_ROOT / "training" / "data" / "runs-cloud" \
-    / "2026-05-23T23-40-14Z" / "checkpoints" / "epoch_005.pt"
-_TMP_DIR = _REPO_ROOT / "packages" / "self-play" / "tmp"
+_CHECKPOINT = RUNS_CLOUD_DIR / "2026-05-23T23-40-14Z" / "checkpoints" / "epoch_005.pt"
+_TMP_DIR = Path(__file__).resolve().parent.parent / "tmp"
 
 
 @pytest.fixture(scope="module")

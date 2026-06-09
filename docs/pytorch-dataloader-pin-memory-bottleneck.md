@@ -126,7 +126,7 @@ Source: [PyTorch pin_memory tutorial](https://docs.pytorch.org/tutorials/interme
 
 ## What our sweep established
 
-The 2026-06-07 config sweep (N × prefetch_factor × pin_memory, 8 cells, 800 batches each on H100; data in [`training/data/sweeps/2026-06-07-data-starve-handoff-probe/`](../training/data/sweeps/2026-06-07-data-starve-handoff-probe/)) confirmed:
+The 2026-06-07 config sweep (N × prefetch_factor × pin_memory, 8 cells, 800 batches each on H100; data in [`data/training/sweeps/2026-06-07-data-starve-handoff-probe/`](../data/training/sweeps/2026-06-07-data-starve-handoff-probe/)) confirmed:
 
 - **pin_memory=false** is catastrophic: h2d goes from ~4 ms to ~200 ms per batch, halving throughput. Pinning is essential.
 - **Workers are ~50% idle** at both n=5 and n=20 (handoff − obs_build_total ≈ 50% of handoff time). The 19% obs-build compute increase at n=20 is absorbed by idle headroom — workers are not the bottleneck.

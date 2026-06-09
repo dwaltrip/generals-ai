@@ -25,9 +25,10 @@ from pathlib import Path
 import pytest
 import torch
 
+from settings import RUNS_CLOUD_DIR
 
-_REPO_ROOT = Path(__file__).resolve().parents[3]
-_CKPT = _REPO_ROOT / "training/data/runs-cloud/2026-05-28T08-21-33Z/checkpoints/epoch_005.pt"
+
+_CKPT = RUNS_CLOUD_DIR / "2026-05-28T08-21-33Z" / "checkpoints" / "epoch_005.pt"
 _FINGERPRINT = Path(__file__).parent / "parity_fingerprint.json"
 
 # force_move so the agents actually play (deterministic argmax moves), pyramid

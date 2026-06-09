@@ -17,9 +17,9 @@ upstream build, which is still true of any prefix-subset.
 
 Example usage:
     subset_manifest.py \\
-        --in packages/training/data/splits/cloud_24k.json \\
+        --in data/training/splits/cloud_24k.json \\
         --max-pairs 5000 \\
-        --out packages/training/data/splits/cloud_5k.json
+        --out data/training/splits/cloud_5k.json
 """
 
 from __future__ import annotations

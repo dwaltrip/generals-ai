@@ -25,7 +25,7 @@ import socket
 
 import modal
 
-from settings import PROJECT_ROOT
+from settings import PROJECT_ROOT, RUNS_CLOUD_DIR
 from training.bc.train_cli import (
     build_arg_parser,
     config_from_args,
@@ -34,7 +34,7 @@ from training.bc.train_cli import (
     resume_run_dir,
 )
 from training.bc.train_config import TrainConfig
-from training.settings import RUNS_CLOUD_DIR, TRAINING_REQS
+from training.settings import TRAINING_REQS
 
 
 image = (

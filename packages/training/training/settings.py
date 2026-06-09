@@ -1,25 +1,24 @@
 """Training-owned filesystem paths.
 
 These are artifact dirs internal to the training package. Cross-package paths
-(the parsed-replay corpus, the curated lists) live in the repo-wide `settings`
-package instead. Everything here hangs off `TRAINING_DIR` so the
-`packages/training` prefix is defined in exactly one place — when the package
-moves, only this constant changes.
+(the parsed-replay corpus, the curated lists, the cloud-runs checkpoint dir)
+live in the repo-wide `settings` package instead. The training-data subtree
+prefix is defined once there as `TRAINING_DATA_DIR`; the per-artifact dirs hang
+off it here so each leaf is named in exactly one place.
 """
 
-from settings import PROJECT_ROOT, ROOT_DATA_DIR
+from settings import PROJECT_ROOT, TRAINING_DATA_DIR
 
 
 TRAINING_DIR = PROJECT_ROOT / "packages" / "training"
-TRAINING_DATA = ROOT_DATA_DIR / "training"
 
-# Training-run outputs: local runs, and cloud runs pulled down from Modal.
-RUNS_DIR = TRAINING_DATA / "runs"
-RUNS_CLOUD_DIR = TRAINING_DATA / "runs-cloud"
+# Training-run outputs. Local runs live here; cloud runs pulled from Modal land
+# in `settings.RUNS_CLOUD_DIR` (cross-package — eval and self-play read it too).
+RUNS_DIR = TRAINING_DATA_DIR / "runs"
 
 # Value-head probe outputs and prepared parameter-sweep dirs.
-PROBES_DIR = TRAINING_DATA / "probes"
-SWEEPS_DIR = TRAINING_DATA / "sweeps"
+PROBES_DIR = TRAINING_DATA_DIR / "probes"
+SWEEPS_DIR = TRAINING_DATA_DIR / "sweeps"
 
 # Pinned deps for the Modal training image (read locally at image-build time).
 TRAINING_REQS = TRAINING_DIR / "modal_requirements.txt"

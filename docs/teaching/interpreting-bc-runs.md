@@ -19,11 +19,11 @@ A Mode B value-head probe of the `epoch_005.pt` checkpoint. The probe freezes th
 | Artifact | Location |
 |---|---|
 | Probe script | `training/scripts/value_head_probe.py` |
-| Probe run dir | `training/data/probes/20260521-110841-value-probe/` (gitignored; numbers reproduced below) |
+| Probe run dir | `data/training/probes/20260521-110841-value-probe/` (gitignored; numbers reproduced below) |
 | Probe summary | `<run dir>/probe_summary.json` (per-epoch curves per variant) |
 | Probe plot | `<run dir>/probe_curves.png` (val loss + val top-1 over epochs) |
-| Underlying training run | `training/data/runs/20260521-005930/` |
-| Split manifest | `training/data/splits/poc_2kish_perspecs.json` |
+| Underlying training run | `data/training/runs/20260521-005930/` |
+| Split manifest | `data/training/splits/poc_2kish_perspecs.json` |
 
 Motivation context: the probe was triggered by the value-head dead-ReLU collapse described in `docs/2026-05/5.21-1-debugging-value-head.md`.
 
@@ -238,9 +238,9 @@ The user is a lapsed Python expert with prior fine-tuning experience (YOLO-v8 on
 | `training/scripts/value_head_probe.py` | The probe harness. Variant classes at the top, `train_head_minibatched` for the loop, `evaluate_head` for the metric computation. |
 | `training/scripts/marginal_entropy.py` | Computes the marginal-entropy baseline for any manifest. Worked example of how to derive a floor for a specific dataset. |
 | `training/scripts/plot_run.py` | Plots for full *training* runs (not the probe). Same interpretive framework applies — useful comparison. |
-| `training/data/runs/20260521-005930/` | The PoC training run that produced `epoch_005.pt`. Has `epochs.jsonl`, `batches.jsonl`, plots. Reading these is a good exercise. |
-| `training/data/probes/20260521-110841-value-probe/` | The specific probe run analyzed in this doc. |
-| `training/data/splits/poc_2kish_perspecs.json` | The split manifest used. |
+| `data/training/runs/20260521-005930/` | The PoC training run that produced `epoch_005.pt`. Has `epochs.jsonl`, `batches.jsonl`, plots. Reading these is a good exercise. |
+| `data/training/probes/20260521-110841-value-probe/` | The specific probe run analyzed in this doc. |
+| `data/training/splits/poc_2kish_perspecs.json` | The split manifest used. |
 | `docs/2026-05/5.21-1-debugging-value-head.md` | Diagnostic context for why this probe exists. The marginal-H = 1.52 number first appears there. |
 | `docs/network-architecture-design.md`, `docs/2026-05/5.20-3-model-architecture-implementation.md` | Model architecture context — useful when "why is the trunk 128 channels" comes up. |
 | `docs/papers/` | DeepNash and Strakam papers; the architectural lineage for this project. Not directly needed for the interpretive framework but worth knowing about. |

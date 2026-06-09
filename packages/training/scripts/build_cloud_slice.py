@@ -9,7 +9,7 @@ Volume (or anywhere else).
 
 Example usage:
     build_cloud_slice.py \\
-        --manifest packages/training/data/splits/probe_500.json \\
+        --manifest data/training/splits/probe_500.json \\
         --out tmp/cloud-smoke-slice
 """
 

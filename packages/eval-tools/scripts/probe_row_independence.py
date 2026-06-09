@@ -22,20 +22,18 @@ Run (from repo root):
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import numpy as np
 import torch
 
 from game_runner.seed_map import list_replay_ids_by_player_count, load_static_from_db
 from game_runner.sim_adapter import state_to_view
+from settings import RUNS_CLOUD_DIR
 import sim_core
 from training.bc.inference import BCModelHandle, BCPerspective
 from training.bc.loss import flatten_policy_logits
 
 
-_REPO_ROOT = Path(__file__).resolve().parents[3]
-_CKPT = _REPO_ROOT / "training/data/runs-cloud/2026-05-28T08-21-33Z/checkpoints/epoch_005.pt"
+_CKPT = RUNS_CLOUD_DIR / "2026-05-28T08-21-33Z" / "checkpoints" / "epoch_005.pt"
 _STEPS = 30
 _BATCH = 32
 

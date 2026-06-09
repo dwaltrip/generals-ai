@@ -40,10 +40,10 @@ from eval_tools.policy_spec import parse_policy_spec
 from game_runner.batched import PendingGame, run_batched
 from game_runner.runner import run_game
 from game_runner.seed_map import list_replay_ids_by_player_count, load_static_from_db
+from settings import RUNS_CLOUD_DIR
 
 
-_REPO_ROOT = Path(__file__).resolve().parents[3]
-_CKPTS = _REPO_ROOT / "training/data/runs-cloud/2026-05-28T08-21-33Z/checkpoints"
+_CKPTS = RUNS_CLOUD_DIR / "2026-05-28T08-21-33Z" / "checkpoints"
 _E5, _E3 = _CKPTS / "epoch_005.pt", _CKPTS / "epoch_003.pt"
 _DEVICE = torch.device("cpu")
 _SAMPLE_INTERVAL = 25
