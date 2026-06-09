@@ -18,7 +18,7 @@ A Mode B value-head probe of the `epoch_005.pt` checkpoint. The probe freezes th
 
 | Artifact | Location |
 |---|---|
-| Probe script | `training/scripts/value_head_probe.py` |
+| Probe script | `packages/training/scripts/value_head_probe.py` |
 | Probe run dir | `data/training/probes/20260521-110841-value-probe/` (gitignored; numbers reproduced below) |
 | Probe summary | `<run dir>/probe_summary.json` (per-epoch curves per variant) |
 | Probe plot | `<run dir>/probe_curves.png` (val loss + val top-1 over epochs) |
@@ -93,7 +93,7 @@ Deterministic: probability 1.0 on the mode, 0 elsewhere.
 
 In practice we don't use this as a CE baseline; the marginal head's CE is the realistic floor. But "always-1st" is the simplest top-1 baseline to beat, and worth sanity-checking against.
 
-A reproducible recipe for these baselines on any val split is `training/scripts/marginal_entropy.py` — it computes frame-weighted and perspective-weighted entropies from any manifest. The probe's val_probe sub-split has a *different* marginal than the full val set (1.47 vs 1.52) because random sub-sampling changes the class distribution.
+A reproducible recipe for these baselines on any val split is `packages/training/scripts/marginal_entropy.py` — it computes frame-weighted and perspective-weighted entropies from any manifest. The probe's val_probe sub-split has a *different* marginal than the full val set (1.47 vs 1.52) because random sub-sampling changes the class distribution.
 
 ## The generalization signature: train vs val
 
@@ -183,7 +183,7 @@ Apply this order every time and you'll get a usable read in 30 seconds.
 
 ## Reproducing the baselines
 
-If you want to compute marginal entropy on a different split (or sub-sample of one), the recipe is in `training/scripts/marginal_entropy.py`. Core formula in plain Python:
+If you want to compute marginal entropy on a different split (or sub-sample of one), the recipe is in `packages/training/scripts/marginal_entropy.py`. Core formula in plain Python:
 
 ```python
 import math
@@ -235,9 +235,9 @@ The user is a lapsed Python expert with prior fine-tuning experience (YOLO-v8 on
 
 | Path | What's there |
 |---|---|
-| `training/scripts/value_head_probe.py` | The probe harness. Variant classes at the top, `train_head_minibatched` for the loop, `evaluate_head` for the metric computation. |
-| `training/scripts/marginal_entropy.py` | Computes the marginal-entropy baseline for any manifest. Worked example of how to derive a floor for a specific dataset. |
-| `training/scripts/plot_run.py` | Plots for full *training* runs (not the probe). Same interpretive framework applies — useful comparison. |
+| `packages/training/scripts/value_head_probe.py` | The probe harness. Variant classes at the top, `train_head_minibatched` for the loop, `evaluate_head` for the metric computation. |
+| `packages/training/scripts/marginal_entropy.py` | Computes the marginal-entropy baseline for any manifest. Worked example of how to derive a floor for a specific dataset. |
+| `packages/training/scripts/plot_run.py` | Plots for full *training* runs (not the probe). Same interpretive framework applies — useful comparison. |
 | `data/training/runs/20260521-005930/` | The PoC training run that produced `epoch_005.pt`. Has `epochs.jsonl`, `batches.jsonl`, plots. Reading these is a good exercise. |
 | `data/training/probes/20260521-110841-value-probe/` | The specific probe run analyzed in this doc. |
 | `data/training/splits/poc_2kish_perspecs.json` | The split manifest used. |
