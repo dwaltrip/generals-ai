@@ -7,6 +7,9 @@ from pathlib import Path
 # breaks whenever a file moves to a different directory level.
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 
+# Primary location for project data
+ROOT_DATA_DIR = PROJECT_ROOT / "data"
+
 # Paths shared across packages live here. Single-package paths belong with
 # the package that owns them (e.g. training's artifact dirs in
 # `training.settings`), not in this repo-wide registry.

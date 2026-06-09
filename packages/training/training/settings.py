@@ -7,11 +7,11 @@ package instead. Everything here hangs off `TRAINING_DIR` so the
 moves, only this constant changes.
 """
 
-from settings import PROJECT_ROOT
+from settings import PROJECT_ROOT, ROOT_DATA_DIR
 
 
 TRAINING_DIR = PROJECT_ROOT / "packages" / "training"
-TRAINING_DATA = TRAINING_DIR / "data"
+TRAINING_DATA = ROOT_DATA_DIR / "training"
 
 # Training-run outputs: local runs, and cloud runs pulled down from Modal.
 RUNS_DIR = TRAINING_DATA / "runs"

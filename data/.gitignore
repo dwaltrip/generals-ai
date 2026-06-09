@@ -1,0 +1,8 @@
+
+# Manifests at `data/training/splits/` stay tracked
+training/bench
+training/probes
+# Per-run training artifacts (logs, provenance, checkpoints, etc).
+training/runs
+training/runs-cloud
+training/sweeps

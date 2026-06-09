@@ -18,7 +18,7 @@ set -euo pipefail
 repo_root="$(git rev-parse --show-toplevel)"
 cd "$repo_root"
 
-smoke_dir="packages/training/data/runs/_smoke"
+smoke_dir="data/training/runs/_smoke"
 rm -rf "$smoke_dir"
 
 # Run quietly (stdout -> /dev/null); the run still tees to its run.log, and

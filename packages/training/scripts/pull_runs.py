@@ -4,7 +4,7 @@
 By default this mirrors the usual whole-run `modal volume get`. With
 --no-checkpoints it pulls every top-level entry *except* the (large)
 checkpoints/ subdir — for when you only want logs, metrics, the report, and the
-profiler summary. Each run lands under packages/training/data/runs-cloud/<run>/.
+profiler summary. Each run lands under data/training/runs-cloud/<run>/.
 
 Example usage:
     pull_runs.py <run_name> [<run_name> ...]
