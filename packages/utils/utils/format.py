@@ -65,6 +65,22 @@ def format_ns_exact(ns: int | None) -> str:
     return f"{ns / 1e9:.2f} s"
 
 
+def format_loss(val: float, *, dp: int | None = None) -> str:
+    """Format a loss value.  When *dp* is None (default), uses 4 decimal places
+    under 1 and 3 above (`0.4190`, `1.223`).  When set, uses that many decimal
+    places everywhere."""
+    if dp is not None:
+        return f"{val:.{dp}f}"
+    if val < 1:
+        return f"{val:.4f}"
+    return f"{val:.3f}"
+
+
+def format_rate(val: float) -> str:
+    """Format a throughput rate with no decimal places (`2209.49 -> 2,209`)."""
+    return f"{round(val):,}"
+
+
 def format_pct(fraction: float, *, digits: int = 1) -> str:
     """Format a 0–1 fraction as a percentage (`0.179 -> 17.9%`)."""
     return f"{fraction * 100:.{digits}f}%"
