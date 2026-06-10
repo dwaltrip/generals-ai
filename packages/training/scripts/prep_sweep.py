@@ -9,6 +9,11 @@ Example usage:
     prep_sweep.py init dense-history-n --axis arch.obs.dense_history_n
     # ... edit sweep.json and base-config.json ...
     prep_sweep.py generate data/training/sweeps/2026-06-05-dense-history-n/
+
+sweep.json supports, besides "axes" (whose cartesian product forms the grid),
+an optional "skip": a list of cell labels to exclude from the product (e.g.
+corners already covered by an earlier sweep). Every entry must match a
+generated label — typos error out.
 """
 # TODO: add --out-dir to run_bc_local.py and pass $SWEEP_DIR/runs/
 #   so local sweep runs land in the sweep directory, not data/training/runs/.
@@ -89,25 +94,38 @@ def _generate_cells(
     base_config: dict,
     parsed_axes: list[tuple[str, list, list[str]]],
     configs_dir: Path,
+    skip: list[str],
 ) -> list[tuple[str, str]]:
-    """Generate per-cell config files. Returns [(label, rel_config_path), ...]."""
+    """Generate per-cell config files. Returns [(label, rel_config_path), ...].
+    Cells whose label is in `skip` are excluded from the grid; every skip
+    entry must match a product label (typo guard)."""
     label_lists = [labels for _, _, labels in parsed_axes]
     value_lists = [values for _, values, _ in parsed_axes]
 
     cells = []
+    all_labels = []
     for combo_labels, combo_values in zip(
         itertools.product(*label_lists),
         itertools.product(*value_lists),
         strict=True,
     ):
         label = "-".join(combo_labels)
+        all_labels.append(label)
+        if label in skip:
+            continue
         config = _apply_axes(base_config, parsed_axes, combo=combo_values)
 
         config_path = configs_dir / f"{label}.json"
         config_path.write_text(json.dumps(config, indent=2) + "\n")
         cells.append((label, f"configs/{label}.json"))
 
-    all_labels = [label for label, _ in cells]
+    unmatched = sorted(set(skip) - set(all_labels))
+    if unmatched:
+        raise SystemExit(
+            f"sweep.json: skip label(s) match no grid cell: {unmatched}\n"
+            f"  grid labels: {sorted(all_labels)}"
+        )
+
     if len(set(all_labels)) != len(all_labels):
         dupes = sorted([label for label in all_labels if all_labels.count(label) > 1])
         raise SystemExit(f"sweep.json: duplicate cell labels: {dupes}")
@@ -190,6 +208,10 @@ def cmd_generate(args: argparse.Namespace) -> None:
 
     parsed_axes = _validate_axes(axes)
 
+    skip = spec.get("skip", [])
+    if not isinstance(skip, list) or not all(isinstance(s, str) for s in skip):
+        raise SystemExit("sweep.json: 'skip' must be a list of cell-label strings")
+
     # -- validate base config --
     for field in ("manifest", "intermediate"):
         val = base_config.get(field, "")
@@ -233,7 +255,7 @@ def cmd_generate(args: argparse.Namespace) -> None:
     configs_dir = sweep_dir / "configs"
     configs_dir.mkdir(exist_ok=True)
 
-    cells = _generate_cells(base_config, parsed_axes, configs_dir)
+    cells = _generate_cells(base_config, parsed_axes, configs_dir, skip)
 
     # -- generate bash scripts --
     sweep_rel = str(sweep_dir.relative_to(PROJECT_ROOT))
