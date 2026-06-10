@@ -29,9 +29,10 @@ class TrainConfig:
     Fields fall into three groups that decide how they're supplied:
       - `arch` (model design) — from the `--config` file; recorded in the
         checkpoint's `arch` key so a checkpoint self-describes its model.
-      - recipe (`lr`, `batch_size`, `epochs`, `seed`, `precision`,
-        `shuffle_buffer_size`, `gpu`, `manifest`, `intermediate`) — from the
-        `--config` file; the run's reproducible identity, not in the checkpoint.
+      - recipe (`lr`, `batch_size`, `epochs`, `lambda_value`,
+        `value_target_tau`, `seed`, `precision`, `shuffle_buffer_size`,
+        `gpu`, `manifest`, `intermediate`) — from the `--config` file; the
+        run's reproducible identity, not in the checkpoint.
       - operational / invocation-local (`run_dir`, `device`, `num_workers`,
         `pin_memory`, `prefetch_factor`, `log_every`, `skip_val`,
         `max_batches`) — from CLI flags; where/how this invocation runs.
@@ -58,6 +59,14 @@ class TrainConfig:
     batch_size: int = 64
     lr: float = 3e-4
     weight_decay: float = 1e-4
+    # Objective knobs, forwarded into `loss.LossConfig` (see its field docs
+    # for semantics: λ weights the value head; τ>0 enables soft ordinal
+    # placement targets). NOTE: these defaults are also the historical
+    # behavior of every run that predates the fields — if a default ever
+    # changes, resuming a pre-field run would silently mis-describe it, and
+    # the resume path needs legacy pinning à la `checkpoint.LEGACY_ARCH`.
+    lambda_value: float = 0.5
+    value_target_tau: float = 0.0
     seed: int = 0
     shuffle_buffer_size: int = 2048
     # Modal GPU class for the run. Recorded provenance that rides into the
@@ -135,6 +144,12 @@ class TrainConfig:
             raise ValueError(f"lr must be > 0; got {self.lr}")
         if self.weight_decay < 0:
             raise ValueError(f"weight_decay must be >= 0; got {self.weight_decay}")
+        if self.lambda_value < 0:
+            raise ValueError(f"lambda_value must be >= 0; got {self.lambda_value}")
+        if self.value_target_tau < 0:
+            raise ValueError(
+                f"value_target_tau must be >= 0; got {self.value_target_tau}"
+            )
         if self.shuffle_buffer_size < 0:
             raise ValueError(f"shuffle_buffer_size must be >= 0; got {self.shuffle_buffer_size}")
         if self.log_every < 1:

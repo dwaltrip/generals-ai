@@ -37,7 +37,7 @@ from training.bc.checkpoint import ckpt_name
 from training.bc.constants import H_PADDED, W_PADDED
 from training.bc.dataset import IterableDataset, assert_safe_loader, timed_collate
 from training.bc.eval import run_val
-from training.bc.loss import LossAccumulator, bc_loss
+from training.bc.loss import LossAccumulator, LossConfig, bc_loss
 from training.bc.model import BCModel
 from training.bc.resume_warmup import WarmupSchedule
 from training.bc.run_dir import RunArtifacts
@@ -131,6 +131,7 @@ def train_one_epoch(
     log_every: int,
     scaler: torch.amp.GradScaler,
     amp_dtype: torch.dtype | None,
+    loss_cfg: LossConfig,
     warmup: WarmupSchedule | None = None,
 ) -> dict:
     """Run one epoch of BC training.
@@ -159,7 +160,7 @@ def train_one_epoch(
     # latter is typed as the base `Dataset` (no `set_epoch`).
     dataset.set_epoch(epoch)
 
-    acc = LossAccumulator()
+    acc = LossAccumulator(loss_cfg)
     epoch_start = time.perf_counter()
     n_batches_seen = 0
 
@@ -197,7 +198,7 @@ def train_one_epoch(
             enabled=amp_dtype is not None,
         ):
             out = model(obs_for_model(batch, amp_dtype), batch["valid_mask"])
-            losses = bc_loss(out, batch)
+            losses = bc_loss(out, batch, loss_cfg)
         scaler.scale(losses["total"]).backward()
         scaler.step(optim)
         scaler.update()
@@ -213,6 +214,7 @@ def train_one_epoch(
             "batch_size": B,
             "policy": float(losses["policy"].item()),
             "value": float(losses["value"].item()),
+            "value_soft": float(losses["value_soft"].item()),
             "pass": float(losses["pass"].item()),
             "total": float(losses["total"].item()),
             "lr": optim.param_groups[0]["lr"],
@@ -488,6 +490,11 @@ def train_loop(
     # GradScaler decision on `state` (both derive from the same precision).
     amp_dtype = torch.float16 if resolve_precision(config.precision, device) == "fp16" else None
 
+    loss_cfg = LossConfig(
+        lambda_value=config.lambda_value,
+        value_target_tau=config.value_target_tau,
+    )
+
     run_start = time.perf_counter()
     # `RunArtifacts` opens/closes the JSONL writers; the gpu sidecar is a
     # sibling context manager. Both unwind on a mid-epoch raise, flushing
@@ -507,6 +514,7 @@ def train_loop(
                 log_every=config.log_every,
                 scaler=state.scaler,
                 amp_dtype=amp_dtype,
+                loss_cfg=loss_cfg,
                 warmup=state.warmup,
             )
             if config.skip_val:
@@ -523,6 +531,7 @@ def train_loop(
                     obs_cfg=config.arch.obs,
                     seed=config.seed,
                     amp_dtype=amp_dtype,
+                    loss_cfg=loss_cfg,
                 )
 
             # Augment the epoch summary with MFU (None when peak is unknown) and the

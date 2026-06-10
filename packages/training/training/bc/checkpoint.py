@@ -37,6 +37,8 @@ LEGACY_ARCH = ModelConfig(
     outer_width=128, middle_width=128, inner_width=160,
     n_outer=2, m_middle=2, m_inner=2,
     value_head_variant="direct", H=32, W=32,
+    # Pre-field behavior: no head dropout existed before these fields did.
+    value_head_dropout2d=0.0, value_head_dropout=0.0,
     obs=LEGACY_OBS_CFG,
 )
 
@@ -94,22 +96,23 @@ def _arch_for_load(obj: object, value_head_variant: str) -> ModelConfig:
     since legacy checkpoints don't record their variant (it lived in the run
     dir's `args.json`, and the ones on disk are a mix of direct/pyramid).
 
-    Obs keys are filled from `LEGACY_OBS_CFG`, not the live defaults, at two
-    granularities: a checkpoint missing the `obs` key entirely gets the whole
-    legacy config; one with an `obs` block missing newer sub-keys (e.g.
-    `obs_dtype`, added later) gets those back-filled. Both pin to the historical
-    value because a checkpoint lacking a key predates that field. Filling from
-    the live defaults instead would silently re-describe old checkpoints (e.g.
-    an fp32-obs checkpoint loaded as fp16); `ModelConfig.__post_init__`'s default
-    merge would do exactly that, so we back-fill from legacy before it runs.
+    Any key missing from a recorded arch dict predates that field (saves are
+    fully-resolved `asdict`s), so missing keys back-fill from the LEGACY pins,
+    not the live defaults — filling from live defaults would silently
+    re-describe old checkpoints the day a default changes (e.g. an fp32-obs
+    checkpoint loaded as fp16, or a no-dropout checkpoint resumed with
+    dropout). `build_model_cfg` / `ModelConfig.__post_init__` merge from the
+    live defaults, so the legacy back-fill happens here, before they run.
+    Two granularities, same rule: top-level keys fill from `LEGACY_ARCH`,
+    obs sub-keys from `LEGACY_OBS_CFG` (a checkpoint missing `obs` entirely
+    gets the whole legacy obs config via the top-level fill).
     """
     if is_combined_checkpoint(obj) and "arch" in obj:
-        arch_dict = dict(obj["arch"])
-        obs = arch_dict.get("obs")
+        recorded = dict(obj["arch"])
+        obs = recorded.get("obs")
+        arch_dict = {**asdict(LEGACY_ARCH), **recorded}
         if isinstance(obs, dict):
             arch_dict["obs"] = {**asdict(LEGACY_OBS_CFG), **obs}
-        else:
-            arch_dict.setdefault("obs", LEGACY_OBS_CFG)
         # in_ch is a recorded checksum (TrainingState.save), derived from obs.
         # Validate it here — the one place a count baked into trained weights
         # meets a possibly-changed obs-channel formula — for a clear error rather

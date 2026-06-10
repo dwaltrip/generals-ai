@@ -1,19 +1,24 @@
 """
 Behavioral-cloning loss: policy CE + value CE + pass BCE.
 
-Three supervision signals, combined with fixed weights:
+Three supervision signals, combined per `LossConfig` weights:
 
-    total = policy_ce + λ · value_ce + μ · pass_bce        (λ=0.5, μ=1.0)
+    total = policy_ce + λ · value_soft + μ · pass_bce
 
 Each component is mean-reduced over its eligible samples in the batch:
   - policy_ce is mean over *non-pass* frames only (pass frames carry no
     action signal — they're voluntary "do nothing" moves).
-  - value_ce and pass_bce are mean over the full batch.
+  - value losses and pass_bce are mean over the full batch.
 
 The mean-per-component reduction means the weights λ, μ control the
 *relative* head importance independent of how many pass frames the batch
-happens to contain. Per the plan, initial weights are inherited starting
-points; revisit if any one head dominates the loss curve.
+happens to contain.
+
+The value head has two CE readings, both always computed:
+  - `value` — hard CE against the one-hot placement class. The reporting
+    metric: comparable across runs and against the placement-entropy floors.
+  - `value_soft` — CE against soft ordinal targets (`value_target_tau`),
+    the *trained* objective. Equal to `value` at τ=0.
 
 Layout coupling: the policy head produces NCHW `[B, 8, H, W]`. The action
 target is in the cell-major flat layout (`flat_idx = cell_padded * 8 + sub`,
@@ -24,7 +29,8 @@ that lines the two up.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from functools import cache
 
 import torch
 import torch.nn.functional as F
@@ -32,10 +38,63 @@ import torch.nn.functional as F
 from training.bc.actions import _PASS_FLAT_IDX
 
 
-# Loss head weights. Tentative v1 spike defaults from
-# `5.17-4-training-spike-plan.md` §3 step 10. Revisit if one head dominates.
-LAMBDA_VALUE = 0.5
-MU_PASS = 1.0
+@dataclass(frozen=True)
+class LossConfig:
+    """Objective knobs, threaded from `TrainConfig` into `bc_loss` /
+    `LossAccumulator` as one object so future loss knobs don't re-touch
+    every signature on the call chain.
+
+    Defaults reproduce the original fixed-constant behavior exactly
+    (λ=0.5 / μ=1.0 from `5.17-4-training-spike-plan.md` §3 step 10,
+    one-hot value targets), so `LossConfig()` callers are unchanged.
+    """
+
+    # Value-head weight in the total. 0 disables the value gradient entirely
+    # (head and trunk both receive none) — the "quasi-control" arm.
+    lambda_value: float = 0.5
+    # Pass-head weight in the total.
+    mu_pass: float = 1.0
+    # Soft ordinal placement targets (SORD / HL-Gauss family): the one-hot
+    # value target is replaced by a distribution decaying with rank distance,
+    # row-softmax of -|k - k*|/τ. Partial credit for near-miss placements
+    # densifies the value gradient (coarse "winning vs losing" signal earns
+    # loss reduction without nailing the exact rank) and caps the payoff of
+    # memorizing exact labels. τ=0 means one-hot (exact current behavior);
+    # the mass an adjacent rank gets relative to the peak is exp(-1/τ)
+    # (e.g. τ=0.6 → ~0.19).
+    value_target_tau: float = 0.0
+
+    def __post_init__(self) -> None:
+        if self.lambda_value < 0:
+            raise ValueError(f"lambda_value must be >= 0; got {self.lambda_value}")
+        if self.mu_pass < 0:
+            raise ValueError(f"mu_pass must be >= 0; got {self.mu_pass}")
+        if self.value_target_tau < 0:
+            raise ValueError(
+                f"value_target_tau must be >= 0; got {self.value_target_tau}"
+            )
+
+
+@cache
+def _soft_target_kernel(
+    tau: float, n_classes: int, device: torch.device
+) -> torch.Tensor:
+    """The `[n_classes, n_classes]` soft-target matrix for τ > 0: row k* is
+    `softmax(-|k - k*|/τ)`. Row-indexing with the hard targets yields the
+    per-sample soft distributions. The row softmax renormalizes edge rows
+    (rank 1 / rank 8 have one-sided neighborhoods) automatically.
+
+    Cached per (τ, device) — built once, reused every batch. fp32 on
+    purpose: autocast routes cross_entropy to fp32, so the targets match.
+    """
+    ranks = torch.arange(n_classes, dtype=torch.float32, device=device)
+    dist = (ranks.unsqueeze(0) - ranks.unsqueeze(1)).abs()
+    return F.softmax(-dist / tau, dim=1)
+
+
+# Shared no-knobs-set instance: the default for `bc_loss` / `run_val`
+# callers outside the configured train loop (scripts, tests).
+DEFAULT_LOSS_CFG = LossConfig()
 
 # Mask logits set to this value before the softmax. Large-negative
 # rather than `-inf` to avoid NaN propagation if a downstream op
@@ -68,6 +127,7 @@ def flatten_policy_logits(
 def bc_loss(
     model_out: dict[str, torch.Tensor],
     targets: dict[str, torch.Tensor],
+    cfg: LossConfig = DEFAULT_LOSS_CFG,
 ) -> dict[str, torch.Tensor]:
     """
     One-step loss over a batch.
@@ -88,7 +148,9 @@ def bc_loss(
     Returns a dict
         - `total`:    scalar loss for `.backward()`
         - `policy`:   policy CE (mean over non-pass frames; 0 if batch is all pass)
-        - `value`:    value CE (mean over batch)
+        - `value`:    hard value CE (mean over batch) — the reporting metric
+        - `value_soft`: soft-target value CE, the trained objective
+                       (same tensor as `value` at τ=0)
         - `pass`:     pass BCE (mean over batch)
         - `n_non_pass`: 0-d int tensor, number of non-pass frames in the batch
                        (debugging signal for the overfit harness)
@@ -126,7 +188,20 @@ def bc_loss(
     ) / n_non_pass.clamp(min=1)
 
     # --- Value CE ---
+    # Hard CE is always computed: it's the cross-run-comparable metric (and
+    # what the placement-entropy floors baseline). The soft variant is the
+    # objective when τ > 0 — F.cross_entropy accepts probability targets
+    # directly, so the soft path is one row-gather plus the same CE call.
     value_ce = F.cross_entropy(value_logits, value_target, reduction="mean")
+    if cfg.value_target_tau > 0:
+        kernel = _soft_target_kernel(
+            cfg.value_target_tau, value_logits.shape[1], value_logits.device
+        )
+        value_soft = F.cross_entropy(
+            value_logits, kernel[value_target], reduction="mean"
+        )
+    else:
+        value_soft = value_ce
 
     # --- Pass BCE ---
     # `pass_logit` is pre-sigmoid; the `_with_logits` variant fuses sigmoid
@@ -135,12 +210,13 @@ def bc_loss(
         pass_logit, is_pass.float(), reduction="mean"
     )
 
-    total = policy_ce + LAMBDA_VALUE * value_ce + MU_PASS * pass_bce
+    total = policy_ce + cfg.lambda_value * value_soft + cfg.mu_pass * pass_bce
 
     return {
         "total": total,
         "policy": policy_ce,
         "value": value_ce,
+        "value_soft": value_soft,
         "pass": pass_bce,
         "n_non_pass": n_non_pass,
     }
@@ -157,24 +233,26 @@ class LossAccumulator:
         loss is 0 by the `bc_loss` defensive guard, but more importantly
         its `n_non_pass` is 0 → it contributes zero weight and zero sum,
         which is the right thing.
-      - `value`, `pass` are mean-over-full-batch per batch, so the epoch
-        mean weights each batch by its sample count `B`.
+      - `value`, `value_soft`, `pass` are mean-over-full-batch per batch, so
+        the epoch mean weights each batch by its sample count `B`.
       - `total` is *derived* from the component epoch means using the
-        fixed weights `LAMBDA_VALUE`, `MU_PASS`. This preserves the
-        identity `total == policy + λ·value + μ·pass` at every
-        aggregation level — useful when reading the log to see which
-        head is driving the loss.
+        `cfg` weights. This preserves the identity
+        `total == policy + λ·value_soft + μ·pass` at every aggregation
+        level — useful when reading the log to see which head is driving
+        the loss. `cfg` must match the one given to `bc_loss`.
 
     One accumulator per epoch per split (train + val each get their own).
     No `reset()` — instantiate a fresh accumulator at the start of each
     epoch / val pass.
     """
 
+    cfg: LossConfig = field(default_factory=LossConfig)
     n_non_pass: int = 0
     n_samples: int = 0
-    sum_policy: float = 0.0  # weighted by n_non_pass per batch
-    sum_value: float = 0.0   # weighted by batch_size per batch
-    sum_pass: float = 0.0    # weighted by batch_size per batch
+    sum_policy: float = 0.0      # weighted by n_non_pass per batch
+    sum_value: float = 0.0       # weighted by batch_size per batch
+    sum_value_soft: float = 0.0  # weighted by batch_size per batch
+    sum_pass: float = 0.0        # weighted by batch_size per batch
 
     def update(
         self,
@@ -187,6 +265,7 @@ class LossAccumulator:
         self.n_samples += batch_size
         self.sum_policy += losses["policy"].item() * n_np
         self.sum_value += losses["value"].item() * batch_size
+        self.sum_value_soft += losses["value_soft"].item() * batch_size
         self.sum_pass += losses["pass"].item() * batch_size
 
     def summary(self) -> dict[str, float | int]:
@@ -199,11 +278,13 @@ class LossAccumulator:
         """
         policy = self.sum_policy / self.n_non_pass if self.n_non_pass > 0 else 0.0
         value = self.sum_value / self.n_samples if self.n_samples > 0 else 0.0
+        value_soft = self.sum_value_soft / self.n_samples if self.n_samples > 0 else 0.0
         pass_ = self.sum_pass / self.n_samples if self.n_samples > 0 else 0.0
-        total = policy + LAMBDA_VALUE * value + MU_PASS * pass_
+        total = policy + self.cfg.lambda_value * value_soft + self.cfg.mu_pass * pass_
         return {
             "policy": policy,
             "value": value,
+            "value_soft": value_soft,
             "pass": pass_,
             "total": total,
             "n_non_pass": self.n_non_pass,

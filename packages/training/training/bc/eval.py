@@ -44,7 +44,13 @@ import torch
 from torch.utils.data import DataLoader
 
 from training.bc.dataset import IterableDataset, assert_safe_loader
-from training.bc.loss import LossAccumulator, bc_loss, flatten_policy_logits
+from training.bc.loss import (
+    DEFAULT_LOSS_CFG,
+    LossAccumulator,
+    LossConfig,
+    bc_loss,
+    flatten_policy_logits,
+)
 from training.bc.obs_config import ObsConfig
 from training.shared.device import dataloader_kwargs, move_batch, obs_for_model
 
@@ -77,6 +83,7 @@ def run_val(
     obs_cfg: ObsConfig,
     seed: int = 0,
     amp_dtype: torch.dtype | None = None,
+    loss_cfg: LossConfig = DEFAULT_LOSS_CFG,
 ) -> dict:
     """Run one full validation pass and return the summary metrics.
 
@@ -106,7 +113,7 @@ def run_val(
     assert_safe_loader(val_loader)
 
     val_start = time.perf_counter()
-    acc = LossAccumulator()
+    acc = LossAccumulator(loss_cfg)
     n_top1_correct = 0
     n_top3_correct = 0
     n_pass_correct = 0
@@ -127,7 +134,7 @@ def run_val(
                 enabled=amp_dtype is not None,
             ):
                 out = model(obs_for_model(batch, amp_dtype), batch["valid_mask"])
-                losses = bc_loss(out, batch)
+                losses = bc_loss(out, batch, loss_cfg)
             B = batch["obs"].shape[0]
             acc.update(losses, batch_size=B)
 
@@ -203,6 +210,7 @@ def run_val(
     return {
         "policy": s["policy"],
         "value": s["value"],
+        "value_soft": s["value_soft"],
         "pass": s["pass"],
         "total": s["total"],
         "n_non_pass": n_non_pass,

@@ -144,6 +144,26 @@ def test_load_preserves_explicit_obs_dtype(tmp_path):
     assert loaded.cfg.obs.obs_dtype == "fp16"
 
 
+def test_load_missing_toplevel_key_uses_legacy(tmp_path, monkeypatch):
+    """The top-level twin of the obs_dtype test: an arch dict predating a
+    top-level ModelConfig field (value_head_dropout is the first such
+    addition) back-fills it from LEGACY_ARCH, not the live default."""
+    monkeypatch.setattr(
+        "training.bc.model_config.MODEL_CONFIG_DEFAULTS",
+        replace(MODEL_CONFIG_DEFAULTS, value_head_dropout=0.5),
+    )
+    cfg = build_model_cfg(value_head_dropout=0.0)
+    src = BCModel(cfg)
+    arch = asdict(cfg)
+    del arch["value_head_dropout"]    # simulate a pre-field checkpoint
+    del arch["value_head_dropout2d"]
+    ckpt = tmp_path / "epoch_001.pt"
+    torch.save({"model": src.state_dict(), "arch": arch, "epoch": 1}, ckpt)
+
+    loaded = load_bc_model(ckpt, torch.device("cpu"))
+    assert loaded.cfg.value_head_dropout == LEGACY_ARCH.value_head_dropout  # 0.0, not 0.5
+
+
 def test_fresh_partial_obs_uses_live_default(monkeypatch):
     """A fresh config from a partial `obs` dict (not a checkpoint load) fills
     `obs_dtype` from the live defaults — the complement of the load-path

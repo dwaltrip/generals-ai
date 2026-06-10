@@ -463,6 +463,11 @@ class ValueHead(nn.Module):
     Common to both: the mask multiply between ReLU and flatten zeroes
     padded-cell contributions, so the Linear layer doesn't see per-game-
     varying junk at padded positions.
+
+    Optional head-side dropout (anti-memorization, train-time only — see
+    `ModelConfig` field docs): channel dropout on the post-`pre` features,
+    elementwise dropout on the flattened vector before the Linear. Both
+    default off (p=0 ≡ identity), so the modules are unconditional.
     """
 
     def __init__(
@@ -472,6 +477,8 @@ class ValueHead(nn.Module):
         W: int,
         n_classes: int = 8,
         variant: str = "direct",
+        dropout2d_p: float = 0.0,
+        dropout_p: float = 0.0,
     ):
         super().__init__()
         if variant not in VALUE_HEAD_VARIANTS:
@@ -486,16 +493,20 @@ class ValueHead(nn.Module):
             )
         else:
             self.pre = nn.Identity()
+        self.dropout2d = nn.Dropout2d(dropout2d_p)
         self.proj_conv = nn.Conv2d(in_ch, 1, kernel_size=3, padding=1)
+        self.dropout = nn.Dropout(dropout_p)
         self.linear = nn.Linear(H * W, n_classes)
 
     def forward(self, x: torch.Tensor, valid_mask: torch.Tensor) -> torch.Tensor:
         """x: [B, C, H, W], valid_mask: [B, 1, H, W] bool → [B, n_classes]."""
         x = self.pre(x)                     # [B, C, H, W] (PM or Identity)
+        x = self.dropout2d(x)
         x = self.proj_conv(x)               # [B, 1, H, W]
         x = F.relu(x)
         x = x * valid_mask.to(x.dtype)      # zero padded contributions
         x = x.flatten(1)                    # [B, H·W]
+        x = self.dropout(x)
         x = self.linear(x)                  # [B, n_classes]
         return x
 
@@ -530,6 +541,7 @@ class BCModel(nn.Module):
         self.pass_head = PassHead(in_ch=cfg.outer_width)
         self.value_head = ValueHead(
             in_ch=cfg.outer_width, H=cfg.H, W=cfg.W, variant=cfg.value_head_variant,
+            dropout2d_p=cfg.value_head_dropout2d, dropout_p=cfg.value_head_dropout,
         )
 
     def forward(

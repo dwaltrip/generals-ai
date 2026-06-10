@@ -54,6 +54,16 @@ class ModelConfig:
     m_middle: int
     m_inner: int
     value_head_variant: str
+    # --- swept: value-head regularization (train-time only; eval is a no-op,
+    # and nn.Dropout has no params, so state_dicts are identical across
+    # settings). Two insertion points in `ValueHead.forward`:
+    #   dropout2d — channel dropout (whole feature maps) on the [B, C, H, W]
+    #               features after `pre`; elementwise dropout is weak on conv
+    #               maps because spatially-correlated neighbors fill holes in.
+    #   dropout   — elementwise on the flattened [B, H·W] vector, directly in
+    #               front of the Linear most able to do per-game lookups.
+    value_head_dropout2d: float
+    value_head_dropout: float
     # --- obs encoding (determines in_ch) ---
     obs: ObsConfig
     # --- structural constants ---
@@ -108,6 +118,10 @@ class ModelConfig:
                 f"value_head_variant must be one of {VALUE_HEAD_VARIANTS}; "
                 f"got {self.value_head_variant!r}"
             )
+        for name, p in (("value_head_dropout2d", self.value_head_dropout2d),
+                        ("value_head_dropout", self.value_head_dropout)):
+            if not 0.0 <= p < 1.0:
+                raise ValueError(f"{name} must be in [0, 1); got {p}")
         if self.H < 1 or self.W < 1:
             raise ValueError("H/W must be positive")
 
@@ -122,6 +136,8 @@ MODEL_CONFIG_DEFAULTS = ModelConfig(
     m_middle=2,
     m_inner=2,
     value_head_variant="direct",
+    value_head_dropout2d=0.0,
+    value_head_dropout=0.0,
     obs=OBS_CONFIG_DEFAULTS,
 )
 
