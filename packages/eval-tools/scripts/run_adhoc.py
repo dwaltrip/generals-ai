@@ -105,7 +105,9 @@ def _build_run_config(args: argparse.Namespace) -> dict:
         "maps_arg": args.maps,
         "map_seed": args.map_seed,
         "games_per_map": args.games_per_map,
+        "slot_rotations": args.slot_rotations,
         "swap_slots": args.swap_slots,
+        "skip_dupes": args.skip_dupes,
         "max_turns": args.max_turns,
         "device": args.device,
         "sample_interval": args.sample_interval,
@@ -156,10 +158,11 @@ def _build_results_row(
     }
 
 
-def _make_slot_map(num_players: int, swapped: bool) -> list[int]:
-    """slot_map[slot] = original policy index for that slot."""
-    identity = list(range(num_players))
-    return list(reversed(identity)) if swapped else identity
+def _make_slot_map(num_players: int, offset: int) -> list[int]:
+    """slot_map[slot] = original policy index for that slot. `offset` cyclically
+    rotates the assignment: slot s runs policy (s + offset) % N (offset 0 =
+    identity; offset 1 on 2 players = the swap)."""
+    return [(s + offset) % num_players for s in range(num_players)]
 
 
 def _names_for_slots(policy_names: list[str], slot_map: list[int]) -> list[str]:
@@ -172,6 +175,73 @@ def _winning_policy(winner_slot: int | None, slot_map: list[int]) -> int | None:
     if winner_slot is None:
         return None
     return slot_map[winner_slot]
+
+
+def _rotation_offsets(
+    policy_specs: list[str], num_players: int, k: int, skip_dupes: bool,
+) -> tuple[list[int], str | None]:
+    """Resolve the slot-rotation offsets for K cyclic rotations.
+
+    Each map is played once per offset; offset `o` puts policy (s+o)%N in slot s.
+    Offsets are evenly spaced (step N/K), so K=2 lands on the antithetic
+    complement pair and K=N fully balances every slot — hence the K | N rule.
+
+    Two offsets collide when identical checkpoints rotate onto the same slots
+    (the interleaved A B A B case: rotating by N/2 is a no-op). The dup check
+    keys on the raw spec string — two copies of one checkpoint are equal — and
+    by default raises; with skip_dupes it drops the duplicate and notes it.
+
+    Returns (offsets_to_run, note). `note` is a line to log when dupes were
+    skipped, else None. Raises ValueError (caught up-front by the caller) on a
+    bad K or an un-skipped collision.
+    """
+    if k < 1 or num_players % k != 0:
+        divisors = ", ".join(str(d) for d in range(1, num_players + 1) if num_players % d == 0)
+        raise ValueError(
+            f"--slot-rotations {k} must be a positive divisor of the player "
+            f"count ({num_players}); valid values: {divisors}"
+        )
+    step = num_players // k
+    offsets = [i * step for i in range(k)]
+
+    # Label distinct checkpoints A, B, C, ... by first appearance so a reported
+    # lineup reads like the whiteboard notation (A A B B vs A B A B).
+    letters: dict[str, str] = {}
+    for spec in policy_specs:
+        letters.setdefault(spec, chr(ord("A") + len(letters)))
+
+    def lineup(o: int) -> tuple[str, ...]:
+        return tuple(policy_specs[(s + o) % num_players] for s in range(num_players))
+
+    def label(o: int) -> str:
+        return " ".join(letters[policy_specs[(s + o) % num_players]] for s in range(num_players))
+
+    seen: dict[tuple[str, ...], int] = {}
+    kept: list[int] = []
+    dropped: list[tuple[int, int]] = []
+    for o in offsets:
+        key = lineup(o)
+        if key in seen:
+            if not skip_dupes:
+                raise ValueError(
+                    f"--slot-rotations {k}: offset {o} produces the same slot "
+                    f"lineup as offset {seen[key]}:\n"
+                    f"    {label(o)}\n"
+                    f"Group identical checkpoints contiguously (A A B B, not "
+                    f"A B A B), or pass --skip-dupes to run only the distinct lineups."
+                )
+            dropped.append((o, seen[key]))
+            continue
+        seen[key] = o
+        kept.append(o)
+
+    note = None
+    if dropped:
+        drops = ", ".join(f"{o}≡{d}" for o, d in dropped)
+        noun = "lineup" if len(kept) == 1 else "lineups"
+        note = (f"slot-rotations: {k} requested, {len(dropped)} duplicate "
+                f"(offsets {drops}) → running {len(kept)} distinct {noun}")
+    return kept, note
 
 
 @dataclass
@@ -200,7 +270,7 @@ class _GameCtx:
     FinishedGame, so we can record artifacts once the batched runner finishes it."""
     replay_id: str
     slot_map: list[int]
-    swapped: bool
+    offset: int
     collector: MetricsCollector
     map_data: StaticMap
 
@@ -215,18 +285,18 @@ def _resolve_pool_size(concurrent_games: int, policy_specs: list[str]) -> int:
 
 
 def _pending_games(
-    ctx: _RunCtx, replay_ids: list[str], games_per_map: int, swap_rounds: list[bool],
+    ctx: _RunCtx, replay_ids: list[str], games_per_map: int, offsets: list[int],
 ) -> Iterator[PendingGame]:
-    """Yield one PendingGame per (map, rep, swap), building fresh policies + a
-    MetricsCollector lazily as the runner pulls each into the pool. game_id is
+    """Yield one PendingGame per (map, rep, rotation), building fresh policies +
+    a MetricsCollector lazily as the runner pulls each into the pool. game_id is
     the enumeration order (stable per spec, independent of completion order)."""
     game_idx = 0
     for replay_id in replay_ids:
         map_data = load_static_from_db(replay_id)
         for _rep in range(games_per_map):
-            for swapped in swap_rounds:
+            for offset in offsets:
                 game_idx += 1
-                slot_map = _make_slot_map(ctx.num_players, swapped)
+                slot_map = _make_slot_map(ctx.num_players, offset)
                 policies = [
                     parse_policy_spec(ctx.policy_specs[slot_map[s]], slot=s, device=ctx.device)
                     for s in range(ctx.num_players)
@@ -239,7 +309,7 @@ def _pending_games(
                     map_data=map_data,
                     policies=policies,
                     on_tick=collector.on_tick,
-                    ctx=_GameCtx(replay_id, slot_map, swapped, collector, map_data),
+                    ctx=_GameCtx(replay_id, slot_map, offset, collector, map_data),
                 )
 
 
@@ -267,11 +337,11 @@ def _record_finished(ctx: _RunCtx, fin: FinishedGame) -> _GameOutcome:
 
     slot_names = _names_for_slots(ctx.policy_names, g.slot_map)
     winner_str = ctx.policy_names[winner_policy] if winner_policy is not None else "draw"
-    swap_tag = " [swapped]" if g.swapped else ""
+    rot_tag = f" [rot {g.offset}]" if g.offset else ""
     lands = " ".join(
         f"{slot_names[s]}={ps.land:3d}" for s, ps in enumerate(result.player_stats)
     )
-    print(f"  {label}: {winner_str:12s}  len={result.game_length:4d}  {lands}{swap_tag}")
+    print(f"  {label}: {winner_str:12s}  len={result.game_length:4d}  {lands}{rot_tag}")
 
     return _GameOutcome(winner_policy=winner_policy, game_length=result.game_length)
 
@@ -293,17 +363,24 @@ def run(args: argparse.Namespace) -> None:
         print(f"\nerror: invalid --policy spec: {e}", file=sys.stderr)
         sys.exit(1)
 
-    swap_slots = args.swap_slots
-    if swap_slots and num_players != 2:
+    if args.swap_slots and args.slot_rotations not in (1, 2):
         print(
-            f"\nerror: --swap-slots only supported for 2-player games, "
-            f"got {num_players} policies",
+            "\nerror: --swap-slots is an alias for --slot-rotations 2; don't "
+            f"combine it with --slot-rotations {args.slot_rotations}",
             file=sys.stderr,
         )
         sys.exit(1)
+    k_rotations = 2 if args.swap_slots else args.slot_rotations
+    try:
+        offsets, rotation_note = _rotation_offsets(
+            policy_specs, num_players, k_rotations, args.skip_dupes,
+        )
+    except ValueError as e:
+        print(f"\nerror: {e}", file=sys.stderr)
+        sys.exit(1)
 
     replay_ids = _resolve_maps(args.maps, args.map_seed, num_players)
-    rounds_per_map = args.games_per_map * (2 if swap_slots else 1)
+    rounds_per_map = args.games_per_map * len(offsets)
     total_games = len(replay_ids) * rounds_per_map
 
     import sim_core
@@ -334,7 +411,8 @@ def run(args: argparse.Namespace) -> None:
             policy_specs=policy_specs,
             policy_names=policy_names,
             num_players=num_players,
-            swap_slots=swap_slots,
+            offsets=offsets,
+            rotation_note=rotation_note,
             replay_ids=replay_ids,
             total_games=total_games,
             out_dir=out_dir,
@@ -349,7 +427,8 @@ def _run_games(
     policy_specs: list[str],
     policy_names: list[str],
     num_players: int,
-    swap_slots: bool,
+    offsets: list[int],
+    rotation_note: str | None,
     replay_ids: list[str],
     total_games: int,
     out_dir: Path,
@@ -362,8 +441,11 @@ def _run_games(
     print(f"policies ({num_players} players):")
     for i, name in enumerate(policy_names):
         print(f"  p{i}: {name}")
+    rot_desc = "" if len(offsets) == 1 else f" × {len(offsets)} slot-rotations"
     print(f"maps: {len(replay_ids)} unique, {args.games_per_map} games each"
-          f"{' (x2 with slot swap)' if swap_slots else ''} = {total_games} total")
+          f"{rot_desc} = {total_games} total")
+    if rotation_note:
+        print(rotation_note)
     print(f"max_turns: {args.max_turns}")
     print(f"pool: {pool_size} concurrent games (~{pool_size * nn_per_game} NN rows/forward)")
     print(f"output: {out_dir}")
@@ -386,8 +468,7 @@ def _run_games(
     n_done = 0
     t0 = time.perf_counter()
 
-    swap_rounds = [False, True] if swap_slots else [False]
-    pending = _pending_games(ctx, replay_ids, args.games_per_map, swap_rounds)
+    pending = _pending_games(ctx, replay_ids, args.games_per_map, offsets)
     # Games finish out of order; each results.jsonl row carries game_index.
     for fin in run_batched(pending, pool_size=pool_size, max_turns=args.max_turns):
         outcome = _record_finished(ctx, fin)
@@ -430,9 +511,19 @@ def main() -> int:
                         help="RNG seed for random map selection")
     parser.add_argument("--games-per-map", type=int, default=1,
                         help="Number of games to play per map")
+    parser.add_argument("--slot-rotations", type=int, default=1, metavar="K",
+                        help="Play each map K times, cyclically rotating which policy "
+                             "occupies which slot (K must divide the player count). K=1 "
+                             "(default) plays once; K=2 is the antithetic complement pair; "
+                             "K=<players> fully balances every slot. Identical-checkpoint "
+                             "lineups that collide under rotation error out unless "
+                             "--skip-dupes is set.")
     parser.add_argument("--swap-slots", action="store_true",
-                        help="Play each game twice with slots reversed (2-player only). "
-                             "Doubles the total game count.")
+                        help="Alias for --slot-rotations 2 (the antithetic complement "
+                             "pair). Requires an even player count.")
+    parser.add_argument("--skip-dupes", action="store_true",
+                        help="When rotations produce identical lineups (e.g. interleaved "
+                             "A B A B), run only the distinct lineups instead of erroring.")
     parser.add_argument("--max-turns", type=int, default=1000)
     parser.add_argument("--device", type=str, default="auto",
                         choices=["auto", "cpu", "mps", "cuda"])
