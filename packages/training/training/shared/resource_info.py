@@ -12,7 +12,7 @@ This prints, once at startup, what the container actually got next to an
 estimate of the DataLoader's in-flight footprint, so a starvation regression
 shows up on line one of `run.log` instead of being reverse-engineered later.
 The same hardware envelope is also dumped to `host_info.json` (structured, for
-`bc.run_report`) — Modal places each run on a different cloud/host, so the
+`bc.perf_report`) — Modal places each run on a different cloud/host, so the
 silicon behind a run varies and a slow draw is only diagnosable if recorded.
 
 All Linux-specific reads (`/sys/fs/cgroup`, `/proc`, `/dev/shm`) are guarded,
@@ -137,7 +137,7 @@ def host_info(device: torch.device) -> dict:
     """The container's hardware envelope as a structured dict — the machine
     fingerprint behind a run. Every field is best-effort and may be None on a
     non-Linux/local box. Dumped to `host_info.json` and consumed by
-    `bc.run_report`'s host-draw table."""
+    `bc.perf_report`'s host-draw table."""
     getaffinity = getattr(os, "sched_getaffinity", None)
     affinity = len(getaffinity(0)) if getaffinity is not None else None
     shm = _shm_bytes()

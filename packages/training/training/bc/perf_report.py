@@ -1,11 +1,11 @@
-"""Build a markdown report for one training run from its on-disk artifacts.
+"""Build `perf.md` — the per-run performance report.
 
 Reads a run dir's structured outputs — args, host fingerprint, per-batch and
 per-epoch logs, the GPU/contention sidecar, and the timing profiler summary —
 and renders the perf/starvation tables we'd otherwise recompute by hand: host
 draw, throughput, GPU utilization, host contention, obs-pipeline starvation,
-the producer obs-build breakdown, and training/val quality, capped with a
-heuristic verdict.
+and the producer obs-build breakdown, capped with a heuristic verdict.
+Training quality lives in its own report (`analysis.quality_report`).
 
 Structure: `load -> compute -> render -> assemble`. `compute_metrics` returns a
 section-keyed dict of plain scalars (never formatted strings); the renderers
@@ -125,7 +125,6 @@ def compute_metrics(a: RunArtifacts) -> dict:
         "pin": _compute_pin(a),
         "producer": _compute_producer(a),
         "dist_tails": _compute_dist_tails(a),
-        "quality": _compute_quality(a),
     }
     metrics["verdict"] = _compute_verdict(metrics)
     return metrics
@@ -402,30 +401,6 @@ def _compute_dist_tails(a: RunArtifacts) -> list[dict] | None:
     return rows or None
 
 
-def _compute_quality(a: RunArtifacts) -> list[dict] | None:
-    if not a.epochs:
-        return None
-    rows = []
-    for e in a.epochs:
-        val = e.get("val") or {}
-        rows.append({
-            "epoch": e.get("epoch"),
-            "sps": e.get("samples_per_sec"),
-            "mfu": e.get("mfu"),
-            "train_policy": e.get("policy"),
-            "train_value": e.get("value"),
-            "train_pass": e.get("pass"),
-            "train_total": e.get("total"),
-            "val_policy": val.get("policy"),
-            "val_value": val.get("value"),
-            "val_pass": val.get("pass"),
-            "val_total": val.get("total"),
-            "val_top1": val.get("top1"),
-            "val_top3": val.get("top3"),
-        })
-    return rows
-
-
 def _compute_verdict(metrics: dict) -> list[str] | None:
     flags: list[str] = []
     util = metrics.get("gpu_util")
@@ -633,38 +608,6 @@ def _render_dist_tails(rows: list[dict] | None) -> str | None:
     return out
 
 
-def _render_quality(rows: list[dict] | None) -> str | None:
-    if not rows:
-        return None
-    table = [
-        [
-            r.get("epoch"),
-            _num(r.get("sps")),
-            format_pct(r["mfu"]) if r.get("mfu") is not None else "—",
-            _num(r.get("train_policy"), 4),
-            _num(r.get("train_value"), 4),
-            _num(r.get("train_pass"), 4),
-            _num(r.get("train_total"), 4),
-            _num(r.get("val_policy"), 4),
-            _num(r.get("val_value"), 4),
-            _num(r.get("val_pass"), 4),
-            _num(r.get("val_total"), 4),
-            format_pct(r["val_top1"]) if r.get("val_top1") is not None else "—",
-            format_pct(r["val_top3"]) if r.get("val_top3") is not None else "—",
-        ]
-        for r in rows
-    ]
-    return "## Training / val quality\n\n" + md_table(
-        [
-            "epoch", "sps", "mfu",
-            "t:policy", "t:value", "t:pass", "t:total",
-            "v:policy", "v:value", "v:pass", "v:total",
-            "v:top1", "v:top3",
-        ],
-        table, align=("right",) * 13,
-    )
-
-
 def _render_verdict(flags: list[str] | None) -> str | None:
     if not flags:
         return None
@@ -686,15 +629,14 @@ _SECTIONS = [
     ("pin", _render_pin),
     ("producer", _render_producer),
     ("dist_tails", _render_dist_tails),
-    ("quality", _render_quality),
     ("verdict", _render_verdict),
 ]
 
 
-def build_report(run_dir: Path) -> str:
-    """Render the full markdown report for one run dir."""
+def build_perf_report(run_dir: Path) -> str:
+    """Render the full markdown perf report for one run dir."""
     metrics = compute_metrics(RunArtifacts.load(run_dir))
-    parts = [f"# Run report — {run_dir.name}"]
+    parts = [f"# Perf report — {run_dir.name}"]
     header = _render_header(metrics["header"])
     if header:
         parts.append(header)

@@ -157,7 +157,7 @@ def enable_pin_instrumentation() -> None:
 
 def flush(prof_dir: Path) -> None:
     """Write the pin-thread tally to `<prof_dir>/pin.json`, in the same
-    `SpanStats` schema as the worker/main timing files (so `run_report` reads it
+    `SpanStats` schema as the worker/main timing files (so `perf_report` reads it
     with the existing deserializer). The snapshot is taken under the timer's
     lock, so it's safe to call while the pin thread is still alive."""
     snap = pin_timer.snapshot()
