@@ -17,7 +17,9 @@ optionally followed by a comma and a display label. Prints a markdown table
 to stdout with train and val metrics per epoch, reading from `epochs.jsonl`.
 With multiple runs, a per-run summary table (best-epoch val_value, the value
 gap at that epoch, final-epoch quality) precedes the per-epoch table;
-`--summary-only` skips the per-epoch table, `--no-summary` the summary.
+`--summary-only` skips the per-epoch table, `--no-summary` the summary. The
+summary includes each run's manifest floor (resolved via the manifest's
+metrics sidecar, backfilled on first use) unless `--no-floors`.
 
 Column reference for --cols / --exclude:
 
@@ -49,6 +51,7 @@ from training.analysis.run_comparison import (
     parse_run_arg,
     resolve_cols,
 )
+from training.analysis.run_metrics import floor_for_run
 
 
 def main() -> None:
@@ -95,6 +98,11 @@ def main() -> None:
         help="print only the per-epoch table (default prepends the summary "
              "when comparing multiple runs)",
     )
+    parser.add_argument(
+        "--no-floors", action="store_true",
+        help="skip the summary's per-manifest floor columns (default resolves "
+             "each run's manifest and backfills its metrics sidecar if needed)",
+    )
     args = parser.parse_args()
 
     all_cols = build_cols(args.dp)
@@ -104,6 +112,7 @@ def main() -> None:
         parser.error(str(exc))
 
     runs: list[tuple[str, list[dict]]] = []
+    run_dirs: list[Path] = []
     for i, raw in enumerate(args.runs):
         run_dir, label = parse_run_arg(raw, args.base)
         if not label:
@@ -115,6 +124,7 @@ def main() -> None:
         except FileNotFoundError:
             parser.error(f"no epochs.jsonl in {run_dir}")
         runs.append((label, epochs))
+        run_dirs.append(run_dir)
 
     max_epochs = max(len(epochs) for _, epochs in runs)
     if max_epochs == 0:
@@ -123,7 +133,10 @@ def main() -> None:
 
     parts: list[str] = []
     if args.summary_only or (len(runs) > 1 and not args.no_summary):
-        parts.append(build_summary_table(runs, dp=args.dp))
+        floors = None
+        if not args.no_floors:
+            floors = [floor_for_run(d, create=True) for d in run_dirs]
+        parts.append(build_summary_table(runs, dp=args.dp, floors=floors))
     if not args.summary_only:
         # --wide only matters if there are multiple runs to pivot into
         # sub-columns; for a single run, ignore the flag so it collapses to

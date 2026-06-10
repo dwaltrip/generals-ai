@@ -279,13 +279,32 @@ _SUMMARY_NOTE = (
     "(large positive = memorization); all other columns are final-epoch.*"
 )
 
+_FLOOR_NOTE = (
+    "*floor = the manifest's frame-weighted val marginal entropy; "
+    "Δbest = best v_val − floor (negative = beat the marginal predictor).*"
+)
+
 
 def build_summary_table(
-    runs: list[tuple[str, list[dict]]], dp: int | None = None
+    runs: list[tuple[str, list[dict]]],
+    dp: int | None = None,
+    floors: list[float | None] | None = None,
 ) -> str:
     """One row per run: best-epoch val value loss (+ the value gap there) and
     final-epoch quality metrics. The cross-run counterpart of the per-epoch
-    tables; also the standing-panel summary in `quality.md`."""
+    tables; also the standing-panel summary in `quality.md`.
+
+    `floors` holds each run's marginal-entropy floor: the `val_value` a model
+    would score by ignoring the board and predicting the val split's placement
+    frequencies (so it's a property of the run's manifest, not of the model).
+    It anchors the table's value-loss columns — below floor means the head is
+    extracting signal from the input, at floor honest-but-uninformative, above
+    floor confidently wrong. One entry per run, aligned with `runs` by index,
+    None where unknown; callers resolve the values via
+    `run_metrics.floor_for_run` (an IO concern, deliberately kept out of this
+    module). When `floors` is None entirely, the floor/Δbest columns are
+    omitted.
+    """
 
     def loss(v: float | None) -> str:
         return format_loss(v, dp=dp) if v is not None else MISSING
@@ -295,17 +314,26 @@ def build_summary_table(
 
     single = len(runs) == 1
     headers = ([] if single else ["run"]) + [
-        "epochs", "best v_val", "@ep", "last v_val", "gap@best",
+        "epochs", "best v_val", "@ep",
+        *(["floor", "Δbest"] if floors is not None else []),
+        "last v_val", "gap@best",
         "v_pol", "top1", "top3", "pass_acc", "pass_frac",
     ]
     rows: list[list[object]] = []
-    for label, epochs in runs:
+    for ri, (label, epochs) in enumerate(runs):
         s = summarize_run(epochs)
+        floor = floors[ri] if floors is not None else None
+        best_v = s["best_v_val"]
         row: list[object] = [] if single else [label]
-        rows.append(row + [
+        row += [
             s["n_epochs"],
-            loss(s["best_v_val"]),
+            loss(best_v),
             s["best_epoch"] if s["best_epoch"] is not None else MISSING,
+        ]
+        if floors is not None:
+            delta = best_v - floor if best_v is not None and floor is not None else None
+            row += [loss(floor), loss(delta)]
+        row += [
             loss(s["last_v_val"]),
             loss(s["gap_at_best"]),
             loss(s["last_v_pol"]),
@@ -313,9 +341,11 @@ def build_summary_table(
             pct(s["last_top3"]),
             pct(s["last_pass_acc"]),
             pct(s["last_pass_frac"]),
-        ])
-    aligns = ([] if single else ["left"]) + ["right"] * 10
-    return md_table(headers, rows, align=aligns) + "\n\n" + _SUMMARY_NOTE
+        ]
+        rows.append(row)
+    aligns = ([] if single else ["left"]) + ["right"] * (len(headers) - (0 if single else 1))
+    note = _SUMMARY_NOTE + ("\n" + _FLOOR_NOTE if floors is not None else "")
+    return md_table(headers, rows, align=aligns) + "\n\n" + note
 
 
 # ---------------------------------------------------------------------------

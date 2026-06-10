@@ -3,9 +3,9 @@
 
 Reads the replay IDs referenced by a manifest's `train` + `val` splits and
 copies each game's `.npz` + `.meta.npz` into a slice directory, preserving the
-`<rid[:2]>/` shard layout the parser uses. The manifest itself is copied
-alongside so the slice is a self-contained bundle ready to upload to a Modal
-Volume (or anywhere else).
+`<rid[:2]>/` shard layout the parser uses. The manifest and its metrics
+sidecar are copied alongside so the slice is a self-contained bundle ready to
+upload to a Modal Volume (or anywhere else).
 
 Example usage:
     build_cloud_slice.py \\
@@ -16,10 +16,12 @@ Example usage:
 from __future__ import annotations
 
 import argparse
+import json
 from pathlib import Path
 import shutil
 
 from settings import INTERMEDIATE_DIR
+from training.analysis.run_metrics import get_manifest_metrics, sidecar_path
 from training.bc.splits import load_manifest
 from training.bc.utils import meta_path_for, sim_path_for
 from utils.docstring import doc_summary
@@ -55,10 +57,17 @@ def build_slice(manifest_path: Path, intermediate_root: Path, out_dir: Path) -> 
     manifest_dst = out_dir / manifest_path.name
     shutil.copy2(manifest_path, manifest_dst)
 
+    # Ship the metrics sidecar with the manifest (backfilling it locally if
+    # missing) so cloud-side consumers never need to walk the corpus.
+    metrics = get_manifest_metrics(manifest_path, intermediate=intermediate_root, create=True)
+    sidecar_dst = sidecar_path(manifest_dst)
+    sidecar_dst.write_text(json.dumps(metrics, indent=2) + "\n")
+
     print(f"games:    {len(replay_ids)}")
     print(f"files:    {n_files} (sim + meta per game)")
     print(f"size:     {total_bytes / 1e6:.1f} MB")
     print(f"manifest: {manifest_dst}")
+    print(f"sidecar:  {sidecar_dst}")
     print(f"slice:    {out_dir}")
 
 

@@ -267,10 +267,17 @@ def _cmd_build(args: argparse.Namespace) -> None:
 
     write_json(out_path, manifest)
 
+    # Function-level import: analysis depends on this module for manifest
+    # loading, so importing it at module level would be a cycle.
+    from training.analysis.run_metrics import sidecar_path, write_manifest_metrics
+
+    write_manifest_metrics(out_path, intermediate_root)
+
     n_train = len(manifest["train"])
     n_val = len(manifest["val"])
     print()
     print(f"wrote {out_path}")
+    print(f"wrote {sidecar_path(out_path)}")
     print(
         f"  corpus: {manifest['corpus_size']:,} games | "
         f"dropped: {manifest['dropped_games']:,} | "

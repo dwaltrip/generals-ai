@@ -27,6 +27,8 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
+from settings import INTERMEDIATE_DIR
+from training.analysis.run_metrics import sidecar_path, write_manifest_metrics
 from training.bc.splits import load_manifest
 from utils.docstring import doc_summary
 from utils.json_io import write_json
@@ -67,6 +69,11 @@ def main() -> None:
         help="total train+val pairs to keep (val scaled proportionally to source val_frac)",
     )
     parser.add_argument("--out", type=Path, required=True, help="path to write derived manifest")
+    parser.add_argument(
+        "--intermediate", type=Path, default=INTERMEDIATE_DIR,
+        help="intermediate corpus root, for the metrics sidecar "
+             f"(default: {INTERMEDIATE_DIR})",
+    )
     parser.add_argument("--force", action="store_true", help="overwrite existing out path")
     args = parser.parse_args()
 
@@ -76,9 +83,13 @@ def main() -> None:
     src = load_manifest(args.src)
     derived = subset_manifest(src, args.max_pairs)
     write_json(args.out, derived)
+    # A prefix slice has its own placement distribution (and so its own
+    # floor) — always computed fresh, never copied from the source manifest.
+    write_manifest_metrics(args.out, args.intermediate.resolve())
 
     print(f"source:  {args.src} ({len(src['train']):,} train + {len(src['val']):,} val)")
     print(f"derived: {args.out} ({len(derived['train']):,} train + {len(derived['val']):,} val)")
+    print(f"sidecar: {sidecar_path(args.out)}")
 
 
 if __name__ == "__main__":

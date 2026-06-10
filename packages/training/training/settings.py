@@ -16,6 +16,9 @@ TRAINING_DIR = PROJECT_ROOT / "packages" / "training"
 # in `settings.RUNS_CLOUD_DIR` (cross-package — eval and self-play read it too).
 RUNS_DIR = TRAINING_DATA_DIR / "runs"
 
+# Split manifests (and their `<stem>.metrics.json` sidecars).
+SPLITS_DIR = TRAINING_DATA_DIR / "splits"
+
 # Value-head probe outputs and prepared parameter-sweep dirs.
 PROBES_DIR = TRAINING_DATA_DIR / "probes"
 SWEEPS_DIR = TRAINING_DATA_DIR / "sweeps"

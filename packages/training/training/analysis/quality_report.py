@@ -22,6 +22,7 @@ from training.analysis.run_comparison import (
     build_table,
     load_epochs,
 )
+from training.analysis.run_metrics import floor_for_run
 
 
 # Per-epoch columns: the defaults plus the optional quality columns
@@ -77,7 +78,8 @@ def build_quality_report(run_dir: Path) -> str:
         return "\n\n".join(parts) + "\n"
 
     run = [(run_dir.name, epochs)]
-    parts.append("## Summary\n\n" + build_summary_table(run))
+    floors = [floor_for_run(run_dir, create=True)]
+    parts.append("## Summary\n\n" + build_summary_table(run, floors=floors))
     cols = [c for c in build_cols(dp=None) if c.name in _EPOCH_COLS]
     parts.append("## Per-epoch\n\n" + build_table(run, cols))
     return "\n\n".join(parts) + "\n"
