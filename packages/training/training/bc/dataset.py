@@ -219,6 +219,7 @@ class IterableDataset(TorchIterableDataset):
         obs_cfg: ObsConfig,
         shuffle_buffer_size: int = 0,
         prof_sink: FileSink | None = None,
+        include_frame_info: bool = False,
     ) -> None:
         """
         `samples` is a list of `(sim_path, perspective_k)` pairs. Caller is
@@ -233,6 +234,12 @@ class IterableDataset(TorchIterableDataset):
         worker enables `timer` for its walk and flushes a snapshot through the
         sink on teardown. `None` (the default) keeps every timing seam inert.
         Wired from `train.build_dataloader` via `timing_run.active_sink()`.
+
+        `include_frame_info` adds per-frame provenance scalars to each sample
+        dict (`frame_t`, `players_alive`, `p_start`, `sample_idx`) for offline
+        stratified analysis. Off by default:
+        the training loop doesn't consume them, and the extra keys would ride
+        through collate + device transfer for nothing.
         """
         self._groups = _group_by_path(samples)
         self._seed = seed
@@ -240,6 +247,13 @@ class IterableDataset(TorchIterableDataset):
         self._shuffle_buffer_size = shuffle_buffer_size
         self._epoch = 0
         self._prof_sink = prof_sink
+        self._frame_info = include_frame_info
+        # Index of each (path, k) pair in the caller's `samples` order, so
+        # `sample_idx` survives the group/epoch shuffles and lets offline
+        # consumers join frames back to the manifest entry they came from.
+        self._sample_index = (
+            {pair: i for i, pair in enumerate(samples)} if include_frame_info else {}
+        )
 
     def set_epoch(self, epoch: int) -> None:
         """Set the epoch index used to seed the per-epoch shuffle. Call
@@ -357,6 +371,22 @@ class IterableDataset(TorchIterableDataset):
             H = int(sim["map_height"])
             W = int(sim["map_width"])
 
+            if self._frame_info:
+                # Aliveness comes from the sim, not meta: `meta.elim_timestep`
+                # covers only the *recorded* perspectives, while `death_events`
+                # is (timestep, slot) for every eliminated player (winner
+                # absent). players_alive(t) = P_start − deaths with ts ≤ t,
+                # i.e. a player eliminated at t counts as dead in frame t.
+                deaths = (
+                    np.sort(sim["death_events"][:, 0])
+                    if sim["death_events"].size
+                    else np.zeros(0, dtype=np.int64)
+                )
+                # Owner ids are ≥ 0; -1 is neutral, -2 mountains. At t=0 each
+                # player owns exactly their general, so the distinct owner
+                # count is the starting player count.
+                p_start = int((np.unique(sim["ownership"][0]) >= 0).sum())
+
             for k in ks:
                 perspective_slot = int(meta["perspective_player_ids"][k])
                 opp_slots = canonical_slot_order(perspective_slot)[1:]
@@ -378,6 +408,16 @@ class IterableDataset(TorchIterableDataset):
                             sim, meta, k, t,
                             perspective_slot, opp_slots, vis,
                             state, bfs_cache, H, W,
+                        )
+                    if self._frame_info:
+                        sample["frame_t"] = torch.tensor(t, dtype=torch.int64)
+                        sample["players_alive"] = torch.tensor(
+                            p_start - int(np.searchsorted(deaths, t, side="right")),
+                            dtype=torch.int64,
+                        )
+                        sample["p_start"] = torch.tensor(p_start, dtype=torch.int64)
+                        sample["sample_idx"] = torch.tensor(
+                            self._sample_index[(sim_path, k)], dtype=torch.int64
                         )
                     # Measures per-sample overhead plus (per batch boundary) collate, shm_copy,
                     # and the queue put/block. Then `handoff − collate − shm_copy` should give
