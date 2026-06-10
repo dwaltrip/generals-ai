@@ -25,7 +25,7 @@ Column reference for --cols / --exclude:
 
   train:  t_pol  t_val  t_pass  t_tot
   val:    v_pol  v_val  v_pass  v_tot  top1  top3
-  optional (hidden by default):  gap  sps  pass_frac  pass_acc
+  optional (hidden by default):  gap  t_vsoft  v_vsoft  sps  pass_frac  pass_acc
 
   Groups (expand to all in category):  train  val  top
   Naming: t_* is short for train_*, v_* for val_*; gap is v_val − t_val
@@ -84,6 +84,10 @@ def main() -> None:
              "(same syntax as --cols)",
     )
     parser.add_argument(
+        "--short-names", action="store_true",
+        help="use the short column names (t_pol, v_val, …) as table headers",
+    )
+    parser.add_argument(
         "--dp", type=int, default=None, metavar="N",
         help="decimal places for loss columns (default: adaptive — 4 dp "
              "below 1, 3 dp above)",
@@ -105,7 +109,7 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    all_cols = build_cols(args.dp)
+    all_cols = build_cols(args.dp, short_names=args.short_names)
     try:
         cols = resolve_cols(all_cols, args.cols, args.exclude)
     except ValueError as exc:

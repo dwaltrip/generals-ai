@@ -64,10 +64,12 @@ class ColSpec(NamedTuple):
 _COL_REGISTRY: list[ColSpec] = [
     ColSpec("t_pol", "loss"),
     ColSpec("t_val", "loss"),
+    ColSpec("t_vsoft", "loss", optional=True),
     ColSpec("t_pass", "loss"),
     ColSpec("t_tot", "loss"),
     ColSpec("v_pol", "loss"),
     ColSpec("v_val", "loss"),
+    ColSpec("v_vsoft", "loss", optional=True),
     ColSpec("v_pass", "loss"),
     ColSpec("v_tot", "loss"),
     ColSpec("gap", "loss", optional=True),
@@ -83,19 +85,25 @@ ALL_COL_NAMES = [col.name for col in _COL_REGISTRY]
 LONG_NAMES: dict[str, str] = {
     "t_pol": "train_policy",
     "t_val": "train_value",
+    "t_vsoft": "train_value_soft",
     "t_pass": "train_pass",
     "t_tot": "train_total",
     "v_pol": "val_policy",
     "v_val": "val_value",
+    "v_vsoft": "val_value_soft",
     "v_pass": "val_pass",
     "v_tot": "val_total",
     "gap": "value_gap",
 }
 
+# Groups cover the non-optional columns only; optional ones are always
+# summoned by name.
+_DEFAULT_NAMES = [col.name for col in _COL_REGISTRY if not col.optional]
+
 GROUPS: dict[str, list[str]] = {
-    "train": [n for n in ALL_COL_NAMES if n.startswith("t_")],
-    "val": [n for n in ALL_COL_NAMES if n.startswith("v_") or n.startswith("top")],
-    "top": [n for n in ALL_COL_NAMES if n.startswith("top")],
+    "train": [n for n in _DEFAULT_NAMES if n.startswith("t_")],
+    "val": [n for n in _DEFAULT_NAMES if n.startswith("v_") or n.startswith("top")],
+    "top": [n for n in _DEFAULT_NAMES if n.startswith("top")],
 }
 
 VALID_TOKENS = sorted(set(ALL_COL_NAMES) | set(GROUPS))
@@ -105,7 +113,7 @@ _COL_REFERENCE = """\
 Available columns:
   train:  t_pol  t_val  t_pass  t_tot
   val:    v_pol  v_val  v_pass  v_tot  top1  top3
-  optional (hidden by default):  gap  sps  pass_frac  pass_acc
+  optional (hidden by default):  gap  t_vsoft  v_vsoft  sps  pass_frac  pass_acc
 
 Groups (expand to all in category):  train  val  top
 
@@ -126,10 +134,12 @@ def _value_gap(e: dict) -> float | None:
 _EXTRACTORS: dict[str, Extract] = {
     "t_pol":      lambda e: e.get("policy"),
     "t_val":      lambda e: e.get("value"),
+    "t_vsoft":    lambda e: e.get("value_soft"),
     "t_pass":     lambda e: e.get("pass"),
     "t_tot":      lambda e: e.get("total"),
     "v_pol":      lambda e: _val(e).get("policy"),
     "v_val":      lambda e: _val(e).get("value"),
+    "v_vsoft":    lambda e: _val(e).get("value_soft"),
     "v_pass":     lambda e: _val(e).get("pass"),
     "v_tot":      lambda e: _val(e).get("total"),
     "gap":        _value_gap,
@@ -141,7 +151,7 @@ _EXTRACTORS: dict[str, Extract] = {
 }
 
 
-def build_cols(dp: int | None) -> list[ColDef]:
+def build_cols(dp: int | None, short_names: bool = False) -> list[ColDef]:
     fmts: dict[str, Fmt] = {
         "loss": lambda v: format_loss(v, dp=dp),
         "pct": format_pct,
@@ -160,7 +170,7 @@ def build_cols(dp: int | None) -> list[ColDef]:
             name=col.name,
             extract=_EXTRACTORS[col.name],
             fmt=fmts[col.kind],
-            long_name=LONG_NAMES.get(col.name, ""),
+            long_name="" if short_names else LONG_NAMES.get(col.name, ""),
             optional=col.optional,
         )
         for col in _COL_REGISTRY
