@@ -298,6 +298,8 @@ def render_cloud_script(sweep_rel: str, cells: list[tuple[str, str]]) -> str:
 set -euo pipefail
 
 EXTRA_ARGS=("$@")
+# Expanded below via ${{EXTRA_ARGS[@]+...}}: under `set -u`, macOS bash 3.2
+# treats expanding an EMPTY array as unbound (fixed in bash 4.4).
 
 export PYTHONUNBUFFERED=1
 
@@ -322,7 +324,7 @@ for entry in "${{CELLS[@]}}"; do
   cell_ok=true
   cell_output=$(uv run modal run --detach packages/training/scripts/run_bc_modal.py \\
     --config "$SWEEP_DIR/$config" \\
-    "${{EXTRA_ARGS[@]}}" \\
+    ${{EXTRA_ARGS[@]+"${{EXTRA_ARGS[@]}}"}} \\
     2>&1) || cell_ok=false
 
   echo "$cell_output" | tee -a "$LAUNCH_LOG"
@@ -367,6 +369,8 @@ def render_local_script(sweep_rel: str, cells: list[tuple[str, str]]) -> str:
 set -euo pipefail
 
 EXTRA_ARGS=("$@")
+# Expanded below via ${{EXTRA_ARGS[@]+...}}: under `set -u`, macOS bash 3.2
+# treats expanding an EMPTY array as unbound (fixed in bash 4.4).
 
 REPO_ROOT="$(git rev-parse --show-toplevel)"
 cd "$REPO_ROOT"
@@ -384,7 +388,7 @@ for entry in "${{CELLS[@]}}"; do
 
   uv run $REPO_ROOT/packages/training/scripts/run_bc_local.py \\
     --config "$SWEEP_DIR/$config" \\
-    "${{EXTRA_ARGS[@]}}"
+    ${{EXTRA_ARGS[@]+"${{EXTRA_ARGS[@]}}"}}
 
   echo "=== $label done ==="
   echo ""
@@ -402,6 +406,8 @@ def render_fetch_script(sweep_rel: str) -> str:
 set -euo pipefail
 
 EXTRA_ARGS=("$@")
+# Expanded below via ${{EXTRA_ARGS[@]+...}}: under `set -u`, macOS bash 3.2
+# treats expanding an EMPTY array as unbound (fixed in bash 4.4).
 
 REPO_ROOT="$(git rev-parse --show-toplevel)"
 cd "$REPO_ROOT"
@@ -420,7 +426,7 @@ mkdir -p "$RUNS_DIR"
 while read -r label run_id; do
   echo "--- fetching $label ($run_id) ---"
   $REPO_ROOT/packages/training/scripts/pull_runs.py \
-    --dest "$RUNS_DIR" "${{EXTRA_ARGS[@]}}" "$run_id"
+    --dest "$RUNS_DIR" ${{EXTRA_ARGS[@]+"${{EXTRA_ARGS[@]}}"}} "$run_id"
   ln -sfn "$run_id" "$RUNS_DIR/$label"
 done < "$RUN_IDS_FILE"
 
