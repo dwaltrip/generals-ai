@@ -16,26 +16,19 @@ policy configs so the behavior can be eyeballed against the whiteboard:
 Run from the repo root: `uv run python scripts/one_offs/check_slot_rotations.py`
 """
 
-from pathlib import Path
-import sys
-
-
-_REPO_ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(_REPO_ROOT / "packages" / "eval-tools" / "scripts"))
-
-from run_adhoc import _make_slot_map, _rotation_offsets  # noqa: E402
+from eval_tools.runner import make_slot_map, rotation_offsets
 
 
 def lineups(specs: list[str], offsets: list[int]) -> list[str]:
     """Render each offset's slot lineup as a spaced string (e.g. 'A A B B')."""
     n = len(specs)
-    return [" ".join(specs[_make_slot_map(n, o)[s]] for s in range(n)) for o in offsets]
+    return [" ".join(specs[make_slot_map(n, o)[s]] for s in range(n)) for o in offsets]
 
 
 def show(specs: list[str], k: int, skip: bool = False) -> None:
     tag = f"{''.join(specs)} K={k}" + (" --skip-dupes" if skip else "")
     try:
-        offs, note = _rotation_offsets(specs, len(specs), k, skip)
+        offs, note = rotation_offsets(specs, len(specs), k, skip)
     except ValueError as e:
         print(f"{tag}: ERROR\n    " + str(e).replace("\n", "\n    "))
         return

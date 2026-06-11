@@ -127,7 +127,7 @@ def _write_synthetic_run(run_dir: Path) -> None:
     games_dir.mkdir(parents=True)
     specs = [SPEC_A, SPEC_B]
     (run_dir / "config.json").write_text(json.dumps(
-        {"policy_specs": specs, "maps_arg": "random:1", "max_turns": 100}
+        {"policy_specs": specs, "maps": "random:1", "max_turns": 100}
     ))
     lines = []
     for idx, (slot_map, winner) in enumerate([([0, 1], 0), ([1, 0], 1)], start=1):
