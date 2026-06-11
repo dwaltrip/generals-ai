@@ -1,0 +1,30 @@
+{
+  "manifest": "poc_2kish_perspecs.json",
+  "manifest_sha256": "d42e0dfb0e6d6ab555dcc599b178b06b0193f944f6058f3cfa314d3fe721275b",
+  "val_marginals": {
+    "n_perspectives": 101,
+    "n_frames": 40628,
+    "frame_counts": [
+      19347,
+      7837,
+      6280,
+      1583,
+      2017,
+      2383,
+      916,
+      265
+    ],
+    "perspective_counts": [
+      33,
+      12,
+      19,
+      6,
+      9,
+      13,
+      7,
+      2
+    ],
+    "H_frame": 1.519526,
+    "H_persp": 1.84259
+  }
+}

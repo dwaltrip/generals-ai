@@ -1,0 +1,30 @@
+{
+  "manifest": "cloud_24k_sub_5k.json",
+  "manifest_sha256": "44235e64869fd8cebc539cbb97a83520869eb4056e2cd81ecd60ed5e60cf108f",
+  "val_marginals": {
+    "n_perspectives": 250,
+    "n_frames": 112975,
+    "frame_counts": [
+      57912,
+      23786,
+      16059,
+      6281,
+      2872,
+      3850,
+      1572,
+      643
+    ],
+    "perspective_counts": [
+      96,
+      41,
+      42,
+      22,
+      14,
+      21,
+      10,
+      4
+    ],
+    "H_frame": 1.405959,
+    "H_persp": 1.741974
+  }
+}

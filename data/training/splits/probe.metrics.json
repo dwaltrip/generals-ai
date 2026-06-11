@@ -1,0 +1,30 @@
+{
+  "manifest": "probe.json",
+  "manifest_sha256": "89165d945c292a7cad9fea52279d28cd62fedb56e7b0b7923343c5ee7a41cf61",
+  "val_marginals": {
+    "n_perspectives": 6,
+    "n_frames": 2120,
+    "frame_counts": [
+      1144,
+      0,
+      0,
+      620,
+      257,
+      0,
+      0,
+      99
+    ],
+    "perspective_counts": [
+      2,
+      0,
+      0,
+      2,
+      1,
+      0,
+      0,
+      1
+    ],
+    "H_frame": 1.091327,
+    "H_persp": 1.329661
+  }
+}

@@ -13,6 +13,7 @@ normalization (legacy args schemas, checkpoint-era architecture lookup).
 
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 
@@ -23,6 +24,10 @@ from training.settings import SPLITS_DIR
 
 def sidecar_path(manifest_path: Path) -> Path:
     return manifest_path.with_name(manifest_path.stem + ".metrics.json")
+
+
+def _manifest_hash(manifest_path: Path) -> str:
+    return hashlib.sha256(manifest_path.read_bytes()).hexdigest()
 
 
 def _marginals_dict(m: SplitMarginals) -> dict:
@@ -44,6 +49,7 @@ def compute_manifest_metrics(
     needs `intermediate` present — ~1s per 1k val perspectives."""
     return {
         "manifest": manifest_path.name,
+        "manifest_sha256": _manifest_hash(manifest_path),
         "val_marginals": _marginals_dict(
             split_marginals(manifest_path, intermediate, "val")
         ),
@@ -66,15 +72,19 @@ def get_manifest_metrics(
     intermediate: Path = INTERMEDIATE_DIR,
     create: bool = False,
 ) -> dict | None:
-    """Load a manifest's metrics sidecar; a sidecar older than its manifest
-    counts as missing. With `create`, a missing sidecar is computed and
-    backfilled (write is best-effort — a read-only location still returns
-    the computed values); without it, missing returns None.
+    """Load a manifest's metrics sidecar; a sidecar whose `manifest_sha256`
+    doesn't match the manifest's current content counts as missing (manifests
+    are write-once, so a mismatch means a `--force` rebuild left the sidecar
+    behind). With `create`, a missing sidecar is computed and backfilled
+    (write is best-effort — a read-only location still returns the computed
+    values); without it, missing returns None.
     """
     sc = sidecar_path(manifest_path)
-    if sc.is_file() and sc.stat().st_mtime >= manifest_path.stat().st_mtime:
+    if sc.is_file():
         try:
-            return json.loads(sc.read_text())
+            content = json.loads(sc.read_text())
+            if content.get("manifest_sha256") == _manifest_hash(manifest_path):
+                return content
         except (OSError, json.JSONDecodeError):
             pass
     if not create:
