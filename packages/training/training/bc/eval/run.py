@@ -56,8 +56,8 @@ from training.bc.loss import (
     LossAccumulator,
     LossConfig,
     bc_loss,
-    flatten_policy_logits,
 )
+from training.bc.model import flatten_policy_logits
 from training.bc.obs_config import ObsConfig
 from training.shared.device import dataloader_kwargs, move_batch, obs_for_model
 

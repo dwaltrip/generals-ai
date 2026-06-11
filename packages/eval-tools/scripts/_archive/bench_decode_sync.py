@@ -30,8 +30,7 @@ import torch
 
 from training.bc.constants import H_PADDED, OBS_CHANNELS, W_PADDED
 from training.bc.inference import default_device
-from training.bc.loss import flatten_policy_logits
-from training.bc.model import BCModel
+from training.bc.model import BCModel, flatten_policy_logits
 from training.bc.model_config import build_model_cfg
 
 

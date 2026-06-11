@@ -5,7 +5,7 @@ import math
 import torch
 
 from training.bc.eval.metrics import ActionDistMeter, PolicyEntropyMeter
-from training.bc.loss import MASK_NEG
+from training.bc.model import MASK_NEG
 
 
 def _uniform_masked_logits(n_frames: int, n_legal: int, n_total: int = 32) -> torch.Tensor:

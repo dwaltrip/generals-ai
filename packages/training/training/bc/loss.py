@@ -20,11 +20,11 @@ The value head has two CE readings, both always computed:
   - `value_soft` — CE against soft ordinal targets (`value_target_tau`),
     the *trained* objective. Equal to `value` at τ=0.
 
-Layout coupling: the policy head produces NCHW `[B, 8, H, W]`. The action
+Layout coupling: the policy head produces NCHW `[B, 8, H, W]`; the action
 target is in the cell-major flat layout (`flat_idx = cell_padded * 8 + sub`,
-sub = dir·2+split). Per the cross-cutting permute contract (5.18-3 session
-note), this module owns the `permute(0,2,3,1).reshape(B, -1)` transform
-that lines the two up.
+sub = dir·2+split). The transform between the two is owned by the model's
+output contract (`flatten_policy_logits` in `model/heads/policy.py`); the
+policy CE here applies it.
 """
 
 from __future__ import annotations
@@ -36,6 +36,7 @@ import torch
 import torch.nn.functional as F
 
 from training.bc.actions import _PASS_FLAT_IDX
+from training.bc.model import flatten_policy_logits
 
 
 @dataclass(frozen=True)
@@ -95,33 +96,6 @@ def _soft_target_kernel(
 # Shared no-knobs-set instance: the default for `bc_loss` / `run_val`
 # callers outside the configured train loop (scripts, tests).
 DEFAULT_LOSS_CFG = LossConfig()
-
-# Mask logits set to this value before the softmax. Large-negative
-# rather than `-inf` to avoid NaN propagation if a downstream op
-# touches a masked position. Magnitude is bounded by FP16's representable
-# range (max abs ~65504); -1e4 is comfortably inside that and still
-# underflows to ~0 after softmax (`e^{-1e4} ≈ 0` in any precision).
-# Earlier versions used -1e9 which silently overflowed under AMP.
-MASK_NEG = -1e4
-
-
-def flatten_policy_logits(
-    policy_logits: torch.Tensor,
-    mask: torch.Tensor,
-) -> torch.Tensor:
-    """Flatten NCHW policy logits to cell-major `[B, H·W·8]` and apply
-    the legality mask. Owner of the cell-major permute contract (5.18-3
-    session note); callers use the flat layout for CE / argmax.
-    """
-    B = policy_logits.shape[0]
-    # Permute moves the direction channel last, matching the action
-    # target's cell-major layout (flat_idx = cell_padded*8 + sub,
-    # sub = dir*2 + split):
-    #   [B, 8, H, W]  →  [B, H, W, 8]  →  [B, H·W·8]
-    flat = policy_logits.permute(0, 2, 3, 1).contiguous().reshape(B, -1)
-    # Apply legality mask. Illegal positions get MASK_NEG (large-negative,
-    # mixed-precision-safe vs -inf) — post-softmax, prob ≈ 0.
-    return flat.masked_fill(~mask.reshape(B, -1), MASK_NEG)
 
 
 def bc_loss(

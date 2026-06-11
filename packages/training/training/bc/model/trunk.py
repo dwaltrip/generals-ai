@@ -1,26 +1,15 @@
 """
-Behavioral-cloning model: trunk (Pyramid Module) + policy / pass / value heads.
-
-The trunk is a 2-contraction U-Net "Pyramid Module" — the inherited DeepNash
-architecture (Perolat 2022, arXiv:2206.15378, supplementary Fig. 7) at the
-half-width 128/128/160 variant. The shape:
+Pyramid Module trunk — the DeepNash 2-contraction U-Net (Perolat 2022,
+arXiv:2206.15378, supplementary Fig. 7) and its residual building blocks.
 
     32² → 16² → 8² → 16² → 32²    (contract-bottleneck-expand)
 
-Three heads read off the trunk's [B, C, H, W] spatial embedding:
-  - policy: per-cell directional logits in NCHW [B, 8, H, W]
-  - pass:   single scalar logit per sample (split-head pass design)
-  - value:  categorical placement logits [B, 8]
+`PyramidModule` is used both as the main trunk and as the small embedded
+"head Pyramid Module" inside the policy / pyramid-variant value heads
+(see `bc/model/heads/`).
 
-The model returns a dict so `bc/loss.py` can address each head's output
-independently and the overfit harness can log component-wise losses.
-
-Two deviations from the inherited design (`network-architecture-design.md`)
-are flagged in code:
-  1. GroupNorm in place of LayerNorm — see `_gn` for the reasoning.
-  2. Inline value head (option B from 5.20-2 session) — flagged in
-     `ValueHead`. Extension path back to the full-spec DeepNash head
-     is marked at the relevant `TODO(option C extension)` sites.
+One deviation from the inherited design (`network-architecture-design.md`)
+lives here: GroupNorm in place of LayerNorm — see `_gn` for the reasoning.
 """
 
 from __future__ import annotations
@@ -28,8 +17,6 @@ from __future__ import annotations
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-
-from training.bc.model_config import MODEL_CONFIG_DEFAULTS, VALUE_HEAD_VARIANTS, ModelConfig
 
 
 # GroupNorm preferred group count. The trunk uses {64, 80, 128, 160}-channel
@@ -362,205 +349,3 @@ class PyramidModule(nn.Module):
         # counts have drifted out of sync.
         assert not skips, f"unconsumed encoder skips: {len(skips)}"
         return x
-
-
-# ---------------------------------------------------------------------------
-# Heads
-# ---------------------------------------------------------------------------
-
-
-class PolicyHead(nn.Module):
-    """
-    Per-cell directional policy head.
-
-    Structure: small Pyramid Module (N=1, M=0 per design doc §4) → 3×3 conv
-    projecting to 8 output channels = 4 directions × 2 splits.
-
-    Output stays in NCHW `[B, 8, H, W]`. The caller (loss code at training
-    time, inference code at eval time) does the layout transform
-    `permute(0,2,3,1).reshape(B, -1)` to land at the cell-major flat layout
-    that the action target uses (see `bc/actions.py` flat-layout pin and
-    the cross-cutting permute contract in 5.18-3 session note).
-
-    NESW direction order matches `bc.actions.{N,E,S,W}` and the
-    sub-channel pin `sub = dir*2 + split`. Output channel 0 = N split=0,
-    channel 1 = N split=1, channel 2 = E split=0, ... channel 7 = W split=1.
-    """
-
-    def __init__(self, in_ch: int):
-        super().__init__()
-        # Head Pyramid Module at uniform width. With M=0 at middle and
-        # inner levels, the head still has its strided down/up structure
-        # (no ResBlocks in between, just the strided pair at each level).
-        self.head_pm = PyramidModule(
-            in_ch=in_ch,
-            n_outer=1, m_middle=0, m_inner=0,
-            widths=(in_ch, in_ch, in_ch),
-        )
-        self.final_conv = nn.Conv2d(in_ch, 8, kernel_size=3, padding=1)
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """x: [B, C, H, W] → [B, 8, H, W]."""
-        x = self.head_pm(x)
-        x = self.final_conv(x)
-        return x
-
-
-class PassHead(nn.Module):
-    """
-    Scalar pass logit pooled from the trunk embedding.
-
-    Structure: masked global avg pool over the unpadded region of the
-    [B, C, H, W] trunk output → Linear(C, 1) → [B] scalar logit per sample.
-    Loss code applies `binary_cross_entropy_with_logits` against `is_pass`.
-
-    The mask is required because trunk activations at padded positions are
-    non-zero (convs see the zero-padded input and produce output for the
-    padded region). A plain AdaptiveAvgPool2d would average those into the
-    pool and the per-sample dilution would scale with how much of the 32×32
-    grid is real board — a board-size leak into the pass signal.
-    """
-
-    def __init__(self, in_ch: int):
-        super().__init__()
-        self.linear = nn.Linear(in_ch, 1)
-
-    def forward(self, x: torch.Tensor, valid_mask: torch.Tensor) -> torch.Tensor:
-        """x: [B, C, H, W], valid_mask: [B, 1, H, W] bool → [B] pre-sigmoid logit."""
-        m = valid_mask.to(x.dtype)
-        summed = (x * m).sum(dim=(2, 3))                # [B, C]
-        count = m.sum(dim=(2, 3)).clamp(min=1.0)        # [B, 1]
-        pooled = summed / count                         # [B, C]
-        return self.linear(pooled).squeeze(-1)          # [B]
-
-
-class ValueHead(nn.Module):
-    """
-    Categorical placement value head (8-way: 1st through 8th).
-
-    Two architectural variants, selected by `variant`:
-
-      "direct" (v1 spike choice — formerly "option B" in 5.20-2 / 5.20-3):
-
-          x ─→ Conv2d(C → 1, k=3) → ReLU → mask → flatten → Linear(H·W, 8)
-
-        Thin head — the Linear does all spatial integration. 3×3 receptive
-        field per cell before flatten; ~9k params. Anomalously small relative
-        to the policy head's ~1.1M.
-
-      "pyramid" (full DeepNash spec — formerly "option C" in 5.20-2 / 5.20-3):
-
-          x ─→ PyramidModule(N=0/M=0/M=0, uniform width=C)
-            ─→ Conv2d(C → 1, k=3) → ReLU → mask → flatten → Linear(H·W, 8)
-
-        Adds a shape-preserving U-Net-style head before proj_conv: 32→16→8
-        encoder + symmetric decoder with skip connections. Each cell in the
-        pre-flatten map encodes global board context via the 8×8 bottleneck,
-        which is the right shape for a placement-prediction (global) task.
-        ~+0.82M params; brings the value head into the same size class as
-        the policy head.
-
-    Common to both: the mask multiply between ReLU and flatten zeroes
-    padded-cell contributions, so the Linear layer doesn't see per-game-
-    varying junk at padded positions.
-
-    Optional head-side dropout (anti-memorization, train-time only — see
-    `ModelConfig` field docs): channel dropout on the post-`pre` features,
-    elementwise dropout on the flattened vector before the Linear. Both
-    default off (p=0 ≡ identity), so the modules are unconditional.
-    """
-
-    def __init__(
-        self,
-        in_ch: int,
-        H: int,
-        W: int,
-        n_classes: int = 8,
-        variant: str = "direct",
-        dropout2d_p: float = 0.0,
-        dropout_p: float = 0.0,
-    ):
-        super().__init__()
-        if variant not in VALUE_HEAD_VARIANTS:
-            raise ValueError(
-                f"variant must be one of {VALUE_HEAD_VARIANTS}; got {variant!r}"
-            )
-        self.variant = variant
-        if variant == "pyramid":
-            self.pre = PyramidModule(
-                in_ch=in_ch, n_outer=0, m_middle=0, m_inner=0,
-                widths=(in_ch, in_ch, in_ch),
-            )
-        else:
-            self.pre = nn.Identity()
-        self.dropout2d = nn.Dropout2d(dropout2d_p)
-        self.proj_conv = nn.Conv2d(in_ch, 1, kernel_size=3, padding=1)
-        self.dropout = nn.Dropout(dropout_p)
-        self.linear = nn.Linear(H * W, n_classes)
-
-    def forward(self, x: torch.Tensor, valid_mask: torch.Tensor) -> torch.Tensor:
-        """x: [B, C, H, W], valid_mask: [B, 1, H, W] bool → [B, n_classes]."""
-        x = self.pre(x)                     # [B, C, H, W] (PM or Identity)
-        x = self.dropout2d(x)
-        x = self.proj_conv(x)               # [B, 1, H, W]
-        x = F.relu(x)
-        x = x * valid_mask.to(x.dtype)      # zero padded contributions
-        x = x.flatten(1)                    # [B, H·W]
-        x = self.dropout(x)
-        x = self.linear(x)                  # [B, n_classes]
-        return x
-
-
-# ---------------------------------------------------------------------------
-# Top-level model
-# ---------------------------------------------------------------------------
-
-
-class BCModel(nn.Module):
-    """
-    Top-level behavioral-cloning model.
-
-    Composes trunk + three heads. `forward` returns a dict so the loss
-    code can address each head's output independently and the overfit
-    harness can log per-component losses.
-    """
-
-    def __init__(self, cfg: ModelConfig = MODEL_CONFIG_DEFAULTS):
-        super().__init__()
-        # Plain attribute (not a submodule/buffer/param), so it adds no
-        # state_dict keys — the checkpoint's `arch` key is written from it.
-        self.cfg = cfg
-        self.trunk = PyramidModule(
-            in_ch=cfg.in_ch,
-            n_outer=cfg.n_outer,
-            m_middle=cfg.m_middle,
-            m_inner=cfg.m_inner,
-            widths=(cfg.outer_width, cfg.middle_width, cfg.inner_width),
-        )
-        self.policy_head = PolicyHead(in_ch=cfg.outer_width)
-        self.pass_head = PassHead(in_ch=cfg.outer_width)
-        self.value_head = ValueHead(
-            in_ch=cfg.outer_width, H=cfg.H, W=cfg.W, variant=cfg.value_head_variant,
-            dropout2d_p=cfg.value_head_dropout2d, dropout_p=cfg.value_head_dropout,
-        )
-
-    def forward(
-        self, obs: torch.Tensor, valid_mask: torch.Tensor
-    ) -> dict[str, torch.Tensor]:
-        """
-        obs:        `[B, in_ch, H, W]`
-        valid_mask: `[B, 1, H, W]` bool — True over the unpadded board region.
-
-        Returns:
-          - `policy_logits`: `[B, 8, H, W]`  (NCHW; loss code does the
-            permute to cell-major flat layout and applies the per-cell
-            legality mask)
-          - `pass_logit`: `[B]`              (pre-sigmoid; masked pool)
-          - `value_logits`: `[B, 8]`          (padded cells masked before flatten)
-        """
-        trunk_out = self.trunk(obs)
-        return {
-            "policy_logits": self.policy_head(trunk_out),
-            "pass_logit": self.pass_head(trunk_out, valid_mask),
-            "value_logits": self.value_head(trunk_out, valid_mask),
-        }

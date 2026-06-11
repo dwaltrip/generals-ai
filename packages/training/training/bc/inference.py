@@ -37,8 +37,7 @@ from training.bc import mask as bc_mask
 from training.bc import obs as bc_obs
 from training.bc.checkpoint import is_arch_bearing, load_bc_model
 from training.bc.constants import H_PADDED, W_PADDED
-from training.bc.loss import flatten_policy_logits
-from training.bc.model import BCModel
+from training.bc.model import BCModel, flatten_policy_logits
 from training.bc.obs import pad_initial_generals
 from training.bc.obs_config import ObsConfig
 

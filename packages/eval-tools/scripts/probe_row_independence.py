@@ -30,7 +30,7 @@ from game_runner.sim_adapter import state_to_view
 from settings import RUNS_CLOUD_DIR
 import sim_core
 from training.bc.inference import BCModelHandle, BCPerspective
-from training.bc.loss import flatten_policy_logits
+from training.bc.model import flatten_policy_logits
 
 
 _CKPT = RUNS_CLOUD_DIR / "2026-05-28T08-21-33Z" / "checkpoints" / "epoch_005.pt"

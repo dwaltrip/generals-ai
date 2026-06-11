@@ -49,8 +49,7 @@ from training.analysis.marginal_entropy import N_CLASSES, entropy_nats
 from training.analysis.run_metrics import resolve_manifest
 from training.bc.checkpoint import load_bc_model
 from training.bc.dataset import IterableDataset, assert_safe_loader
-from training.bc.loss import flatten_policy_logits
-from training.bc.model import BCModel
+from training.bc.model import BCModel, flatten_policy_logits
 from training.bc.splits import load_manifest, samples_for_split
 from training.shared.device import (
     dataloader_kwargs,
