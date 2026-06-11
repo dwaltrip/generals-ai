@@ -27,6 +27,7 @@ Files produced:
 from __future__ import annotations
 
 from collections.abc import Callable
+import math
 from pathlib import Path
 import time
 
@@ -451,12 +452,15 @@ def print_epoch_summary(epoch: int, summary: dict, val_summary: dict | None) -> 
             f"pass {val_summary['pass']:.4f}  |  "
             f"total {val_summary['total']:.4f}"
         )
+        ent = val_summary["policy_entropy"]
+        ent_str = f"H {ent:.3f} (e^H {math.exp(ent):.1f})" if ent is not None else "H n/a"
         print(
             f"[epoch {epoch}] val | "
             f"top1 {_fmt_metric(val_summary['top1'])}  "
             f"top3 {_fmt_metric(val_summary['top3'])}  "
             f"pass_acc {_fmt_metric(val_summary['pass_acc'])}  "
-            f"pass_frac {_fmt_metric(val_summary['pass_frac'])}"
+            f"pass_frac {_fmt_metric(val_summary['pass_frac'])}  "
+            f"{ent_str}"
         )
     else:
         print(f"[epoch {epoch}] val skipped (--skip-val)")

@@ -220,7 +220,7 @@ def _val_pass(
             # Policy head, on the flat masked layout (same as bc_loss).
             # NOTE: no bool-mask gathers on the device tensors here — that op
             # returns garbage indices on MPS (see TODO(mps-val-crash) in
-            # bc/eval.py). Equality/topk/gather are fine; pass-frame columns
+            # bc/eval/run.py). Equality/topk/gather are fine; pass-frame columns
             # are NaN'd out host-side instead.
             masked = flatten_policy_logits(out["policy_logits"].float(), moved["mask"])
             pol_logp = F.log_softmax(masked, dim=1)

@@ -26,11 +26,11 @@ from training.analysis.run_metrics import floor_for_run
 
 
 # Per-epoch columns: the defaults plus the optional quality columns
-# (gap, pass_*) — everything in the registry except perf (sps).
+# (gap, entropy, pass_*) — everything in the registry except perf (sps).
 _EPOCH_COLS = [
     "t_pol", "t_val", "t_pass", "t_tot",
     "v_pol", "v_val", "v_pass", "v_tot",
-    "gap", "top1", "top3", "pass_frac", "pass_acc",
+    "gap", "top1", "top3", "v_H", "v_eH", "pass_frac", "pass_acc",
 ]
 
 

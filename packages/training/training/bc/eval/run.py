@@ -20,6 +20,12 @@ want on the loss curve:
       against the pass head's predicted rate (sigmoid(`pass_logit`)) and
       a sanity check on whether the pass head is collapsing.
 
+    - **`policy_entropy`**: mean Shannon entropy (nats) of the masked policy
+      softmax over non-pass frames — the same domain as policy CE / top-k.
+      Falling across epochs is the policy sharpening; collapse toward 0
+      while top-1 stalls is the mode-collapse alarm. The report layer
+      renders e^H next to it ("effective number of actions").
+
     - **`action_dist` / `action_target_dist`**: 8-bucket histograms over
       `(direction, split)` sub-actions — directional bias / mode collapse
       alarm. `action_target_dist` is constant across epochs (it's a
@@ -44,6 +50,7 @@ import torch
 from torch.utils.data import DataLoader
 
 from training.bc.dataset import IterableDataset, assert_safe_loader
+from training.bc.eval.metrics import PolicyEntropyMeter
 from training.bc.loss import (
     DEFAULT_LOSS_CFG,
     LossAccumulator,
@@ -114,6 +121,7 @@ def run_val(
 
     val_start = time.perf_counter()
     acc = LossAccumulator(loss_cfg)
+    ent_meter = PolicyEntropyMeter()
     n_top1_correct = 0
     n_top3_correct = 0
     n_pass_correct = 0
@@ -158,6 +166,8 @@ def run_val(
             top3 = (action_target.unsqueeze(1) == topk).any(dim=1) & non_pass
             n_top1_correct += int(top1.sum())
             n_top3_correct += int(top3.sum())
+
+            ent_meter.update(masked_logits, non_pass)
 
             # Pass head threshold: logit > 0 ≡ sigmoid > 0.5.
             pass_pred = pass_logit > 0
@@ -217,6 +227,7 @@ def run_val(
         "n_samples": n_samples,
         "top1": top1_acc,
         "top3": top3_acc,
+        "policy_entropy": ent_meter.mean(),
         "pass_acc": pass_acc,
         "pass_frac": pass_frac,
         "duration_sec": round(duration_sec, 3),

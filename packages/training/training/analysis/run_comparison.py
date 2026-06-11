@@ -15,6 +15,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 import json
+import math
 from pathlib import Path
 from typing import NamedTuple
 
@@ -75,6 +76,8 @@ _COL_REGISTRY: list[ColSpec] = [
     ColSpec("gap", "loss", optional=True),
     ColSpec("top1", "pct"),
     ColSpec("top3", "pct"),
+    ColSpec("v_H", "loss", optional=True),
+    ColSpec("v_eH", "eff", optional=True),
     ColSpec("sps", "rate", optional=True),
     ColSpec("pass_frac", "pct", optional=True),
     ColSpec("pass_acc", "pct", optional=True),
@@ -113,11 +116,12 @@ _COL_REFERENCE = """\
 Available columns:
   train:  t_pol  t_val  t_pass  t_tot
   val:    v_pol  v_val  v_pass  v_tot  top1  top3
-  optional (hidden by default):  gap  t_vsoft  v_vsoft  sps  pass_frac  pass_acc
+  optional (hidden by default):  gap  t_vsoft  v_vsoft  v_H  v_eH  sps  pass_frac  pass_acc
 
 Groups (expand to all in category):  train  val  top
 
-Naming: t_* is short for train_*, v_* for val_*; gap is v_val − t_val"""
+Naming: t_* is short for train_*, v_* for val_*; gap is v_val − t_val;
+v_H is mean val policy entropy (nats, non-pass frames), v_eH = e^(v_H)"""
 
 
 def _val(e: dict) -> dict:
@@ -129,6 +133,13 @@ def _value_gap(e: dict) -> float | None:
     value-head memorization signature (train falls while val doesn't follow)."""
     t, v = e.get("value"), _val(e).get("value")
     return v - t if t is not None and v is not None else None
+
+
+def _policy_perplexity(e: dict) -> float | None:
+    """e^(mean policy entropy) — the "effective number of actions" the
+    policy is choosing among. Derived from the same jsonl field as `v_H`."""
+    h = _val(e).get("policy_entropy")
+    return math.exp(h) if h is not None else None
 
 
 _EXTRACTORS: dict[str, Extract] = {
@@ -145,6 +156,8 @@ _EXTRACTORS: dict[str, Extract] = {
     "gap":        _value_gap,
     "top1":       lambda e: _val(e).get("top1"),
     "top3":       lambda e: _val(e).get("top3"),
+    "v_H":        lambda e: _val(e).get("policy_entropy"),
+    "v_eH":       _policy_perplexity,
     "sps":        lambda e: e.get("samples_per_sec"),
     "pass_frac":  lambda e: _val(e).get("pass_frac"),
     "pass_acc":   lambda e: _val(e).get("pass_acc"),
@@ -156,6 +169,8 @@ def build_cols(dp: int | None, short_names: bool = False) -> list[ColDef]:
         "loss": lambda v: format_loss(v, dp=dp),
         "pct": format_pct,
         "rate": format_rate,
+        # Effective counts (e.g. v_eH, ~1–50): one decimal place.
+        "eff": lambda v: f"{v:.1f}",
     }
 
     registry_names = {col.name for col in _COL_REGISTRY}
