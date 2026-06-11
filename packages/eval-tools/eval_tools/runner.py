@@ -1,6 +1,7 @@
 """Orchestrates an eval run described by an `EvalRunSpec`: resolves maps and
-policies, plays the games through the batched runner, and writes the run dir
-(config.json, results.jsonl, per-game replay/meta/metrics artifacts).
+policies, plays the games through the batched runner, writes the run dir
+(config.json, results.jsonl, per-game replay/meta/metrics artifacts), and
+runs the post-hoc analysis over it.
 
 Entry point is `run_eval`; it raises `EvalConfigError` on an unrunnable spec.
 """
@@ -14,11 +15,13 @@ import json
 from pathlib import Path
 import random
 import time
+import traceback
 
 import torch
 
 from eval_tools.metrics_collector import MetricsCollector
 from eval_tools.policy_spec import build_policy_names, parse_policy_spec
+from eval_tools.run_analysis.pipeline import analyze_run
 from eval_tools.run_spec import EvalConfigError, EvalRunSpec
 from game_runner.batched import FinishedGame, PendingGame, run_batched
 from game_runner.policy import GameResult
@@ -380,7 +383,8 @@ def run_games(
     print(f"replays: {games_dir}")
 
 
-def run_eval(spec: EvalRunSpec) -> None:
+def run_eval(spec: EvalRunSpec) -> Path:
+    """Run the eval described by `spec`; returns the run dir it created."""
     device = resolve_device(spec.device)
     policy_specs = spec.policy_specs
     num_players = len(policy_specs)
@@ -437,3 +441,16 @@ def run_eval(spec: EvalRunSpec) -> None:
             out_dir=out_dir,
             games_dir=games_dir,
         )
+
+        # The games are on disk at this point, so an analysis crash shouldn't
+        # read as a failed run — report it and leave the post-hoc CLI as the
+        # fallback.
+        print()
+        try:
+            analyze_run(out_dir)
+        except Exception:
+            traceback.print_exc()
+            print(f"analysis failed — run "
+                  f"./packages/eval-tools/scripts/analyze_eval.py {out_dir} manually")
+
+    return out_dir

@@ -7,6 +7,8 @@ Two-stage pipeline with flat row tables as the seam:
     stats    — numpy-only aggregation helpers (bootstrap SE, sign test, percentiles)
     aggregate — rows → report-ready tables
     report   — tables → analysis/report.md, distributions.md, metrics.json, PNGs
+    pipeline — drives the stages end to end (`analyze_run`), shared by the
+               analyze_eval.py CLI and the eval runner
 
 Everything downstream of extract reads only the row tables, never the npz.
 """
