@@ -137,16 +137,34 @@ def _write_synthetic_run(run_dir: Path) -> None:
         own[:, 3:6] = 1 - winner
         own[31:, :] = winner  # loser eliminated at tick 30
         arm = np.ones_like(own, dtype=np.int16)
+        empty_i32 = np.array([], dtype=np.int32)
         np.savez(
             games_dir / f"game_{idx:03d}.npz",
             map_width=3, map_height=2,
+            mountains=empty_i32,
+            initial_cities=empty_i32,
+            initial_city_armies=empty_i32,
+            initial_neutrals=empty_i32,
+            initial_neutral_armies=empty_i32,
+            initial_generals=np.array([0, 3], dtype=np.int32),
             ownership=own, armies=arm,
-            cities=np.array([], dtype=np.int32),
-            cities_present_at=np.array([], dtype=np.int32),
+            cities=empty_i32,
+            cities_present_at=empty_i32,
             death_events=np.array([[30, 1 - winner]], dtype=np.int32),
             capture_events=np.array([[30, winner, 1 - winner]], dtype=np.int32),
-            initial_generals=np.array([0, 3], dtype=np.int32),
+            neutralize_events=np.zeros((0, 2), dtype=np.int32),
+            actions_source=empty_i32,
+            actions_dest=empty_i32,
+            actions_is50=np.array([], dtype=np.int8),
         )
+        metrics = {
+            "move_analysis": [
+                {"total_moves": 10, "total_passes": 5, "ones_traversed": 2,
+                 "attack_move_count": 1, "attack_chain_count": 1}
+            ] * 2,
+            "policy_diagnostics": [],
+        }
+        (games_dir / f"game_{idx:03d}.metrics.json").write_text(json.dumps(metrics))
         lines.append(json.dumps({
             "game_index": idx,
             "replay_id": "map_x",
@@ -154,13 +172,6 @@ def _write_synthetic_run(run_dir: Path) -> None:
             "winner": winner,
             "game_length": T,
             "player_stats": [{"land": 3, "army": 3, "n_moved": 10, "n_passed": 5}] * 2,
-            "metrics": {
-                "move_analysis": [
-                    {"total_moves": 10, "total_passes": 5, "ones_traversed": 2,
-                     "attack_move_count": 1, "attack_chain_count": 1}
-                ] * 2,
-                "policy_diagnostics": [],
-            },
         }))
     (run_dir / "results.jsonl").write_text("\n".join(lines) + "\n")
 

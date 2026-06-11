@@ -26,7 +26,7 @@ Usage (from repo root):
 Output structure:
     data/eval-runs/<timestamp>/
         config.json              # full run config (reproducible)
-        results.jsonl            # one row per game (result + metrics)
+        results.jsonl            # one row per game (result + per-seat stats)
         games/
             game_001.npz         # compressed replay data
             game_001.meta.json   # policy configs, map ID, settings
@@ -55,6 +55,7 @@ from game_runner.save import write_eval_game
 from game_runner.seed_map import list_replay_ids_by_player_count, load_static_from_db
 from game_types import StaticMap
 from training.bc.inference import default_device
+from utils.json_io import write_json
 from utils.log import tee_stdio
 
 
@@ -136,9 +137,10 @@ def _build_results_row(
     game_idx: int,
     replay_id: str,
     result: GameResult,
-    metrics: dict,
     slot_map: list[int],
 ) -> dict:
+    """Run-level index row. Metrics live in games/<id>.metrics.json, not here,
+    so a scan over outcomes doesn't pay for every game's diagnostics."""
     return {
         "game_index": game_idx,
         "replay_id": replay_id,
@@ -154,7 +156,6 @@ def _build_results_row(
             }
             for ps in result.player_stats
         ],
-        "metrics": metrics,
     }
 
 
@@ -327,10 +328,10 @@ def _record_finished(ctx: _RunCtx, fin: FinishedGame) -> _GameOutcome:
         fin.game_id, g.replay_id, ctx.policy_specs, ctx.max_turns, g.slot_map,
     )
     (ctx.games_dir / f"{label}.meta.json").write_text(json.dumps(meta, indent=2))
-    (ctx.games_dir / f"{label}.metrics.json").write_text(json.dumps(metrics, indent=2))
+    write_json(ctx.games_dir / f"{label}.metrics.json", metrics)
 
     row = _build_results_row(
-        fin.game_id, g.replay_id, result, slot_map=g.slot_map, metrics=metrics,
+        fin.game_id, g.replay_id, result, slot_map=g.slot_map,
     )
     with open(ctx.results_path, "a") as f:
         f.write(json.dumps(row) + "\n")

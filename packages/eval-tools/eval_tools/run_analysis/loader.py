@@ -3,12 +3,13 @@
 An eval run dir (produced by scripts/run_adhoc.py) contains:
 
     config.json     — run-level settings, incl. the seat→policy-spec list
-    results.jsonl   — one line per game: outcome, per-seat stats, collected metrics
-    games/game_NNN.npz       — full state evolution (see game_runner.save)
+    results.jsonl   — one line per game: outcome + per-seat stats (a light index)
+    games/game_NNN.npz           — full state evolution (see game_runner.save)
+    games/game_NNN.metrics.json  — move_analysis / curves / policy_diagnostics
 
-GameRecord joins results.jsonl with the game's npz arrays. iter_games yields
-records one at a time so callers can stream large runs without holding every
-npz in memory.
+GameRecord joins each results.jsonl row with the game's npz arrays and its
+metrics sidecar. iter_games yields records one at a time so callers can stream
+large runs without holding every npz in memory.
 
 Snapshot indexing convention (verified against sim_core): ownership/armies
 have game_length+1 rows; a death recorded at tick d means the player still
@@ -21,9 +22,11 @@ from collections.abc import Iterator
 from dataclasses import dataclass
 import json
 from pathlib import Path
-import re
 
 import numpy as np
+
+from eval_tools.policy_spec import checkpoint_label
+from game_runner.load import load_eval_game
 
 
 @dataclass
@@ -75,30 +78,26 @@ def iter_games(run_dir: Path) -> Iterator[GameRecord]:
             rec = json.loads(line)
             idx = rec["game_index"]
             game_id = f"game_{idx:03d}"
-            with np.load(games_dir / f"{game_id}.npz") as z:
-                yield GameRecord(
-                    game_index=idx,
-                    game_id=game_id,
-                    replay_id=rec["replay_id"],
-                    slot_map=rec["slot_map"],
-                    winner_seat=rec["winner"],
-                    game_length=rec["game_length"],
-                    player_stats=rec["player_stats"],
-                    metrics=rec["metrics"],
-                    map_width=int(z["map_width"]),
-                    map_height=int(z["map_height"]),
-                    ownership=z["ownership"],
-                    armies=z["armies"],
-                    cities=z["cities"],
-                    cities_present_at=z["cities_present_at"],
-                    death_events=z["death_events"].reshape(-1, 2),
-                    capture_events=z["capture_events"].reshape(-1, 3),
-                )
-
-
-_CHECKPOINT_RE = re.compile(
-    r"runs-[^/]+/(\d{4})-(\d{2})-(\d{2})[^/]*/checkpoints/epoch_(\d+)"
-)
+            npz = load_eval_game(games_dir / f"{game_id}.npz")
+            metrics = json.loads((games_dir / f"{game_id}.metrics.json").read_text())
+            yield GameRecord(
+                game_index=idx,
+                game_id=game_id,
+                replay_id=rec["replay_id"],
+                slot_map=rec["slot_map"],
+                winner_seat=rec["winner"],
+                game_length=rec["game_length"],
+                player_stats=rec["player_stats"],
+                metrics=metrics,
+                map_width=npz.map_width,
+                map_height=npz.map_height,
+                ownership=npz.ownership,
+                armies=npz.armies,
+                cities=npz.cities,
+                cities_present_at=npz.cities_present_at,
+                death_events=npz.death_events,
+                capture_events=npz.capture_events,
+            )
 
 
 def derive_groups(
@@ -124,8 +123,7 @@ def derive_groups(
         if labels is not None:
             g.label = labels[n]
             continue
-        m = _CHECKPOINT_RE.search(g.spec)
-        g.label = f"{m.group(2)}{m.group(3)}-ep{int(m.group(4))}" if m else f"policy-{n}"
+        g.label = checkpoint_label(g.spec) or f"policy-{n}"
 
     # Disambiguate label collisions (e.g. same run dir, same epoch, different opts)
     seen: dict[str, int] = {}

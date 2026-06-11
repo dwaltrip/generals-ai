@@ -19,8 +19,7 @@ import subprocess
 import sys
 from types import SimpleNamespace
 
-import numpy as np
-
+from game_runner.load import load_eval_game
 from game_runner.viewer import render_viewer_html
 from game_types import StaticMap
 
@@ -61,31 +60,24 @@ def _load_game(npz_path: Path) -> tuple[SimpleNamespace, StaticMap]:
 
     `static` is a real `StaticMap`; `state` is a duck-typed mock pending
     the module TODO."""
-    data = np.load(npz_path)
+    g = load_eval_game(npz_path)
+    num_timesteps = g.num_timesteps
+    num_players = int(g.ownership[0].max()) + 1
 
-    map_width = int(data["map_width"])
-    map_height = int(data["map_height"])
-    ownership = data["ownership"]   # [T+1, H*W] int8
-    armies = data["armies"]         # [T+1, H*W] int16
-    num_timesteps = ownership.shape[0]
-    num_players = int(ownership[0].max()) + 1
-
-    # Reconstruct event objects from packed arrays
+    # Reconstruct viewer event objects from the packed arrays
     capture_events = [
-        SimpleNamespace(timestep=int(row[0]), captor=int(row[1]), captured=int(row[2]))
-        for row in data["capture_events"]
+        SimpleNamespace(timestep=int(t), captor=int(a), captured=int(b))
+        for t, a, b in g.capture_events
     ]
     death_events = [
-        SimpleNamespace(timestep=int(row[0]), player=int(row[1]))
-        for row in data["death_events"]
+        SimpleNamespace(timestep=int(t), player=int(p)) for t, p in g.death_events
     ]
     neutralize_events = [
-        SimpleNamespace(timestep=int(row[0]), player=int(row[1]))
-        for row in data["neutralize_events"]
+        SimpleNamespace(timestep=int(t), player=int(p)) for t, p in g.neutralize_events
     ]
 
     # Determine alive status at game end from final ownership snapshot
-    final_own = ownership[-1]
+    final_own = g.ownership[-1]
     alive = [bool((final_own == p).any()) for p in range(num_players)]
 
     # The last step_tick call is timestep = num_timesteps - 1
@@ -100,20 +92,20 @@ def _load_game(npz_path: Path) -> tuple[SimpleNamespace, StaticMap]:
         alive=alive,
         timestep=timestep,
         snapshots_len=num_timesteps,
-        snapshots_ownership=[ownership[t] for t in range(num_timesteps)],
-        snapshots_armies=[armies[t] for t in range(num_timesteps)],
+        snapshots_ownership=[g.ownership[t] for t in range(num_timesteps)],
+        snapshots_armies=[g.armies[t] for t in range(num_timesteps)],
     )
 
     static = StaticMap(
-        map_width=map_width,
-        map_height=map_height,
+        map_width=g.map_width,
+        map_height=g.map_height,
         usernames=_load_usernames(npz_path, num_players),
-        mountains=data["mountains"].tolist(),
-        initial_cities=data["initial_cities"].tolist(),
-        initial_city_armies=data["initial_city_armies"].tolist(),
-        initial_generals=data["initial_generals"].tolist(),
-        initial_neutrals=data["initial_neutrals"].tolist(),
-        initial_neutral_armies=data["initial_neutral_armies"].tolist(),
+        mountains=g.mountains.tolist(),
+        initial_cities=g.initial_cities.tolist(),
+        initial_city_armies=g.initial_city_armies.tolist(),
+        initial_generals=g.initial_generals.tolist(),
+        initial_neutrals=g.initial_neutrals.tolist(),
+        initial_neutral_armies=g.initial_neutral_armies.tolist(),
     )
 
     return state, static

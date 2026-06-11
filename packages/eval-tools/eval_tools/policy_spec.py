@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import re
 
 import torch
 
@@ -151,12 +152,28 @@ def _parse_bool(value: str, key: str) -> bool:
     raise ValueError(f"invalid boolean value '{value}' for {key}, expected true/false")
 
 
+_CHECKPOINT_RE = re.compile(
+    r"runs-[^/]+/(\d{4})-(\d{2})-(\d{2})[^/]*/checkpoints/epoch_(\d+)"
+)
+
+
+def checkpoint_label(spec: str) -> str | None:
+    """Run-date + epoch label for a checkpoint spec, e.g. '0607-ep4'.
+
+    Returns None when the spec path doesn't match the
+    runs-*/<date>/checkpoints/epoch_N layout (e.g. an ad-hoc checkpoint path)."""
+    m = _CHECKPOINT_RE.search(spec)
+    if not m:
+        return None
+    return f"{m.group(2)}{m.group(3)}-ep{int(m.group(4))}"
+
+
 def describe_policy(spec: str) -> str:
     """Short human-readable label for a policy spec, for log output."""
     parts = spec.split(":", maxsplit=1)
     policy_type = parts[0].lower()
     if policy_type == "checkpoint":
-        return "bc-model"
+        return checkpoint_label(spec) or "bc-model"
     elif policy_type == "evalbot":
         return "evalbot"
     return spec
