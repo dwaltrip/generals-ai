@@ -218,10 +218,11 @@ def _val_pass(
             push("value_ce", value_ce)
 
             # Policy head, on the flat masked layout (same as bc_loss).
-            # NOTE: no bool-mask gathers on the device tensors here — that op
-            # returns garbage indices on MPS (see TODO(mps-val-crash) in
-            # bc/eval/run.py). Equality/topk/gather are fine; pass-frame columns
-            # are NaN'd out host-side instead.
+            # Pass frames carry no action target, so their policy CE is NaN'd
+            # in place — downstream report code uses nan-aware reductions.
+            # (This block once avoided bool-mask gathers as a suspected MPS
+            # bug; the actual culprit was the move_batch non_blocking H2D
+            # race, fixed in shared/device.py.)
             masked = flatten_policy_logits(out["policy_logits"].float(), moved["mask"])
             pol_logp = F.log_softmax(masked, dim=1)
             target = moved["action_target"]

@@ -50,7 +50,7 @@ import torch
 from torch.utils.data import DataLoader
 
 from training.bc.dataset import IterableDataset, assert_safe_loader
-from training.bc.eval.metrics import PolicyEntropyMeter
+from training.bc.eval.metrics import ActionDistMeter, PolicyEntropyMeter
 from training.bc.loss import (
     DEFAULT_LOSS_CFG,
     LossAccumulator,
@@ -60,23 +60,6 @@ from training.bc.loss import (
 )
 from training.bc.obs_config import ObsConfig
 from training.shared.device import dataloader_kwargs, move_batch, obs_for_model
-
-
-# 8-bucket action histogram keys. Index = `flat_action_idx % 8` =
-# `dir * 2 + split` (see `bc/actions.py`). N=0, E=1, S=2, W=3.
-_SUB_NAMES = (
-    "n_move", "n_split",
-    "e_move", "e_split",
-    "s_move", "s_split",
-    "w_move", "w_split",
-)
-
-
-def _dist(counts: torch.Tensor, n: int) -> dict[str, float | None]:
-    """Bucket counts → named-fraction dict, or all-None if `n == 0`."""
-    if n == 0:
-        return {name: None for name in _SUB_NAMES}
-    return {name: float(counts[i].item() / n) for i, name in enumerate(_SUB_NAMES)}
 
 
 def run_val(
@@ -122,12 +105,11 @@ def run_val(
     val_start = time.perf_counter()
     acc = LossAccumulator(loss_cfg)
     ent_meter = PolicyEntropyMeter()
+    dist_meter = ActionDistMeter()
     n_top1_correct = 0
     n_top3_correct = 0
     n_pass_correct = 0
     n_pass_observed = 0
-    pred_counts = torch.zeros(8, dtype=torch.long)
-    target_counts = torch.zeros(8, dtype=torch.long)
 
     model.eval()
     with torch.no_grad():
@@ -174,38 +156,7 @@ def run_val(
             n_pass_correct += int((pass_pred == is_pass).sum())
             n_pass_observed += int(is_pass.sum())
 
-            # 8-bucket histograms restricted to non-pass frames so
-            # `action_target % 8` is well-defined (pass frames have -1).
-            # Move to CPU before bincount — keeps the tiny per-batch
-            # bookkeeping device-agnostic.
-            if non_pass.any():
-                # ===================================================================
-                # TODO(mps-val-crash): BROKEN ON MPS — local val-on runs crash here.
-                #
-                # A bool-mask index into an int column on the MPS backend
-                # (`topk[:, 0][non_pass]`) returns garbage indices, raising:
-                #   AcceleratorError: index <huge-int> out of bounds ... size 64
-                #
-                # Reproduced 2026-05-28 on M1 Max. The earlier "split the index
-                # into two ops" dodge (what the code below already does) no longer
-                # dodges it — the bool-mask gather itself is the failing op. A POC
-                # on 2026-05-21 ran val cleanly, so it regressed sometime after.
-                #
-                # Impact: blocks every local MPS val pass (run_val). Cloud/CUDA is
-                # unaffected, so cloud training + val still works — this only bites
-                # local smoke runs that don't pass --skip-val.
-                #
-                # Likely fix: move to CPU BEFORE the bool-mask gather, e.g.
-                #   npm = non_pass.cpu()
-                #   pred_subs   = (topk[:, 0].cpu()[npm]) % 8
-                #   target_subs = (action_target.cpu()[npm]) % 8
-                # Deferred — out of scope for the train.py refactor series; wants a
-                # focused pass that verifies the fix against an MPS val run.
-                # ===================================================================
-                pred_subs = (topk[:, 0][non_pass] % 8).cpu()
-                target_subs = (action_target[non_pass] % 8).cpu()
-                pred_counts += torch.bincount(pred_subs, minlength=8)
-                target_counts += torch.bincount(target_subs, minlength=8)
+            dist_meter.update(topk[:, 0], action_target, non_pass)
 
     duration_sec = time.perf_counter() - val_start
     s = acc.summary()
@@ -234,6 +185,6 @@ def run_val(
         "samples_per_sec": round(samples_per_sec, 2),
         # action_target_dist is constant across epochs — duplicated per
         # row for grep-ability when comparing to action_dist.
-        "action_dist": _dist(pred_counts, n_non_pass),
-        "action_target_dist": _dist(target_counts, n_non_pass),
+        "action_dist": dist_meter.pred_dist(),
+        "action_target_dist": dist_meter.target_dist(),
     }

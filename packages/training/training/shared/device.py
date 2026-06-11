@@ -38,28 +38,47 @@ def pick_device(arg: str) -> torch.device:
     raise ValueError(f"unknown device arg: {arg!r}")
 
 
+def is_non_blocking_safe_device(device: torch.device) -> bool:
+    """Whether async H2D copies (`non_blocking=True`) are safe on `device`.
+
+    True only on CUDA, where the semantics are well-defined: with a pinned
+    source the copy is queued on the default stream, and stream ordering
+    guarantees the GPU sees the data before any op consumes it.
+
+    On MPS the flag is NOT ignored (despite older torch docs implying
+    non-CUDA devices drop it): the copy really is async, and the CPU source
+    tensor must outlive it. `move_batch` callers rebind their only batch
+    reference (`batch = move_batch(batch, ...)`), freeing the host buffers
+    while the copy may still be in flight — a use-after-free race observed
+    on torch 2.12 / M1 Max as corrupted batch tensors (garbage values,
+    impossible sums) and libmalloc invalid-free aborts. It surfaced in
+    `run_val` but the train loop shares the same hazard; blocking copies
+    on MPS close it for both.
+    """
+    return device.type == "cuda"
+
+
 def move_batch(
     batch: dict[str, torch.Tensor], device: torch.device
 ) -> dict[str, torch.Tensor]:
     """Move every tensor in a flat dict-of-tensors batch onto `device`.
 
-    `non_blocking=True` enables async H2D transfers when the source tensor
-    lives in pinned memory and the target is CUDA — the copy is queued on
-    the default CUDA stream and overlaps with GPU compute on the previous
-    batch. On non-CUDA devices, or with unpinned source tensors, the flag
-    is silently ignored, so it's safe to set unconditionally. See
+    H2D copies are async only where that's safe — see
+    `is_non_blocking_safe_device`. On CUDA with pinned source memory the
+    async copy overlaps with GPU compute on the previous batch; see
     `TrainConfig.pin_memory` for the full picture on why this matters.
 
-    Caveat for future callers: with `non_blocking=True`, the returned
-    tensors are *not* guaranteed to be host-readable immediately. Any
-    code that does `.cpu()`, `.numpy()`, or `.item()` on a moved tensor
-    before a CUDA op consumes it on the same stream will race against
-    the in-flight copy and may read stale memory. The current call sites
-    (train + eval) feed the batch directly into `model(...)` on the
-    default stream, which CUDA orders correctly. Add `torch.cuda.synchronize()`
-    if you need a host-side read.
+    Caveat for CUDA callers: with the async path, the returned tensors are
+    *not* guaranteed to be host-readable immediately. Any code that does
+    `.cpu()`, `.numpy()`, or `.item()` on a moved tensor before a CUDA op
+    consumes it on the same stream will race against the in-flight copy
+    and may read stale memory. The current call sites (train + eval) feed
+    the batch directly into `model(...)` on the default stream, which CUDA
+    orders correctly. Add `torch.cuda.synchronize()` if you need a
+    host-side read.
     """
-    return {k: v.to(device, non_blocking=True) for k, v in batch.items()}
+    non_blocking = is_non_blocking_safe_device(device)
+    return {k: v.to(device, non_blocking=non_blocking) for k, v in batch.items()}
 
 
 def obs_for_model(
