@@ -22,6 +22,7 @@ import math
 from pathlib import Path
 
 from eval_tools.run_analysis import aggregate, extract, loader, report
+from utils.docstring import doc_summary
 
 
 _STRING_COLS = {"game_id", "replay_id", "group", "axis"}
@@ -57,7 +58,8 @@ def read_csv(path: Path) -> list[dict]:
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+
+    ap = argparse.ArgumentParser(description=doc_summary(__doc__))
     ap.add_argument("run_dir", type=Path)
     ap.add_argument("--out", type=Path, default=None, help="default: <run-dir>/analysis")
     ap.add_argument("--labels", type=str, default=None,

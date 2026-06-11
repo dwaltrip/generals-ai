@@ -35,8 +35,12 @@ _spec_seen: dict[tuple[str, str, str], BCModelHandle] = {}
 
 
 def _get_or_load_handle(
-    path: str, device: torch.device, value_head_variant: str,
+    path: str,
+    device: torch.device,
+    value_head_variant: str,
 ) -> BCModelHandle:
+    # TODO: `spec_key` should't be defined as an-hoc line randomly here.
+    # Should be canonically standardized somewhere.
     spec_key = (path, str(device), value_head_variant)
     cached = _spec_seen.get(spec_key)
     if cached is not None:
@@ -47,9 +51,7 @@ def _get_or_load_handle(
     return handle
 
 
-def parse_policy_spec(
-    spec: str, slot: int, device: torch.device,
-) -> Policy:
+def parse_policy_spec(spec: str, slot: int, device: torch.device) -> Policy:
     parts = spec.split(":", maxsplit=1)
     policy_type = parts[0].lower()
     opts_str = parts[1] if len(parts) > 1 else ""
@@ -66,7 +68,9 @@ def parse_policy_spec(
 
 
 def _parse_checkpoint_spec(
-    opts_str: str, slot: int, device: torch.device,
+    opts_str: str,
+    slot: int,
+    device: torch.device,
 ) -> NNAgent:
     # First segment is the path, rest are key=value options
     segments = opts_str.split(":")

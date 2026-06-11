@@ -37,7 +37,6 @@ import argparse
 import json
 from pathlib import Path
 import random
-import sys
 import time
 
 import numpy as np
@@ -51,6 +50,7 @@ from training.analysis.run_metrics import resolve_manifest
 from training.bc.checkpoint import load_bc_model
 from training.bc.dataset import IterableDataset, assert_safe_loader
 from training.bc.loss import flatten_policy_logits
+from training.bc.model import BCModel
 from training.bc.splits import load_manifest, samples_for_split
 from training.shared.device import (
     dataloader_kwargs,
@@ -137,7 +137,7 @@ def run_dump(args: argparse.Namespace) -> None:
         records["persp_val_index"] = chosen_arr[records.pop("sample_idx")]
 
         out = dump_path(run_dir, epoch)
-        np.savez_compressed(out, **records)
+        np.savez_compressed(out, allow_pickle=False, **records)
         meta = {
             "run_dir": str(run_dir),
             "checkpoint": ckpt.name,
@@ -156,7 +156,7 @@ def run_dump(args: argparse.Namespace) -> None:
 
 
 def _val_pass(
-    model: torch.nn.Module,
+    model: BCModel,
     samples: list[tuple[Path, int]],
     device: torch.device,
     args: argparse.Namespace,
