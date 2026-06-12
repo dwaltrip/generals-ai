@@ -55,6 +55,8 @@ class BCModel(nn.Module):
         self.value_head = ValueHead(
             in_ch=cfg.outer_width, H=cfg.H, W=cfg.W, variant=cfg.value_head_variant,
             dropout2d_p=cfg.value_head_dropout2d, dropout_p=cfg.value_head_dropout,
+            dropout2d_site=cfg.value_head_dropout2d_site,
+            skip_dropout2d_p=cfg.value_head_skip_dropout2d,
         )
 
     def forward(

@@ -248,9 +248,18 @@ class PyramidModule(nn.Module):
         m_middle: int,
         m_inner: int,
         widths: tuple[int, int, int],
+        skip_dropout2d_p: float = 0.0,
     ):
         super().__init__()
         outer_w, middle_w, inner_w = widths
+
+        # Channel dropout on skip connections at consumption time (train-time
+        # only; p=0 ≡ identity, so the main trunk / policy-head instances are
+        # unaffected unless they opt in). Skips carry full-resolution features
+        # around the bottleneck — dropping them stochastically forces the
+        # decoder to lean on the compressed global route instead. One shared
+        # module (no params); each consumption site draws its own mask.
+        self.skip_dropout = nn.Dropout2d(skip_dropout2d_p)
 
         # Initial 3×3 conv: projects in_ch into the outer width. This is
         # step 1 of the DeepNash Pyramid Module spec — it lifts the input
@@ -335,14 +344,15 @@ class PyramidModule(nn.Module):
             skips.append(skip)
 
         # Decoder: pop in reverse — last-pushed pairs with first decoder block.
+        # Skips pass through `skip_dropout` at consumption (identity at p=0).
         for block in self.inner_dec:
-            x = block(x, skips.pop())
-        x = self.strided_up_im(x, skips.pop())
+            x = block(x, self.skip_dropout(skips.pop()))
+        x = self.strided_up_im(x, self.skip_dropout(skips.pop()))
         for block in self.middle_dec:
-            x = block(x, skips.pop())
-        x = self.strided_up_mo(x, skips.pop())
+            x = block(x, self.skip_dropout(skips.pop()))
+        x = self.strided_up_mo(x, self.skip_dropout(skips.pop()))
         for block in self.outer_dec:
-            x = block(x, skips.pop())
+            x = block(x, self.skip_dropout(skips.pop()))
 
         # Defensive: every encoder skip should pair with exactly one
         # decoder consumer. If this fires, the encoder/decoder block

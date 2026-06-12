@@ -39,6 +39,9 @@ LEGACY_ARCH = ModelConfig(
     value_head_variant="direct", H=32, W=32,
     # Pre-field behavior: no head dropout existed before these fields did.
     value_head_dropout2d=0.0, value_head_dropout=0.0,
+    # Pre-field behavior: dropout2d (where used) sat after `pre`; skip
+    # connections were never dropped.
+    value_head_dropout2d_site="post_pre", value_head_skip_dropout2d=0.0,
     obs=LEGACY_OBS_CFG,
 )
 

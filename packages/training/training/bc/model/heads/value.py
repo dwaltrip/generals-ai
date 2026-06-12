@@ -12,7 +12,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from training.bc.model.trunk import PyramidModule
-from training.bc.model_config import VALUE_HEAD_VARIANTS
+from training.bc.model_config import VALUE_HEAD_DROPOUT2D_SITES, VALUE_HEAD_VARIANTS
 
 
 class ValueHead(nn.Module):
@@ -46,9 +46,16 @@ class ValueHead(nn.Module):
     varying junk at padded positions.
 
     Optional head-side dropout (anti-memorization, train-time only — see
-    `ModelConfig` field docs): channel dropout on the post-`pre` features,
-    elementwise dropout on the flattened vector before the Linear. Both
-    default off (p=0 ≡ identity), so the modules are unconditional.
+    `ModelConfig` field docs). Three sites, all default off (p=0 ≡ identity),
+    so the modules are unconditional:
+
+      - channel dropout on the [B, C, H, W] features, either after `pre`
+        ("post_pre") or on the trunk features entering it ("pre_pre" — denies
+        the pre-module stable channel conjunctions, not just its readout);
+      - channel dropout on the pyramid pre-module's skip connections
+        (pyramid only — taxes the full-resolution detail route, pushing the
+        head onto the bottleneck's compressed global context);
+      - elementwise dropout on the flattened vector before the Linear.
     """
 
     def __init__(
@@ -60,17 +67,31 @@ class ValueHead(nn.Module):
         variant: str = "direct",
         dropout2d_p: float = 0.0,
         dropout_p: float = 0.0,
+        dropout2d_site: str = "post_pre",
+        skip_dropout2d_p: float = 0.0,
     ):
         super().__init__()
         if variant not in VALUE_HEAD_VARIANTS:
             raise ValueError(
                 f"variant must be one of {VALUE_HEAD_VARIANTS}; got {variant!r}"
             )
+        if dropout2d_site not in VALUE_HEAD_DROPOUT2D_SITES:
+            raise ValueError(
+                f"dropout2d_site must be one of {VALUE_HEAD_DROPOUT2D_SITES}; "
+                f"got {dropout2d_site!r}"
+            )
+        if variant == "direct" and skip_dropout2d_p > 0:
+            raise ValueError(
+                "skip_dropout2d_p requires the pyramid variant — "
+                "the direct head has no pre-module skips to drop"
+            )
         self.variant = variant
+        self.dropout2d_site = dropout2d_site
         if variant == "pyramid":
             self.pre = PyramidModule(
                 in_ch=in_ch, n_outer=0, m_middle=0, m_inner=0,
                 widths=(in_ch, in_ch, in_ch),
+                skip_dropout2d_p=skip_dropout2d_p,
             )
         else:
             self.pre = nn.Identity()
@@ -81,8 +102,11 @@ class ValueHead(nn.Module):
 
     def forward(self, x: torch.Tensor, valid_mask: torch.Tensor) -> torch.Tensor:
         """x: [B, C, H, W], valid_mask: [B, 1, H, W] bool → [B, n_classes]."""
+        if self.dropout2d_site == "pre_pre":
+            x = self.dropout2d(x)
         x = self.pre(x)                     # [B, C, H, W] (PM or Identity)
-        x = self.dropout2d(x)
+        if self.dropout2d_site == "post_pre":
+            x = self.dropout2d(x)
         x = self.proj_conv(x)               # [B, 1, H, W]
         x = F.relu(x)
         x = x * valid_mask.to(x.dtype)      # zero padded contributions

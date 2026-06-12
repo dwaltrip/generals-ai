@@ -34,6 +34,13 @@ from training.bc.obs_config import OBS_CONFIG_DEFAULTS, ObsConfig
 
 VALUE_HEAD_VARIANTS = ("direct", "pyramid")
 
+# Where the value head's channel dropout sits relative to its `pre` module
+# (the pyramid variant's embedded U-Net). "post_pre" noises the pre-module's
+# *output*; "pre_pre" noises the trunk features *entering* it, so the
+# pre-module itself can't co-adapt to exact channel combinations. For the
+# `direct` variant (`pre` = Identity) the two are the same computation.
+VALUE_HEAD_DROPOUT2D_SITES = ("post_pre", "pre_pre")
+
 
 @dataclass(frozen=True)
 class ModelConfig:
@@ -56,14 +63,23 @@ class ModelConfig:
     value_head_variant: str
     # --- swept: value-head regularization (train-time only; eval is a no-op,
     # and nn.Dropout has no params, so state_dicts are identical across
-    # settings). Two insertion points in `ValueHead.forward`:
-    #   dropout2d — channel dropout (whole feature maps) on the [B, C, H, W]
-    #               features after `pre`; elementwise dropout is weak on conv
-    #               maps because spatially-correlated neighbors fill holes in.
+    # settings). Insertion points in `ValueHead.forward` / its pre-module:
+    #   dropout2d — channel dropout (whole feature maps) on [B, C, H, W]
+    #               features; elementwise dropout is weak on conv maps
+    #               because spatially-correlated neighbors fill holes in.
+    #               `dropout2d_site` picks where it sits relative to `pre`
+    #               (see VALUE_HEAD_DROPOUT2D_SITES).
+    #   skip_dropout2d — channel dropout on the pyramid pre-module's skip
+    #               connections (pyramid variant only). The skips carry the
+    #               full-resolution detail route around the 8×8 bottleneck;
+    #               taxing them pushes the head onto compressed global
+    #               context, the route placement signal should live on.
     #   dropout   — elementwise on the flattened [B, H·W] vector, directly in
     #               front of the Linear most able to do per-game lookups.
     value_head_dropout2d: float
     value_head_dropout: float
+    value_head_dropout2d_site: str
+    value_head_skip_dropout2d: float
     # --- obs encoding (determines in_ch) ---
     obs: ObsConfig
     # --- structural constants ---
@@ -119,9 +135,21 @@ class ModelConfig:
                 f"got {self.value_head_variant!r}"
             )
         for name, p in (("value_head_dropout2d", self.value_head_dropout2d),
-                        ("value_head_dropout", self.value_head_dropout)):
+                        ("value_head_dropout", self.value_head_dropout),
+                        ("value_head_skip_dropout2d", self.value_head_skip_dropout2d)):
             if not 0.0 <= p < 1.0:
                 raise ValueError(f"{name} must be in [0, 1); got {p}")
+        if self.value_head_dropout2d_site not in VALUE_HEAD_DROPOUT2D_SITES:
+            raise ValueError(
+                f"value_head_dropout2d_site must be one of "
+                f"{VALUE_HEAD_DROPOUT2D_SITES}; got {self.value_head_dropout2d_site!r}"
+            )
+        # A set-but-inert knob would let a sweep config lie about what ran.
+        if self.value_head_variant == "direct" and self.value_head_skip_dropout2d > 0:
+            raise ValueError(
+                "value_head_skip_dropout2d requires the pyramid variant — "
+                "the direct head has no pre-module skips to drop"
+            )
         if self.H < 1 or self.W < 1:
             raise ValueError("H/W must be positive")
 
@@ -138,6 +166,8 @@ MODEL_CONFIG_DEFAULTS = ModelConfig(
     value_head_variant="direct",
     value_head_dropout2d=0.0,
     value_head_dropout=0.0,
+    value_head_dropout2d_site="post_pre",
+    value_head_skip_dropout2d=0.0,
     obs=OBS_CONFIG_DEFAULTS,
 )
 
