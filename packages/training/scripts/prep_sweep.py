@@ -21,7 +21,7 @@ generated label — typos error out.
 from __future__ import annotations
 
 import argparse
-from datetime import UTC, datetime
+from datetime import datetime
 import itertools
 import json
 from pathlib import Path
@@ -143,7 +143,7 @@ def write_executable(path: Path, content: str) -> None:
 # ---------------------------------------------------------------------------
 
 def cmd_init(args: argparse.Namespace) -> None:
-    date_str = datetime.now(UTC).strftime("%Y-%m-%d")
+    date_str = datetime.now().astimezone().strftime("%Y-%m-%d")
     sweep_dir = SWEEPS_DIR / f"{date_str}-{args.name}"
 
     if sweep_dir.exists():
