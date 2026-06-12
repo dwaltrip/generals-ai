@@ -6,3 +6,7 @@ training/probes
 training/runs
 training/runs-cloud
 training/sweeps
+# Eval: map packs are regenerable (tracked manifest + DB); runs-cloud holds
+# pulled cloud-run artifacts.
+eval/map-sets/*/maps-*.jsonl.gz
+eval/runs-cloud

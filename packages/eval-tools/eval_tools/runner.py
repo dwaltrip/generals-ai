@@ -19,6 +19,7 @@ import traceback
 
 import torch
 
+from eval_tools.map_set import load_bucket
 from eval_tools.metrics_collector import MetricsCollector
 from eval_tools.policy_spec import build_policy_names, parse_policy_spec
 from eval_tools.run_analysis.pipeline import analyze_run
@@ -47,7 +48,14 @@ def resolve_device(name: str) -> torch.device:
 
 def resolve_maps(
     maps_arg: str, map_seed: int | None, num_players: int,
-) -> list[str]:
+    map_sets_root: str | None = None,
+) -> list[tuple[str, StaticMap]]:
+    """Resolve the maps spec to loaded (replay_id, StaticMap) pairs.
+
+    `random:`/`replay_id:` read the collector DB (local-only); `set:` reads a
+    frozen map-set pack (works anywhere, and seeded sampling within it is
+    stable across time because the set's order is frozen).
+    """
     parts = maps_arg.split(":", maxsplit=1)
     mode = parts[0]
 
@@ -56,22 +64,47 @@ def resolve_maps(
         # NOTE: pulls every matching map from the corpus (no cap). For 8p
         # FFA that's ~180k ids; the list lives in memory only during this
         # function call, and seeded rng.choice over the full list gives
-        # unbiased map sampling.
+        # unbiased map sampling (with replacement; the corpus grows, so the
+        # same seed is only stable at a fixed corpus snapshot).
         candidates = list_replay_ids_by_player_count(num_players)
         if not candidates:
             raise RuntimeError(
                 f"no {num_players}-player replay maps found in corpus"
             )
         rng = random.Random(map_seed)
-        return [rng.choice(candidates) for _ in range(count)]
+        ids = [rng.choice(candidates) for _ in range(count)]
+        return [(rid, load_static_from_db(rid)) for rid in ids]
 
     elif mode == "replay_id":
         if len(parts) < 2 or not parts[1]:
             raise ValueError("--maps replay_id:id1,id2,... requires at least one ID")
-        return parts[1].split(",")
+        return [(rid, load_static_from_db(rid)) for rid in parts[1].split(",")]
+
+    elif mode == "set":
+        if len(parts) < 2 or not parts[1]:
+            raise ValueError("--maps set:<name>[:sample=K] requires a set name")
+        name, _, opt = parts[1].partition(":")
+        root_kwargs = {"root": Path(map_sets_root)} if map_sets_root else {}
+        entries = load_bucket(name, num_players, **root_kwargs)
+        if opt:
+            key, _, val = opt.partition("=")
+            if key != "sample" or not val.isdigit():
+                raise ValueError(f"unknown set option '{opt}', expected 'sample=K'")
+            k = int(val)
+            if k > len(entries):
+                raise ValueError(
+                    f"sample={k} exceeds the {len(entries)}-map "
+                    f"{num_players}p bucket of set '{name}'"
+                )
+            # Without replacement: a sample of a frozen set is itself a fixed
+            # map list, reproducible from (set, K, map_seed) forever.
+            entries = random.Random(map_seed).sample(entries, k)
+        return entries
 
     else:
-        raise ValueError(f"unknown --maps mode '{mode}', expected 'random' or 'replay_id'")
+        raise ValueError(
+            f"unknown --maps mode '{mode}', expected 'random', 'replay_id', or 'set'"
+        )
 
 
 def build_run_config(spec: EvalRunSpec) -> dict:
@@ -247,14 +280,14 @@ def _resolve_pool_size(concurrent_games: int, policy_specs: list[str]) -> int:
 
 
 def _pending_games(
-    ctx: _RunCtx, replay_ids: list[str], games_per_map: int, offsets: list[int],
+    ctx: _RunCtx, maps: list[tuple[str, StaticMap]], games_per_map: int,
+    offsets: list[int],
 ) -> Iterator[PendingGame]:
     """Yield one PendingGame per (map, rep, rotation), building fresh policies +
     a MetricsCollector lazily as the runner pulls each into the pool. game_id is
     the enumeration order (stable per spec, independent of completion order)."""
     game_idx = 0
-    for replay_id in replay_ids:
-        map_data = load_static_from_db(replay_id)
+    for replay_id, map_data in maps:
         for _rep in range(games_per_map):
             for offset in offsets:
                 game_idx += 1
@@ -315,13 +348,13 @@ def run_games(
     policy_names: list[str],
     offsets: list[int],
     rotation_note: str | None,
-    replay_ids: list[str],
+    maps: list[tuple[str, StaticMap]],
     out_dir: Path,
     games_dir: Path,
 ) -> None:
     policy_specs = spec.policy_specs
     num_players = len(policy_specs)
-    total_games = len(replay_ids) * spec.games_per_map * len(offsets)
+    total_games = len(maps) * spec.games_per_map * len(offsets)
     pool_size = _resolve_pool_size(spec.concurrent_games, policy_specs)
     nn_per_game = sum(1 for s in policy_specs if not s.lower().startswith("evalbot"))
 
@@ -330,7 +363,7 @@ def run_games(
     for i, name in enumerate(policy_names):
         print(f"  p{i}: {name}")
     rot_desc = "" if len(offsets) == 1 else f" × {len(offsets)} slot-rotations"
-    print(f"maps: {len(replay_ids)} unique, {spec.games_per_map} games each"
+    print(f"maps: {len(maps)} unique, {spec.games_per_map} games each"
           f"{rot_desc} = {total_games} total")
     if rotation_note:
         print(rotation_note)
@@ -356,7 +389,7 @@ def run_games(
     n_done = 0
     t0 = time.perf_counter()
 
-    pending = _pending_games(ctx, replay_ids, spec.games_per_map, offsets)
+    pending = _pending_games(ctx, maps, spec.games_per_map, offsets)
     # Games finish out of order; each results.jsonl row carries game_index.
     for fin in run_batched(pending, pool_size=pool_size, max_turns=spec.max_turns):
         outcome = _record_finished(ctx, fin)
@@ -407,13 +440,12 @@ def run_eval(spec: EvalRunSpec) -> Path:
         raise EvalConfigError(str(e)) from e
 
     try:
-        replay_ids = resolve_maps(spec.maps, spec.map_seed, num_players)
-    except (ValueError, RuntimeError) as e:
+        maps = resolve_maps(spec.maps, spec.map_seed, num_players, spec.map_sets_root)
+    except (ValueError, RuntimeError, FileNotFoundError, LookupError) as e:
         raise EvalConfigError(str(e)) from e
 
     import sim_core
-    map_check = load_static_from_db(replay_ids[0])
-    state_check = sim_core.new_state(map_check)
+    state_check = sim_core.new_state(maps[0][1])
     if state_check.num_players != num_players:
         raise EvalConfigError(
             f"map has {state_check.num_players} player slots but "
@@ -422,7 +454,7 @@ def run_eval(spec: EvalRunSpec) -> Path:
 
     # Set up output directory
     ts = dt.datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
-    out_dir = Path("data/eval-runs") / ts
+    out_dir = Path(spec.out_root) / ts
     games_dir = out_dir / "games"
     games_dir.mkdir(parents=True, exist_ok=True)
 
@@ -437,7 +469,7 @@ def run_eval(spec: EvalRunSpec) -> Path:
             policy_names=policy_names,
             offsets=offsets,
             rotation_note=rotation_note,
-            replay_ids=replay_ids,
+            maps=maps,
             out_dir=out_dir,
             games_dir=games_dir,
         )

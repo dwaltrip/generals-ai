@@ -18,7 +18,6 @@ the parsed static).
 import sqlite3
 
 from game_types import StaticMap
-from replay_parser.decode import decode_wire
 from settings import DB_PATH
 
 
@@ -30,6 +29,13 @@ def load_static_from_db(replay_id: str) -> StaticMap:
     usernames, mountains, initial cities / generals / neutrals), not the
     replay bookkeeping (id, version, stars, modifiers).
     """
+    # Imported lazily so importing this module doesn't pull replay_parser into
+    # the eval graph — cloud eval sources maps from map-set packs and ships an
+    # image without the parser; this DB path is local-only.
+    # TODO(deps): replay-parser/replay-collector are still *declared* deps of
+    # game-runner and self-play; prune the declarations once the dust settles.
+    from replay_parser.decode import decode_wire
+
     with sqlite3.connect(DB_PATH) as conn:
         row = conn.execute(
             "SELECT wire_data FROM replays WHERE id = ?",

@@ -28,3 +28,8 @@ CURATED_LISTS_MANIFEST = PROJECT_ROOT / "curated-player-lists.txt"
 # Training-internal subdirs stay in `training.settings`.
 TRAINING_DATA_DIR = ROOT_DATA_DIR / "training"
 RUNS_CLOUD_DIR = TRAINING_DATA_DIR / "runs-cloud"
+
+# Frozen eval map sets (manifest + packs). Cross-package: eval-tools builds and
+# loads them; training's split-builder excludes their replay ids so eval maps
+# stay disjoint from training data.
+EVAL_MAP_SETS_DIR = ROOT_DATA_DIR / "eval" / "map-sets"
