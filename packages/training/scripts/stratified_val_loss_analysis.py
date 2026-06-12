@@ -1,7 +1,10 @@
 #!/usr/bin/env -S uv run python
 """Stratified val-loss analysis: per-frame head metrics from an offline val pass.
 
-Two subcommands sharing one artifact format:
+Two subcommands sharing one artifact format (record-building + IO live in
+`training.bc.eval.dump`, shared with the in-training per-epoch dumps that
+`TrainConfig.dump_val_frames` produces — `report` reads either producer's
+artifact):
 
   dump    Load checkpoint(s) from a run dir, run one forward-only val pass
           each, and write per-frame records (value probs + CE, policy CE /
@@ -41,7 +44,6 @@ import time
 
 import numpy as np
 import torch
-import torch.nn.functional as F
 from torch.utils.data import DataLoader
 
 from settings import INTERMEDIATE_DIR
@@ -49,7 +51,8 @@ from training.analysis.marginal_entropy import N_CLASSES, entropy_nats
 from training.analysis.run_metrics import resolve_manifest
 from training.bc.checkpoint import load_bc_model
 from training.bc.dataset import IterableDataset, assert_safe_loader
-from training.bc.model import BCModel, flatten_policy_logits
+from training.bc.eval import FrameRecordCapture, dump_path, save_dump
+from training.bc.model import BCModel
 from training.bc.splits import load_manifest, samples_for_split
 from training.shared.device import (
     dataloader_kwargs,
@@ -58,10 +61,6 @@ from training.shared.device import (
     obs_for_model,
     pick_device,
 )
-
-
-def dump_path(run_dir: Path, epoch: int) -> Path:
-    return run_dir / "analysis" / f"stratified_val_epoch_{epoch:03d}.npz"
 
 
 def load_epoch_rows(run_dir: Path) -> list[dict]:
@@ -123,21 +122,18 @@ def run_dump(args: argparse.Namespace) -> None:
         flush=True,
     )
 
-    out_dir = run_dir / "analysis"
-    out_dir.mkdir(exist_ok=True)
-
     for epoch in epochs:
         ckpt = run_dir / "checkpoints" / f"epoch_{epoch:03d}.pt"
         print(f"epoch {epoch}: {ckpt.name}", flush=True)
         model = load_bc_model(ckpt, device, value_head_variant=args.value_head_variant)
-        records = _val_pass(model, samples, device, args)
-        # Map dataset-local sample_idx back to the position in the full val
-        # list, so dumps with different fracs join on a stable id.
-        records["persp_val_index"] = chosen_arr[records.pop("sample_idx")]
+        # `persp_index_map` maps dataset-local sample_idx back to the position
+        # in the full val list, so dumps with different fracs join on a stable id.
+        records = _val_pass(model, samples, device, args).finalize(
+            persp_index_map=chosen_arr
+        )
 
         out = dump_path(run_dir, epoch)
-        np.savez_compressed(out, allow_pickle=False, **records)
-        meta = {
+        save_dump(records, out, {
             "run_dir": str(run_dir),
             "checkpoint": ckpt.name,
             "epoch": epoch,
@@ -145,11 +141,11 @@ def run_dump(args: argparse.Namespace) -> None:
             "seed": args.seed,
             "n_perspectives": len(samples),
             "n_perspectives_total": len(all_samples),
-            "n_frames": int(records["value_ce"].shape[0]),
             "device": device.type,
-        }
-        out.with_suffix(".meta.json").write_text(json.dumps(meta, indent=2) + "\n")
-        print(f"wrote {out} ({meta['n_frames']} frames)")
+            "producer": "offline",
+            "forward_dtype": "fp32",
+        })
+        print(f"wrote {out} ({records['value_ce'].shape[0]} frames)")
 
         _check_against_epoch_row(records, run_dir, epoch, exact=args.sample_frac >= 1.0)
 
@@ -159,8 +155,8 @@ def _val_pass(
     samples: list[tuple[Path, int]],
     device: torch.device,
     args: argparse.Namespace,
-) -> dict[str, np.ndarray]:
-    """One forward-only pass; returns per-frame columns, concatenated."""
+) -> FrameRecordCapture:
+    """One forward-only pass; returns the filled per-frame capture."""
     ds = IterableDataset(
         samples=samples,
         seed=0,
@@ -179,77 +175,31 @@ def _val_pass(
     )
     assert_safe_loader(loader)
 
-    cols: dict[str, list[np.ndarray]] = {}
-
-    def push(name: str, arr: torch.Tensor) -> None:
-        cols.setdefault(name, []).append(arr.cpu().numpy())
-
+    capture = FrameRecordCapture()
     start = time.perf_counter()
-    n_frames = 0
     last_report = start
     model.eval()
     with torch.no_grad():
         for batch in loader:
             now = time.perf_counter()
             if now - last_report >= 30.0:
-                rate = n_frames / (now - start)
+                rate = capture.n_frames / (now - start)
                 print(
-                    f"  ... {n_frames} frames, {rate:.0f} samples/sec",
+                    f"  ... {capture.n_frames} frames, {rate:.0f} samples/sec",
                     flush=True,
                 )
                 last_report = now
-            # Frame-info / target scalars are consumed host-side; grab them
-            # before the device move.
-            for key in ("frame_t", "players_alive", "p_start", "sample_idx"):
-                push(key, batch[key])
-            push("placement", batch["value_target"])
-            push("is_pass", batch["is_pass"])
-
             moved = move_batch(batch, device)
             out = model(obs_for_model(moved, None), moved["valid_mask"])
-
-            # Value head: full predicted distribution + per-frame CE.
-            value_logp = F.log_softmax(out["value_logits"].float(), dim=1)
-            value_ce = -value_logp.gather(
-                1, moved["value_target"].unsqueeze(1)
-            ).squeeze(1)
-            push("value_probs", value_logp.exp())
-            push("value_ce", value_ce)
-
-            # Policy head, on the flat masked layout (same as bc_loss).
-            # Pass frames carry no action target, so their policy CE is NaN'd
-            # in place — downstream report code uses nan-aware reductions.
-            # (This block once avoided bool-mask gathers as a suspected MPS
-            # bug; the actual culprit was the move_batch non_blocking H2D
-            # race, fixed in shared/device.py.)
-            masked = flatten_policy_logits(out["policy_logits"].float(), moved["mask"])
-            pol_logp = F.log_softmax(masked, dim=1)
-            target = moved["action_target"]
-            pol_ce = -pol_logp.gather(1, target.clamp(min=0).unsqueeze(1)).squeeze(1)
-            is_pass_dev = moved["is_pass"]
-            pol_ce = torch.where(
-                is_pass_dev, torch.full_like(pol_ce, float("nan")), pol_ce
-            )
-            push("policy_ce", pol_ce)
-
-            # Entropy over the masked softmax. MASK_NEG keeps illegal logits
-            # finite, so p·log p underflows to 0 there — no NaN guard needed.
-            pol_p = pol_logp.exp()
-            push("policy_entropy", -(pol_p * pol_logp).sum(dim=1))
-            push("n_legal", moved["mask"].reshape(masked.shape[0], -1).sum(dim=1))
-
-            topk = torch.topk(masked, k=3, dim=1).indices
-            non_pass = ~is_pass_dev
-            push("top1", (topk[:, 0] == target) & non_pass)
-            push("top3", (target.unsqueeze(1) == topk).any(dim=1) & non_pass)
-            push("pass_prob", torch.sigmoid(out["pass_logit"].float()))
-
-            n_frames += batch["is_pass"].shape[0]
+            capture.add_batch(batch, moved, out)
 
     dur = time.perf_counter() - start
-    rate = n_frames / dur if dur > 0 else 0.0
-    print(f"  {n_frames} frames in {dur:.1f}s ({rate:.0f} samples/sec)", flush=True)
-    return {name: np.concatenate(parts) for name, parts in cols.items()}
+    rate = capture.n_frames / dur if dur > 0 else 0.0
+    print(
+        f"  {capture.n_frames} frames in {dur:.1f}s ({rate:.0f} samples/sec)",
+        flush=True,
+    )
+    return capture
 
 
 def _check_against_epoch_row(
@@ -335,7 +285,9 @@ def _bucket_row(d: dict[str, np.ndarray], sel: np.ndarray) -> dict[str, float] |
     placement = d["placement"][sel]
     cond_floor = max(0.0, entropy_nats(np.bincount(placement, minlength=N_CLASSES)))
     value_ce = float(d["value_ce"][sel].mean())
-    probs = d["value_probs"][sel]
+    # Dumps store the probs fp16; upcast so the entropy reduction below
+    # accumulates fp32 (numpy keeps the input dtype through sum/mean).
+    probs = d["value_probs"][sel].astype(np.float32)
     pred_entropy = float(-(probs * np.log(probs + 1e-12)).sum(axis=1).mean())
     argmax = probs.argmax(axis=1)
     mode_share = float((argmax == np.bincount(argmax).argmax()).mean())

@@ -118,7 +118,11 @@ class ResumeInfo:
 #   - `arch` is pinned by the restored weights (you can't reshape them).
 #   - `lr`/`weight_decay` are pinned by the restored optimizer state.
 #   - `gpu` is recorded provenance only; the card may change freely on resume.
-_DRIFT_EXCLUDED = frozenset({"epochs", "run_dir", "manifest", "intermediate", "gpu"})
+#   - `dump_val_frames` is a diagnostics knob with no trajectory effect; a
+#     resume overlay may toggle it (e.g. resume a finished run with dumps on).
+_DRIFT_EXCLUDED = frozenset(
+    {"epochs", "run_dir", "manifest", "intermediate", "gpu", "dump_val_frames"}
+)
 _CHECKPOINT_OWNED = frozenset({"lr", "weight_decay", "arch"})
 
 _RESUME_SUFFIX_RE = re.compile(r"_resume_(\d{2})\.")
@@ -177,7 +181,7 @@ def check_drift(config: TrainConfig, parent: dict, force_config_mismatch: bool) 
     restored weights/optimizer state — a change is silently ineffective and
     always aborts. Other non-excluded fields are trajectory-critical: they abort
     unless `--force-config-mismatch`. Excluded fields (epochs target, paths,
-    gpu) are free.
+    gpu, dump_val_frames) are free.
 
     Legacy-parent edge: a pre-`arch` parent config has no `arch` key, so a naive
     compare (`None` vs the default arch dict) would spuriously abort an

@@ -31,8 +31,9 @@ class TrainConfig:
         checkpoint's `arch` key so a checkpoint self-describes its model.
       - recipe (`lr`, `batch_size`, `epochs`, `lambda_value`,
         `value_target_tau`, `seed`, `precision`, `shuffle_buffer_size`,
-        `gpu`, `manifest`, `intermediate`) — from the `--config` file; the
-        run's reproducible identity, not in the checkpoint.
+        `gpu`, `dump_val_frames`, `manifest`, `intermediate`) — from the
+        `--config` file; the run's reproducible identity, not in the
+        checkpoint.
       - operational / invocation-local (`run_dir`, `device`, `num_workers`,
         `pin_memory`, `prefetch_factor`, `log_every`, `skip_val`,
         `max_batches`) — from CLI flags; where/how this invocation runs.
@@ -74,6 +75,13 @@ class TrainConfig:
     # `with_options(gpu=...)`. Inert on local runs. In `_DRIFT_EXCLUDED` —
     # the card may change freely on resume.
     gpu: str = "T4"
+    # Capture per-frame head metrics during each epoch's val pass and write
+    # `<run>/analysis/stratified_val_epoch_NNN.npz` — the same artifact the
+    # offline `stratified_val_loss_analysis.py dump` harness produces, so
+    # per-epoch value-head trajectories don't need manual checkpoint dumps.
+    # Like `gpu`, a config-file field with no effect on the training
+    # trajectory; in `_DRIFT_EXCLUDED`, so a resume overlay may toggle it.
+    dump_val_frames: bool = False
     # --- Mixed-precision knob ---
     # "auto" picks fp16 on CUDA (engages tensor cores), fp32 elsewhere.
     # Explicit "fp32" or "fp16" overrides. fp16 on a non-CUDA device is
@@ -160,6 +168,11 @@ class TrainConfig:
             raise ValueError(f"num_workers must be >= 0; got {self.num_workers}")
         if self.prefetch_factor < 1:
             raise ValueError(f"prefetch_factor must be >= 1; got {self.prefetch_factor}")
+        if self.dump_val_frames and self.skip_val:
+            raise ValueError(
+                "dump_val_frames captures during the val pass; "
+                "it cannot combine with skip_val"
+            )
         # `arch` validates itself in `ModelConfig.__post_init__`.
 
     @classmethod

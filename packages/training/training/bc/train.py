@@ -37,7 +37,7 @@ from torch.utils.data import DataLoader
 from training.bc.checkpoint import ckpt_name
 from training.bc.constants import H_PADDED, W_PADDED
 from training.bc.dataset import IterableDataset, assert_safe_loader, timed_collate
-from training.bc.eval import run_val
+from training.bc.eval import FrameRecordCapture, dump_path, run_val, save_dump
 from training.bc.loss import LossAccumulator, LossConfig, bc_loss
 from training.bc.model import BCModel
 from training.bc.resume_warmup import WarmupSchedule
@@ -466,6 +466,51 @@ def print_epoch_summary(epoch: int, summary: dict, val_summary: dict | None) -> 
         print(f"[epoch {epoch}] val skipped (--skip-val)")
 
 
+def write_val_dump(
+    capture: FrameRecordCapture,
+    config: TrainConfig,
+    epoch: int,
+    n_val_perspectives: int,
+    device: torch.device,
+    amp_dtype: torch.dtype | None,
+    val_summary: dict,
+) -> None:
+    """Persist one epoch's stratified val dump and print the cross-check line.
+
+    The dump rides the same forward pass as `val_summary`, so the two mean
+    value CEs should agree to float-accumulation noise — the printed diff is
+    the in-training analog of the offline harness's check against
+    `epochs.jsonl`. A large diff means the capture and the loss path have
+    diverged.
+    """
+    records = capture.finalize()
+    path = dump_path(config.run_dir, epoch)
+    save_dump(records, path, {
+        "run_dir": str(config.run_dir),
+        "checkpoint": ckpt_name(epoch),
+        "epoch": epoch,
+        # In-training dumps always walk the full val split; `sample_frac` /
+        # `n_perspectives*` keep the offline dump's meta shape so the report
+        # consumer reads either.
+        "sample_frac": 1.0,
+        "seed": config.seed,
+        "n_perspectives": n_val_perspectives,
+        "n_perspectives_total": n_val_perspectives,
+        "device": device.type,
+        "producer": "train",
+        # Under AMP the records derive from an fp16 forward (offline dumps
+        # are fp32-forward) — the comparability caveat lives here.
+        "forward_dtype": "fp16" if amp_dtype is not None else "fp32",
+    })
+    dump_value = float(records["value_ce"].mean())
+    diff = dump_value - val_summary["value"]
+    print(
+        f"[epoch {epoch}] val dump: {capture.n_frames:,} frames -> "
+        f"analysis/{path.name} | mean value CE {dump_value:.6g} "
+        f"vs val {val_summary['value']:.6g} (diff {diff:+.2e})"
+    )
+
+
 def train_loop(
     state: TrainingState,
     config: TrainConfig,
@@ -524,6 +569,7 @@ def train_loop(
             if config.skip_val:
                 val_summary = None
             else:
+                capture = FrameRecordCapture() if config.dump_val_frames else None
                 val_summary = run_val(
                     model=state.model,
                     val_samples=val_samples,
@@ -536,7 +582,13 @@ def train_loop(
                     seed=config.seed,
                     amp_dtype=amp_dtype,
                     loss_cfg=loss_cfg,
+                    capture=capture,
                 )
+                if capture is not None:
+                    write_val_dump(
+                        capture, config, epoch, len(val_samples),
+                        device, amp_dtype, val_summary,
+                    )
 
             # Augment the epoch summary with MFU (None when peak is unknown) and the
             # FLOPs constant used to compute it, so the jsonl row is self-describing.

@@ -50,6 +50,7 @@ import torch
 from torch.utils.data import DataLoader
 
 from training.bc.dataset import IterableDataset, assert_safe_loader
+from training.bc.eval.dump import FrameRecordCapture
 from training.bc.eval.metrics import ActionDistMeter, PolicyEntropyMeter
 from training.bc.loss import (
     DEFAULT_LOSS_CFG,
@@ -74,12 +75,19 @@ def run_val(
     seed: int = 0,
     amp_dtype: torch.dtype | None = None,
     loss_cfg: LossConfig = DEFAULT_LOSS_CFG,
+    capture: FrameRecordCapture | None = None,
 ) -> dict:
     """Run one full validation pass and return the summary metrics.
 
     Returns a flat dict suitable for nesting under `val:` in the per-epoch
     JSONL row. Top-1/top-3, pass_acc, pass_frac, and the action histograms
     are `None`-guarded against empty denominators (see module docstring).
+
+    `capture`, when given, records the per-frame stratified columns
+    (`eval.dump`) alongside the summary reductions — same forward, no extra
+    pass. The caller owns writing the capture out. With it, the dataset
+    carries the frame-provenance scalars (`include_frame_info`); when `None`
+    (the default), the pass is unchanged.
 
     DataLoader knobs (`num_workers` / `pin_memory` / `prefetch_factor`)
     are caller-supplied — `run_val` mirrors the train loop's choices for
@@ -89,7 +97,12 @@ def run_val(
     # Val shuffle is intentionally deterministic across epochs (we never
     # call `set_epoch`), so the per-epoch val loss numbers are apples-to-
     # apples — variation across epochs reflects model change, not reorder.
-    val_ds = IterableDataset(samples=val_samples, seed=seed, obs_cfg=obs_cfg)
+    val_ds = IterableDataset(
+        samples=val_samples,
+        seed=seed,
+        obs_cfg=obs_cfg,
+        include_frame_info=capture is not None,
+    )
     val_loader = DataLoader(
         val_ds,
         batch_size=batch_size,
@@ -114,6 +127,7 @@ def run_val(
     model.eval()
     with torch.no_grad():
         for batch in val_loader:
+            host_batch = batch
             batch = move_batch(batch, device)
             # Same autocast logic as the train loop, minus the GradScaler
             # (no backward in val). `amp_dtype is None` → autocast is a
@@ -127,6 +141,12 @@ def run_val(
                 losses = bc_loss(out, batch, loss_cfg)
             B = batch["obs"].shape[0]
             acc.update(losses, batch_size=B)
+
+            # Outside the autocast block, so the capture's `.float()` math
+            # runs fp32 (the logits themselves are fp16-derived under AMP —
+            # recorded as `forward_dtype` in the dump meta).
+            if capture is not None:
+                capture.add_batch(host_batch, batch, out)
 
             mask = batch["mask"]
             action_target = batch["action_target"]
