@@ -32,5 +32,6 @@ regen() {
 }
 
 regen training packages/training/modal_requirements.txt
+regen eval-tools packages/eval-tools/modal_requirements.txt
 
 echo "(uv export stdout captured in $LOG)"
