@@ -314,6 +314,7 @@ def build_summary_table(
     runs: list[tuple[str, list[dict]]],
     dp: int | None = None,
     floors: list[float | None] | None = None,
+    notes: bool = True,
 ) -> str:
     """One row per run: best-epoch val value loss (+ the value gap there) and
     final-epoch quality metrics. The cross-run counterpart of the per-epoch
@@ -369,8 +370,11 @@ def build_summary_table(
         ]
         rows.append(row)
     aligns = ([] if single else ["left"]) + ["right"] * (len(headers) - (0 if single else 1))
+    table = md_table(headers, rows, align=aligns)
+    if not notes:
+        return table
     note = _SUMMARY_NOTE + ("\n" + _FLOOR_NOTE if floors is not None else "")
-    return md_table(headers, rows, align=aligns) + "\n\n" + note
+    return table + "\n\n" + note
 
 
 # ---------------------------------------------------------------------------

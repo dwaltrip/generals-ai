@@ -5,6 +5,7 @@ Usage examples:
 
     compare_runs.py run1[,label1] run2[,label2] ...
     compare_runs.py --base data/training/runs ts1 ts2
+    compare_runs.py --all --base data/training/sweeps/my-sweep/runs
     compare_runs.py --wide run1[,label1] run2[,label2] ...
     compare_runs.py --cols t_pol,v_pol,top1 run1 run2
     compare_runs.py --cols val,sps run1 run2
@@ -20,6 +21,10 @@ gap at that epoch, final-epoch quality) precedes the per-epoch table;
 `--summary-only` skips the per-epoch table, `--no-summary` the summary. The
 summary includes each run's manifest floor (resolved via the manifest's
 metrics sidecar, backfilled on first use) unless `--no-floors`.
+
+`--all` discovers every dir under `--base` that contains `epochs.jsonl`.
+When a symlink and its target both exist, the symlink is kept (sweep tooling
+gives symlinks meaningful names). Capped at 15 runs; list explicitly for more.
 
 Column reference for --cols / --exclude:
 
@@ -39,6 +44,7 @@ This is a CLI-wrapper around `run_comparison.py`.
 from __future__ import annotations
 
 import argparse
+from datetime import datetime, timezone
 from pathlib import Path
 import sys
 
@@ -53,15 +59,83 @@ from training.analysis.run_comparison import (
 )
 from training.analysis.run_metrics import floor_for_run
 
+_MAX_ALL_RUNS = 15
 
-def main() -> None:
+_TIMESTAMP_FMTS = ("%Y-%m-%dT%H-%M-%SZ", "%Y%m%d-%H%M%S")
+
+
+def _parse_run_timestamp(name: str) -> datetime | None:
+    for fmt in _TIMESTAMP_FMTS:
+        try:
+            return datetime.strptime(name, fmt).replace(tzinfo=timezone.utc)
+        except ValueError:
+            continue
+    return None
+
+
+def _label_runs(pairs: list[tuple[Path, str | None]]) -> list[tuple[Path, str]]:
+    """Fill in labels where not user-provided.
+
+    Timestamp dir names get compact date formatting; other names pass through.
+    Year is included only when auto-labeled entries span multiple years.
+    """
+    parsed = [(p, given, _parse_run_timestamp(p.name)) for p, given in pairs]
+    auto_years = {dt.year for _, given, dt in parsed if given is None and dt is not None}
+    include_year = len(auto_years) > 1
+
+    results: list[tuple[Path, str]] = []
+    for p, given, dt in parsed:
+        if given is not None:
+            label = given
+        elif dt is None:
+            label = p.name
+        elif include_year:
+            label = dt.strftime("%Y-%-m-%d %H:%M:%S")
+        else:
+            label = dt.strftime("%-m-%d %H:%M:%S")
+        results.append((p, label))
+    return results
+
+
+def discover_runs(base: Path) -> list[tuple[Path, str]]:
+    """All epoch-bearing dirs under *base*, symlinks preferred over targets.
+
+    Returns (run_dir, label) pairs sorted by directory name.
+    """
+    by_real: dict[Path, list[tuple[Path, bool]]] = {}
+    for entry in base.iterdir():
+        if not entry.is_dir():
+            continue
+        if not (entry / "epochs.jsonl").is_file():
+            continue
+        real = entry.resolve()
+        by_real.setdefault(real, []).append((entry, entry.is_symlink()))
+
+    chosen: list[Path] = []
+    for entries in by_real.values():
+        symlinks = sorted((p for p, is_sym in entries if is_sym), key=lambda p: p.name)
+        if symlinks:
+            chosen.append(symlinks[0])
+        else:
+            chosen.append(entries[0][0])
+
+    chosen.sort(key=lambda p: p.name)
+    return _label_runs([(p, None) for p in chosen])
+
+
+def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument(
-        "runs", nargs="+", metavar="RUN_DIR[,LABEL]",
+        "runs", nargs="*", metavar="RUN_DIR[,LABEL]",
         help="run directory, optionally with a display label after a comma",
+    )
+    parser.add_argument(
+        "--all", "-a", action="store_true",
+        help="compare all runs under --base that contain epochs.jsonl "
+             f"(max {_MAX_ALL_RUNS}; symlinks preferred over their targets)",
     )
     parser.add_argument(
         "--base", "-b", type=Path, default=None,
@@ -107,6 +181,46 @@ def main() -> None:
         help="skip the summary's per-manifest floor columns (default resolves "
              "each run's manifest and backfills its metrics sidecar if needed)",
     )
+    parser.add_argument(
+        "--verbose", "-v", action="store_true",
+        help="show explanatory footnotes below tables",
+    )
+    return parser
+
+
+def _resolve_run_pairs(
+    args: argparse.Namespace,
+    parser: argparse.ArgumentParser,
+) -> list[tuple[Path, str]]:
+    if args.all and args.runs:
+        parser.error("--all and positional run arguments are mutually exclusive")
+    if args.all and args.base is None:
+        parser.error("--all requires --base")
+    if not args.all and not args.runs:
+        parser.error("provide run arguments, or use --all with --base")
+
+    if args.all:
+        pairs = discover_runs(args.base)
+        if not pairs:
+            parser.error(f"no runs with epochs.jsonl found in {args.base}")
+        if len(pairs) > _MAX_ALL_RUNS:
+            parser.error(
+                f"--all found {len(pairs)} runs in {args.base}, "
+                f"max is {_MAX_ALL_RUNS} — list runs explicitly to compare more"
+            )
+        return pairs
+
+    raw_pairs: list[tuple[Path, str | None]] = []
+    for raw in args.runs:
+        run_dir, label = parse_run_arg(raw, args.base)
+        if not run_dir.is_dir():
+            parser.error(f"not a directory: {run_dir}")
+        raw_pairs.append((run_dir, label))
+    return _label_runs(raw_pairs)
+
+
+def main() -> None:
+    parser = _build_parser()
     args = parser.parse_args()
 
     all_cols = build_cols(args.dp, short_names=args.short_names)
@@ -115,14 +229,10 @@ def main() -> None:
     except ValueError as exc:
         parser.error(str(exc))
 
+    pairs = _resolve_run_pairs(args, parser)
     runs: list[tuple[str, list[dict]]] = []
     run_dirs: list[Path] = []
-    for i, raw in enumerate(args.runs):
-        run_dir, label = parse_run_arg(raw, args.base)
-        if not label:
-            label = f"run-{i+1}"
-        if not run_dir.is_dir():
-            parser.error(f"not a directory: {run_dir}")
+    for run_dir, label in pairs:
         try:
             epochs = load_epochs(run_dir)
         except FileNotFoundError:
@@ -140,7 +250,9 @@ def main() -> None:
         floors = None
         if not args.no_floors:
             floors = [floor_for_run(d, create=True) for d in run_dirs]
-        parts.append(build_summary_table(runs, dp=args.dp, floors=floors))
+        parts.append(build_summary_table(
+            runs, dp=args.dp, floors=floors, notes=args.verbose,
+        ))
     if not args.summary_only:
         # --wide only matters if there are multiple runs to pivot into
         # sub-columns; for a single run, ignore the flag so it collapses to
