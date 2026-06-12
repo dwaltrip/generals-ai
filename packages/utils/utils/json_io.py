@@ -35,7 +35,7 @@ def write_json(
     except FileNotFoundError:
         print(
             f"WARNING: fjson not found on PATH; wrote unformatted JSON to {path}. "
-            f"Install with: cargo install fjson",
+            f"Install with: cargo install fracturedjson",
             file=sys.stderr,
         )
     except subprocess.CalledProcessError as e:

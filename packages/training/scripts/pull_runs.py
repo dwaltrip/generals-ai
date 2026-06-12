@@ -47,8 +47,11 @@ def _ls(run: str) -> list[dict]:
 
 
 def pull(run: str, dest: Path, skip_checkpoints: bool, force: bool) -> None:
+    # `modal volume get` collapses the remote dir onto the dest path itself
+    # when dest doesn't exist; with dest present it creates <dest>/<run>/.
+    dest.mkdir(parents=True, exist_ok=True)
     if not skip_checkpoints:
-        _get(f"/{run}", dest, force)  # modal creates <dest>/<run>/ under dest
+        _get(f"/{run}", dest, force)
         return
 
     # Per-entry so we can drop checkpoints/. The dest run dir must exist first:

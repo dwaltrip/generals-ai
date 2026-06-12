@@ -27,6 +27,7 @@ class EvalRunSpec:
     maps: str = "random:10"      # 'random:N' | 'replay_id:...' | 'set:<name>[:sample=K]'
     map_seed: int = 42
     out_root: str = "data/eval-runs"  # run dirs are created under here
+    run_name: str | None = None       # run-dir name; None = timestamp at run start
     map_sets_root: str | None = None  # 'set:' maps dir; None = local default
     games_per_map: int = 1
     slot_rotations: int = 1      # effective K; --swap-slots sugar resolved before construction

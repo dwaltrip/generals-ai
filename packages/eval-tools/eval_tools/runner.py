@@ -452,9 +452,10 @@ def run_eval(spec: EvalRunSpec) -> Path:
             f"{num_players} policies were specified"
         )
 
-    # Set up output directory
-    ts = dt.datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
-    out_dir = Path(spec.out_root) / ts
+    # Set up output directory. A caller-supplied run_name lets fire-and-forget
+    # entry points (cloud spawn) know the run dir without waiting on the result.
+    name = spec.run_name or dt.datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
+    out_dir = Path(spec.out_root) / name
     games_dir = out_dir / "games"
     games_dir.mkdir(parents=True, exist_ok=True)
 

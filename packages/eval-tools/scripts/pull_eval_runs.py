@@ -50,8 +50,10 @@ def _ls(run: str) -> list[dict]:
 
 
 def pull(run: str, dest: Path, skip_games: bool, force: bool) -> None:
+    # `modal volume get` collapses the remote dir onto the dest path itself
+    # when dest doesn't exist; with dest present it creates <dest>/<run>/.
+    dest.mkdir(parents=True, exist_ok=True)
     if not skip_games:
-        # modal creates <dest>/<run>/ under dest (basename of the remote path)
         _get(f"/{REMOTE_RUNS_PREFIX}/{run}", dest, force)
         return
 

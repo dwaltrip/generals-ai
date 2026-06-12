@@ -9,13 +9,17 @@ Mirrors `run_adhoc.py` in arguments (shared parser in `eval_tools.cli`) and
   - Checkpoint paths under data/training/runs-cloud/ are rewritten to the
     training-runs volume mount — the same artifacts, read at the source.
 
-Unlike training, the remote call is a tethered `.remote()`: eval runs are short
-and the summary streams back to the terminal. The full run dir (config,
+Like training, the remote call is a fire-and-forget `.spawn()` — the run name
+is generated locally and printed up front with the pull command, so nothing
+depends on staying attached. Run with `--detach` so the spawned eval survives
+the local process; without it, Modal stops the ephemeral app when the local
+entrypoint returns and cancels the in-flight run. Follow progress with
+`uv run modal app logs eval-adhoc` or the dashboard. The full run dir (config,
 results.jsonl, per-game artifacts, analysis/) lands on the eval-runs volume;
 pull it down with `pull_eval_runs.py <run-name>`.
 
 Run (from repo root):
-    uv run modal run packages/eval-tools/scripts/run_eval_modal.py \\
+    uv run modal run --detach packages/eval-tools/scripts/run_eval_modal.py \\
         --policy checkpoint:data/training/runs-cloud/<run>/checkpoints/epoch_005.pt \\
         --policy evalbot \\
         --maps set:eval-map-set-v1:sample=20 --gpu T4
@@ -23,6 +27,7 @@ Run (from repo root):
 
 from __future__ import annotations
 
+import datetime as dt
 import os
 from pathlib import Path
 
@@ -44,6 +49,12 @@ image = (
     modal.Image.debian_slim(python_version="3.14")
     .apt_install("curl", "build-essential")
     .run_commands("curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y")
+    # fjson (the fracturedjson crate's binary): utils.json_io.write_json shells
+    # out to it for compact-but-readable formatting; without it every JSON
+    # write warns and falls back to verbose output. --root /usr/local puts the
+    # binary on PATH for the function runtime (~/.cargo/bin is only on PATH in
+    # rustup-aware shells).
+    .run_commands(". $HOME/.cargo/env && cargo install fracturedjson --root /usr/local")
     .add_local_dir(str(SIM_CORE_SRC), "/sim-core", copy=True, ignore=["target"])
     .run_commands(". $HOME/.cargo/env && pip install /sim-core")
     .uv_pip_install(requirements=[str(EVAL_REQS)])
@@ -62,10 +73,10 @@ eval_runs_vol = modal.Volume.from_name("generals-ai.eval-runs")
 @app.function(
     gpu="T4",  # default; overridden via `with_options(gpu=...)` per-call
     volumes={str(RUNS_MOUNT): training_runs_vol, str(EVAL_MOUNT): eval_runs_vol},
-    timeout=60 * 60 * 4,
+    timeout=60 * 60 * 6,
 )
-def eval_remote(spec: EvalRunSpec) -> str:
-    """Run one eval on a Modal GPU; returns the run dir name on the volume."""
+def eval_remote(spec: EvalRunSpec) -> None:
+    """Run one eval on a Modal GPU; the run dir lands on the eval-runs volume."""
     import torch
 
     if torch.cuda.is_available():
@@ -74,8 +85,7 @@ def eval_remote(spec: EvalRunSpec) -> str:
 
     from eval_tools.runner import run_eval
 
-    out_dir = run_eval(spec)
-    return out_dir.name
+    run_eval(spec)
 
 
 def _translate_checkpoint(policy_spec: str) -> str:
@@ -115,19 +125,25 @@ def main(*arglist: str) -> None:
         )
 
     policies = [_translate_checkpoint(p) for p in args.policy]
+    run_name = dt.datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
     try:
         spec = spec_from_args(
             args,
             policy_specs=policies,
             out_root=str(EVAL_MOUNT / "runs"),
+            run_name=run_name,
             map_sets_root=str(EVAL_MOUNT / "map-sets"),
         )
     except EvalConfigError as e:
         raise SystemExit(f"error: {e}") from None
 
-    print(f"gpu: {args.gpu}")
-    run_name = eval_remote.with_options(gpu=args.gpu).remote(spec)
+    print(f"gpu:  {args.gpu}")
+    print(f"run:  {run_name}")
+    print()
+    print("Once the run is done, pull artifacts:")
+    print(f"  ./packages/eval-tools/scripts/pull_eval_runs.py {run_name}")
+
+    eval_remote.with_options(gpu=args.gpu).spawn(spec)
 
     print()
-    print("Run complete. Pull artifacts:")
-    print(f"  ./packages/eval-tools/scripts/pull_eval_runs.py {run_name}")
+    print("Run spawned.")
