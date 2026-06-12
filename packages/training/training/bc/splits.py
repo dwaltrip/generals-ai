@@ -30,6 +30,10 @@ Manifest JSON schema (v1):
     sim files instead of the full corpus. `null` means a full-corpus scan.
     With the same `seed`, smaller scan_limits are prefixes of larger ones
     (subset property holds across runs).
+  - `eval_map_sets` (list[str]): names of the published eval map sets whose
+    replay ids were excluded from this manifest (eval maps stay disjoint
+    from training data).
+  - `eval_map_ids_excluded` (int): corpus games dropped by that exclusion.
   - `train` (list[[str, int]]): list of `[replay_id, perspective_index]`.
   - `val` (list[[str, int]]): same shape.
 
@@ -46,7 +50,12 @@ from pathlib import Path
 import random
 import subprocess
 
-from settings import CURATED_LISTS_MANIFEST, INTERMEDIATE_DIR, PROJECT_ROOT
+from settings import (
+    CURATED_LISTS_MANIFEST,
+    EVAL_MAP_SETS_DIR,
+    INTERMEDIATE_DIR,
+    PROJECT_ROOT,
+)
 from training.bc.filters import DROP_REASONS, FILTER_VERSION, eligible_perspectives
 from training.bc.utils import list_sim_paths, meta_path_for
 from utils.docstring import doc_summary
@@ -67,6 +76,29 @@ def load_curated_names() -> set[str]:
     override — useful for tests that want a small known fixture set.
     """
     return set(load_union(CURATED_LISTS_MANIFEST, PROJECT_ROOT))
+
+
+def load_eval_map_ids(
+    map_sets_dir: Path = EVAL_MAP_SETS_DIR,
+) -> tuple[set[str], list[str]]:
+    """Replay ids reserved by published eval map sets, as (id union, set names).
+
+    Eval skill-runs play on these maps, so they must never enter training data
+    — a checkpoint that trained on a map could in principle have memorized
+    hidden details (enemy spawns, city locations) the eval assumes are unknown.
+    Built from every `<set>/manifest.json` under `map_sets_dir`; an absent dir
+    means no sets are published yet (empty union).
+    """
+    ids: set[str] = set()
+    names: list[str] = []
+    if not map_sets_dir.exists():
+        return ids, names
+    for manifest_path in sorted(map_sets_dir.glob("*/manifest.json")):
+        manifest = json.loads(manifest_path.read_text())
+        names.append(manifest["name"])
+        for bucket in manifest["buckets"].values():
+            ids.update(entry[0] for entry in bucket)
+    return ids, names
 
 
 def _git_sha() -> str:
@@ -91,6 +123,8 @@ def build_manifest(
     scan_limit: int | None = None,
     log_every: int | None = None,
     curated_names: set[str] | None = None,
+    eval_map_ids: set[str] | None = None,
+    eval_map_set_names: list[str] | None = None,
 ) -> dict:
     """
     Scan corpus, apply filters, seeded-shuffle eligible `(rid, k)` pairs, split.
@@ -110,13 +144,25 @@ def build_manifest(
     `curated_names`, if `None`, defaults to `load_curated_names()` — the
     cross-list union from `curated-player-lists.txt`. Tests pass an explicit
     set to keep fixtures small and known.
+
+    `eval_map_ids` / `eval_map_set_names`, if `None`, default to
+    `load_eval_map_ids()` — every published eval map set's ids. Same explicit
+    seam for tests.
     """
     assert 0.0 < val_frac < 1.0, f"val_frac must be in (0, 1), got {val_frac}"
 
     if curated_names is None:
         curated_names = load_curated_names()
+    if eval_map_ids is None:
+        eval_map_ids, eval_map_set_names = load_eval_map_ids()
+    eval_map_set_names = eval_map_set_names or []
 
     paths = list(sim_paths) if sim_paths is not None else list_sim_paths(intermediate_root)
+    # Eval-map exclusion comes before the scan_limit sample so a capped scan
+    # still fills its full quota from eligible games.
+    n_before = len(paths)
+    paths = [p for p in paths if p.stem not in eval_map_ids]
+    eval_excluded = n_before - len(paths)
     if scan_limit is not None:
         # Seeded shuffle so scan_limit yields a random sample — otherwise it
         # would be the first N lexicographically sorted replays. Fresh RNG
@@ -183,6 +229,8 @@ def build_manifest(
         "curated_names_count": len(curated_names),
         "val_frac": val_frac,
         "scan_limit": scan_limit,
+        "eval_map_sets": eval_map_set_names,
+        "eval_map_ids_excluded": eval_excluded,
         "train": [list(p) for p in train],
         "val": [list(p) for p in val],
     }
@@ -283,6 +331,11 @@ def _cmd_build(args: argparse.Namespace) -> None:
         f"dropped: {manifest['dropped_games']:,} | "
         f"kept pairs: {manifest['kept_pairs']:,}"
     )
+    if manifest["eval_map_sets"]:
+        print(
+            f"  eval-map exclusion: {manifest['eval_map_ids_excluded']:,} games "
+            f"({', '.join(manifest['eval_map_sets'])})"
+        )
     print(f"  train: {n_train:,}  |  val: {n_val:,}  ({n_val / (n_train + n_val):.4f})")
 
 

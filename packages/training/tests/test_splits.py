@@ -118,3 +118,19 @@ def test_samples_for_split_case_insensitive_shard_lookup(tmp_path: Path) -> None
     # Sanity: resolved paths exist
     assert train_samples[0][0].exists()
     assert val_samples[0][0].exists()
+
+
+def test_eval_map_ids_excluded(intermediate_root: Path, sim_paths: list[Path]) -> None:
+    """Games whose replay id is reserved by an eval map set never enter a manifest."""
+    sub = sim_paths[:100]
+    baseline = build_manifest(intermediate_root, seed=0, sim_paths=sub, eval_map_ids=set())
+    some_rid = baseline["train"][0][0]
+
+    m = build_manifest(
+        intermediate_root, seed=0, sim_paths=sub,
+        eval_map_ids={some_rid}, eval_map_set_names=["test-set"],
+    )
+    manifest_rids = {rid for rid, _ in m["train"]} | {rid for rid, _ in m["val"]}
+    assert some_rid not in manifest_rids
+    assert m["eval_map_ids_excluded"] == 1
+    assert m["eval_map_sets"] == ["test-set"]
