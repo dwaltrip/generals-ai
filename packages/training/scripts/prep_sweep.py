@@ -14,6 +14,13 @@ sweep.json supports, besides "axes" (whose cartesian product forms the grid),
 an optional "skip": a list of cell labels to exclude from the product (e.g.
 corners already covered by an earlier sweep). Every entry must match a
 generated label — typos error out.
+
+For non-cartesian (star) designs, sweep.json also supports an optional
+"cells" list: [{"label": ..., "overrides": {...}}, ...]. Each cell's
+overrides merge into the base config at the ROOT, so one cell can touch
+multiple fields and subtrees at once (e.g. arch.* plus a top-level loss
+knob). When both "cells" and "axes" are present, the grid is their product
+(cells × axes) — e.g. a 7-cell star crossed with a seed axis.
 """
 # TODO: add --out-dir to run_bc_local.py and pass $SWEEP_DIR/runs/
 #   so local sweep runs land in the sweep directory, not data/training/runs/.
@@ -83,11 +90,36 @@ def _apply_axes(
     parsed_axes: list[tuple[str, list, list[str]]],
     combo: tuple,
 ) -> dict:
-    """Build a resolved config by merging axis values into the base."""
+    """Build a resolved config by merging axis values into the base.
+
+    The empty path "" is the explicit-cells pseudo-axis: its values are
+    dicts merged at the config root, not nested under a key.
+    """
     config = base_config
     for i, (axis_path, _values, _labels) in enumerate(parsed_axes):
-        config = deep_merge(config, unflatten(axis_path, combo[i]))
+        overlay = combo[i] if axis_path == "" else unflatten(axis_path, combo[i])
+        config = deep_merge(config, overlay)
     return config
+
+
+def _parse_cells(cells_spec) -> tuple[str, list, list[str]]:
+    """Validate the explicit "cells" list and return it as a pseudo-axis
+    (path "", overrides as values) for the grid product."""
+    if not isinstance(cells_spec, list) or len(cells_spec) == 0:
+        raise SystemExit("sweep.json: 'cells' must be a non-empty list")
+    values, labels = [], []
+    for i, cell in enumerate(cells_spec):
+        if not isinstance(cell, dict):
+            raise SystemExit(f"sweep.json: cells[{i}] must be an object")
+        label = cell.get("label")
+        overrides = cell.get("overrides")
+        if not isinstance(label, str) or not label:
+            raise SystemExit(f"sweep.json: cells[{i}] needs a non-empty 'label'")
+        if not isinstance(overrides, dict):
+            raise SystemExit(f"sweep.json: cell '{label}' needs an 'overrides' object")
+        labels.append(label)
+        values.append(overrides)
+    return ("", values, labels)
 
 
 def _generate_cells(
@@ -202,11 +234,18 @@ def cmd_generate(args: argparse.Namespace) -> None:
     base_config = json.loads(base_path.read_text())
 
     # -- validate spec --
-    axes = spec.get("axes")
-    if not isinstance(axes, dict) or len(axes) == 0:
-        raise SystemExit("sweep.json: 'axes' must be a non-empty object")
+    axes = spec.get("axes", {})
+    if not isinstance(axes, dict):
+        raise SystemExit("sweep.json: 'axes' must be an object")
+    cells_spec = spec.get("cells")
+    if len(axes) == 0 and cells_spec is None:
+        raise SystemExit("sweep.json: need 'axes' and/or 'cells'")
 
     parsed_axes = _validate_axes(axes)
+    if cells_spec is not None:
+        # Explicit cells lead the grid (and the cell labels), crossed with
+        # any remaining axes.
+        parsed_axes.insert(0, _parse_cells(cells_spec))
 
     skip = spec.get("skip", [])
     if not isinstance(skip, list) or not all(isinstance(s, str) for s in skip):
@@ -241,6 +280,18 @@ def cmd_generate(args: argparse.Namespace) -> None:
         raise SystemExit(
             "axis path(s) produce invalid config:\n  " + "\n  ".join(errors)
         )
+
+    # Explicit cells each carry their own field set (the sample check above
+    # only sees the first), so validate every cell's overrides against the base.
+    for axis_path, cell_values, cell_labels in parsed_axes:
+        if axis_path != "":
+            continue
+        for label, overrides in zip(cell_labels, cell_values, strict=True):
+            errors = TrainConfig.validate_partial(deep_merge(base_config, overrides))
+            if errors:
+                raise SystemExit(
+                    f"cell '{label}' produces invalid config:\n  " + "\n  ".join(errors)
+                )
 
     # -- warn if already launched --
     run_ids_path = sweep_dir / "run_ids.txt"
