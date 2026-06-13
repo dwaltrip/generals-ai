@@ -44,11 +44,8 @@ import argparse
 import json
 from pathlib import Path
 import random
-import time
 
 import numpy as np
-import torch
-from torch.utils.data import DataLoader
 
 from training.analysis.marginal_entropy import N_CLASSES, entropy_nats
 from training.analysis.run_metrics import (
@@ -57,16 +54,8 @@ from training.analysis.run_metrics import (
     resolve_val_samples,
 )
 from training.bc.checkpoint import load_bc_model
-from training.bc.dataset import IterableDataset, assert_safe_loader
-from training.bc.eval import FrameRecordCapture, dump_path, save_dump
-from training.bc.model import BCModel
-from training.shared.device import (
-    dataloader_kwargs,
-    disable_mps_fallback,
-    move_batch,
-    obs_for_model,
-    pick_device,
-)
+from training.bc.eval import capture_val_frames, dump_path, save_dump
+from training.shared.device import disable_mps_fallback, pick_device
 
 
 # ---------------------------------------------------------------- dump
@@ -99,8 +88,13 @@ def run_dump(args: argparse.Namespace) -> None:
         model = load_bc_model(ckpt, device, value_head_variant=args.value_head_variant)
         # `persp_index_map` maps dataset-local sample_idx back to the position
         # in the full val list, so dumps with different fracs join on a stable id.
-        records = _val_pass(model, samples, device, args).finalize(
-            persp_index_map=chosen_arr
+        records = capture_val_frames(
+            model,
+            samples,
+            device,
+            batch_size=args.batch_size,
+            num_workers=args.num_workers,
+            persp_index_map=chosen_arr,
         )
 
         out = dump_path(run_dir, epoch)
@@ -124,65 +118,6 @@ def run_dump(args: argparse.Namespace) -> None:
         print(f"wrote {out} ({records['value_ce'].shape[0]} frames)")
 
         _check_against_epoch_row(records, run_dir, epoch, exact=args.sample_frac >= 1.0)
-
-
-def _val_pass(
-    model: BCModel,
-    samples: list[tuple[Path, int]],
-    device: torch.device,
-    args: argparse.Namespace,
-) -> FrameRecordCapture:
-    """One forward-only pass; returns the filled per-frame capture."""
-    ds = IterableDataset(
-        samples=samples,
-        seed=0,
-        obs_cfg=model.cfg.obs,
-        include_frame_info=True,
-        # Switch on the elim targets iff the checkpoint's model has the head,
-        # so the capture's elim columns get their `host_batch` targets. The
-        # in-training producer threads edges from its train dataset; this is the
-        # offline path's equivalent.
-        elim_bin_edges=(
-            model.cfg.elim_bin_edges if model.cfg.elim_head_enabled else None
-        ),
-    )
-    loader = DataLoader(
-        ds,
-        batch_size=args.batch_size,
-        **dataloader_kwargs(
-            num_workers=args.num_workers,
-            pin_memory=None,
-            prefetch_factor=2,
-            device=device,
-        ),
-    )
-    assert_safe_loader(loader)
-
-    capture = FrameRecordCapture()
-    start = time.perf_counter()
-    last_report = start
-    model.eval()
-    with torch.no_grad():
-        for batch in loader:
-            now = time.perf_counter()
-            if now - last_report >= 30.0:
-                rate = capture.n_frames / (now - start)
-                print(
-                    f"  ... {capture.n_frames} frames, {rate:.0f} samples/sec",
-                    flush=True,
-                )
-                last_report = now
-            moved = move_batch(batch, device)
-            out = model(obs_for_model(moved, None), moved["valid_mask"])
-            capture.add_batch(batch, moved, out)
-
-    dur = time.perf_counter() - start
-    rate = capture.n_frames / dur if dur > 0 else 0.0
-    print(
-        f"  {capture.n_frames} frames in {dur:.1f}s ({rate:.0f} samples/sec)",
-        flush=True,
-    )
-    return capture
 
 
 def _check_against_epoch_row(

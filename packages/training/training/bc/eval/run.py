@@ -53,10 +53,8 @@ from pathlib import Path
 import time
 
 import torch
-from torch.utils.data import DataLoader
 
-from training.bc.dataset import IterableDataset, assert_safe_loader
-from training.bc.eval.dump import FrameRecordCapture
+from training.bc.eval.dump import FrameRecordCapture, iter_val_forward
 from training.bc.eval.metrics import ActionDistMeter, ElimMeter, PolicyEntropyMeter
 from training.bc.loss import (
     DEFAULT_LOSS_CFG,
@@ -66,7 +64,6 @@ from training.bc.loss import (
 )
 from training.bc.model import flatten_policy_logits
 from training.bc.obs_config import ObsConfig
-from training.shared.device import dataloader_kwargs, move_batch, obs_for_model
 
 
 def run_val(
@@ -101,28 +98,6 @@ def run_val(
     apples-to-apples throughput numbers. `pin_memory=None` resolves to
     auto (True iff device is CUDA).
     """
-    # Val shuffle is intentionally deterministic across epochs (we never
-    # call `set_epoch`), so the per-epoch val loss numbers are apples-to-
-    # apples — variation across epochs reflects model change, not reorder.
-    val_ds = IterableDataset(
-        samples=val_samples,
-        seed=seed,
-        obs_cfg=obs_cfg,
-        include_frame_info=capture is not None,
-        elim_bin_edges=elim_bin_edges,
-    )
-    val_loader = DataLoader(
-        val_ds,
-        batch_size=batch_size,
-        **dataloader_kwargs(
-            num_workers=num_workers,
-            pin_memory=pin_memory,
-            prefetch_factor=prefetch_factor,
-            device=device,
-        ),
-    )
-    assert_safe_loader(val_loader)
-
     val_start = time.perf_counter()
     acc = LossAccumulator(loss_cfg)
     ent_meter = PolicyEntropyMeter()
@@ -138,66 +113,77 @@ def run_val(
     n_pass_correct = 0
     n_pass_observed = 0
 
-    model.eval()
-    with torch.no_grad():
-        for batch in val_loader:
-            host_batch = batch
-            batch = move_batch(batch, device)
-            # Same autocast logic as the train loop, minus the GradScaler
-            # (no backward in val). `amp_dtype is None` → autocast is a
-            # no-op via `enabled=False`, so fp32 callers see no change.
-            with torch.amp.autocast(
-                device.type,
-                dtype=amp_dtype or torch.float32,
-                enabled=amp_dtype is not None,
-            ):
-                out = model(obs_for_model(batch, amp_dtype), batch["valid_mask"])
-                losses = bc_loss(out, batch, loss_cfg)
-            B = batch["obs"].shape[0]
-            acc.update(losses, batch_size=B)
+    # Val shuffle is intentionally deterministic across epochs (fixed seed, no
+    # `set_epoch`), so the per-epoch val loss numbers are apples-to-apples —
+    # variation across epochs reflects model change, not reorder.
+    for host_batch, batch, out in iter_val_forward(
+        model,
+        val_samples,
+        device,
+        batch_size=batch_size,
+        num_workers=num_workers,
+        obs_cfg=obs_cfg,
+        include_frame_info=capture is not None,
+        elim_bin_edges=elim_bin_edges,
+        seed=seed,
+        amp_dtype=amp_dtype,
+        pin_memory=pin_memory,
+        prefetch_factor=prefetch_factor,
+    ):
+        # The loss re-enters autocast (the forward already ran under it inside
+        # `iter_val_forward`); the split is a no-op since bc_loss reuses no
+        # model weights. `amp_dtype is None` → autocast disabled, fp32 unchanged.
+        with torch.amp.autocast(
+            device.type,
+            dtype=amp_dtype or torch.float32,
+            enabled=amp_dtype is not None,
+        ):
+            losses = bc_loss(out, batch, loss_cfg)
+        B = batch["obs"].shape[0]
+        acc.update(losses, batch_size=B)
 
-            # Outside the autocast block, so the capture's `.float()` math
-            # runs fp32 (the logits themselves are fp16-derived under AMP —
-            # recorded as `forward_dtype` in the dump meta).
-            if capture is not None:
-                capture.add_batch(host_batch, batch, out)
+        # Outside the autocast block, so the capture's `.float()` math runs
+        # fp32 (the logits are fp16-derived under AMP — recorded as
+        # `forward_dtype` in the dump meta).
+        if capture is not None:
+            capture.add_batch(host_batch, batch, out)
 
-            mask = batch["mask"]
-            action_target = batch["action_target"]
-            is_pass = batch["is_pass"]
-            pass_logit = out["pass_logit"]
-            policy_logits = out["policy_logits"]
+        mask = batch["mask"]
+        action_target = batch["action_target"]
+        is_pass = batch["is_pass"]
+        pass_logit = out["pass_logit"]
+        policy_logits = out["policy_logits"]
 
-            # Top-k indices on the flat masked layout. The k=3 result
-            # serves both top-1 (column 0) and top-3 (any-match across
-            # the 3 columns) with a single GPU op per batch.
-            masked_logits = flatten_policy_logits(policy_logits, mask)
-            topk = torch.topk(masked_logits, k=3, dim=1).indices  # [B, 3]
+        # Top-k indices on the flat masked layout. The k=3 result serves both
+        # top-1 (column 0) and top-3 (any-match across the 3 columns) with a
+        # single GPU op per batch.
+        masked_logits = flatten_policy_logits(policy_logits, mask)
+        topk = torch.topk(masked_logits, k=3, dim=1).indices  # [B, 3]
 
-            # Accuracy denominators differ by metric:
-            #   top-k    → non-pass frames (policy head's supervised domain).
-            #   pass_acc → all frames (pass head's decision domain).
-            non_pass = ~is_pass
-            top1 = (topk[:, 0] == action_target) & non_pass
-            top3 = (action_target.unsqueeze(1) == topk).any(dim=1) & non_pass
-            n_top1_correct += int(top1.sum())
-            n_top3_correct += int(top3.sum())
+        # Accuracy denominators differ by metric:
+        #   top-k    → non-pass frames (policy head's supervised domain).
+        #   pass_acc → all frames (pass head's decision domain).
+        non_pass = ~is_pass
+        top1 = (topk[:, 0] == action_target) & non_pass
+        top3 = (action_target.unsqueeze(1) == topk).any(dim=1) & non_pass
+        n_top1_correct += int(top1.sum())
+        n_top3_correct += int(top3.sum())
 
-            ent_meter.update(masked_logits, non_pass)
+        ent_meter.update(masked_logits, non_pass)
 
-            # Pass head threshold: logit > 0 ≡ sigmoid > 0.5.
-            pass_pred = pass_logit > 0
-            n_pass_correct += int((pass_pred == is_pass).sum())
-            n_pass_observed += int(is_pass.sum())
+        # Pass head threshold: logit > 0 ≡ sigmoid > 0.5.
+        pass_pred = pass_logit > 0
+        n_pass_correct += int((pass_pred == is_pass).sum())
+        n_pass_observed += int(is_pass.sum())
 
-            dist_meter.update(topk[:, 0], action_target, non_pass)
+        dist_meter.update(topk[:, 0], action_target, non_pass)
 
-            if elim_meter is not None and "elim_logits" in out:
-                elim_meter.update(
-                    out["elim_logits"],
-                    batch["elim_bin_target"],
-                    batch["elim_alive_mask"],
-                )
+        if elim_meter is not None and "elim_logits" in out:
+            elim_meter.update(
+                out["elim_logits"],
+                batch["elim_bin_target"],
+                batch["elim_alive_mask"],
+            )
 
     duration_sec = time.perf_counter() - val_start
     s = acc.summary()

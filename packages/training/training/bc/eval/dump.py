@@ -1,33 +1,42 @@
-"""Per-frame stratified val-dump records, shared by two producers.
+"""Per-frame stratified val-dump records + the val forward pass behind them.
 
-`FrameRecordCapture` accumulates one record per val frame across the batches
-of a forward-only pass: the value head's full predicted distribution + CE,
-policy CE / entropy / top-k, pass prob, and the frame's provenance scalars
-(`frame_t`, `players_alive`, `p_start`, perspective id). When the elim head is
-active it also captures per-player columns (bin distribution + hard CE, bin
-target, alive mask) carrying a player axis. `dump_path` + `save_dump` write the
-columns to `<run>/analysis/stratified_val_epoch_NNN.npz` plus a sibling meta
-json.
+`iter_val_forward` drives one forward-only pass over a val sample list, yielding
+`(host_batch, moved_batch, out)` per batch — the shared loader+loop skeleton
+both producers of val metrics run on. `FrameRecordCapture` accumulates one
+record per val frame from those batches: the value head's full predicted
+distribution + CE, policy CE / entropy / top-k, pass prob, and the frame's
+provenance scalars (`frame_t`, `players_alive`, `p_start`, perspective id). When
+the elim head is active it also captures per-player columns (bin distribution +
+hard CE, bin target, alive mask) carrying a player axis. `dump_path` +
+`save_dump` write the columns to `<run>/analysis/stratified_val_epoch_NNN.npz`
+plus a sibling meta json.
 
 The producers: `train.train_loop` captures during the per-epoch val pass when
-`TrainConfig.dump_val_frames` is set, and the offline
-`scripts/stratified_val_loss_analysis.py dump` subcommand runs the same
-capture against saved checkpoints. Its `report` subcommand consumes either
-artifact unchanged. Frames join across dumps of the same run on
-`(persp_val_index, frame_t)` — row order is not significant (multi-worker
-batch interleave varies between passes).
+`TrainConfig.dump_val_frames` is set (via `run_val`, which fills a capture
+alongside its summary reductions), and `capture_val_frames` runs the same pass
+standalone against a saved checkpoint for the offline
+`scripts/stratified_val_loss_analysis.py dump` subcommand. Both share
+`iter_val_forward`. The `report` subcommand consumes either artifact unchanged.
+Frames join across dumps of the same run on `(persp_val_index, frame_t)` — row
+order is not significant (multi-worker batch interleave varies between passes).
 """
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 import json
 from pathlib import Path
+import time
 
 import numpy as np
 import torch
 import torch.nn.functional as F
+from torch.utils.data import DataLoader
 
-from training.bc.model import flatten_policy_logits
+from training.bc.dataset import IterableDataset, assert_safe_loader
+from training.bc.model import BCModel, flatten_policy_logits
+from training.bc.obs_config import ObsConfig
+from training.shared.device import dataloader_kwargs, move_batch, obs_for_model
 
 
 class FrameRecordCapture:
@@ -151,6 +160,119 @@ class FrameRecordCapture:
             persp_index_map[sample_idx] if persp_index_map is not None else sample_idx
         )
         return records
+
+
+def iter_val_forward(
+    model: torch.nn.Module,
+    val_samples: list[tuple[Path, int]],
+    device: torch.device,
+    *,
+    batch_size: int,
+    num_workers: int,
+    obs_cfg: ObsConfig,
+    include_frame_info: bool,
+    elim_bin_edges: tuple[int, ...] | None,
+    seed: int = 0,
+    amp_dtype: torch.dtype | None = None,
+    pin_memory: bool | None = None,
+    prefetch_factor: int = 2,
+) -> Iterator[tuple[dict, dict, dict]]:
+    """Drive one forward-only val pass, yielding `(host_batch, moved_batch, out)`
+    per batch — the loader+loop skeleton shared by both val-metric producers
+    (`run_val`'s summary reductions and `capture_val_frames`'s per-frame dump).
+
+    Sets `model.eval()` and runs under `no_grad`; the caller restores `train()`.
+    The forward runs under autocast (a no-op when `amp_dtype` is None), but each
+    batch is yielded *outside* the autocast block, so the consumer's post-forward
+    math runs fp32 — the capture's `.float()` reductions, and `run_val`'s metric
+    accumulation. A consumer that wants the loss under autocast (run_val)
+    re-enters it itself; that re-entry is numerically a no-op since the loss
+    reuses no model weights (autocast's weight-cast cache is irrelevant to it).
+    """
+    ds = IterableDataset(
+        samples=val_samples,
+        seed=seed,
+        obs_cfg=obs_cfg,
+        include_frame_info=include_frame_info,
+        elim_bin_edges=elim_bin_edges,
+    )
+    loader = DataLoader(
+        ds,
+        batch_size=batch_size,
+        **dataloader_kwargs(
+            num_workers=num_workers,
+            pin_memory=pin_memory,
+            prefetch_factor=prefetch_factor,
+            device=device,
+        ),
+    )
+    assert_safe_loader(loader)
+
+    model.eval()
+    with torch.no_grad():
+        for host_batch in loader:
+            moved = move_batch(host_batch, device)
+            with torch.amp.autocast(
+                device.type,
+                dtype=amp_dtype or torch.float32,
+                enabled=amp_dtype is not None,
+            ):
+                out = model(obs_for_model(moved, amp_dtype), moved["valid_mask"])
+            yield host_batch, moved, out
+
+
+def capture_val_frames(
+    model: BCModel,
+    val_samples: list[tuple[Path, int]],
+    device: torch.device,
+    *,
+    batch_size: int,
+    num_workers: int,
+    persp_index_map: np.ndarray,
+    progress_every_sec: float | None = 30.0,
+) -> dict[str, np.ndarray]:
+    """Run one offline forward-only val pass against a loaded checkpoint and
+    return the finalized per-frame record columns (ready for `save_dump`).
+
+    The offline twin of the in-training capture path: where `run_val` fills a
+    `FrameRecordCapture` alongside its summary reductions during training, this
+    fills one standalone, with a progress heartbeat for the long interactive
+    pass. Always fp32 (`amp_dtype=None`); the elim columns ride along when the
+    model carries the head. `persp_index_map` maps the (possibly subsampled)
+    walked sample list back to full-val-split positions for `finalize`.
+    """
+    capture = FrameRecordCapture()
+    elim_bin_edges = model.cfg.elim_bin_edges if model.cfg.elim_head_enabled else None
+    start = time.perf_counter()
+    last_report = start
+    for host_batch, moved, out in iter_val_forward(
+        model,
+        val_samples,
+        device,
+        batch_size=batch_size,
+        num_workers=num_workers,
+        obs_cfg=model.cfg.obs,
+        include_frame_info=True,
+        elim_bin_edges=elim_bin_edges,
+    ):
+        capture.add_batch(host_batch, moved, out)
+        if progress_every_sec is not None:
+            now = time.perf_counter()
+            if now - last_report >= progress_every_sec:
+                rate = capture.n_frames / (now - start)
+                print(
+                    f"  ... {capture.n_frames} frames, {rate:.0f} samples/sec",
+                    flush=True,
+                )
+                last_report = now
+
+    dur = time.perf_counter() - start
+    rate = capture.n_frames / dur if dur > 0 else 0.0
+    print(
+        f"  {capture.n_frames} frames in {dur:.1f}s ({rate:.0f} samples/sec)",
+        flush=True,
+    )
+    return capture.finalize(persp_index_map=persp_index_map)
 
 
 def dump_path(run_dir: Path, epoch: int) -> Path:
