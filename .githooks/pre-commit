@@ -1,12 +1,22 @@
 #!/usr/bin/env bash
-# When uv.lock is part of the commit, regenerate the modal_requirements.txt
-# files and stage them so they stay in sync with the lockfile.
 set -euo pipefail
 
-if ! git diff --cached --name-only | grep -qx 'uv\.lock'; then
-    exit 0
+staged() { git diff --cached --name-only; }
+
+# When uv.lock is part of the commit, regenerate the modal_requirements.txt
+# files and stage them so they stay in sync with the lockfile.
+if staged | grep -qx 'uv\.lock'; then
+    echo "[pre-commit] uv.lock changed — regenerating modal_requirements.txt files"
+    ./tools/regen_modal_reqs.sh
+    git add packages/training/modal_requirements.txt
 fi
 
-echo "[pre-commit] uv.lock changed — regenerating modal_requirements.txt files"
-./tools/regen_modal_reqs.sh
-git add packages/training/modal_requirements.txt
+# The model-architecture doc + diagrams are generated from the model code and
+# config. When a commit touches their inputs, regenerate and stage them so the
+# committed artifacts never drift from the code. Gated on the input paths so
+# unrelated commits don't pay the (torch-importing) generator.
+if staged | grep -qE '^(packages/training/training/bc/model/|packages/training/training/bc/model_config\.py|packages/training/training/bc/obs_config\.py|tools/model_arch/|tools/gen_model_arch_doc\.py)'; then
+    echo "[pre-commit] model-architecture inputs changed — regenerating docs/model-architecture-overview.md"
+    ./tools/gen_model_arch_doc.py
+    git add docs/model-architecture-overview.md docs/diagrams
+fi

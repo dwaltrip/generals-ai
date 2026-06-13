@@ -1,0 +1,182 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"
+     width="628" height="690.0" viewBox="-24 -70.0 628 690.0">
+<style>/*<![CDATA[*/
+.node rect {
+  stroke-width: 0.5;
+  rx: 8;
+}
+.node text {
+  text-anchor: middle;
+  dominant-baseline: central;
+  font-family: -apple-system, "Segoe UI", "Helvetica Neue", sans-serif;
+}
+.node .bt {
+  font-size: 14px;
+  font-weight: 500;
+}
+.node .bs {
+  font-size: 12px;
+}
+.flow {
+  stroke: #73726c;
+  stroke-width: 1.5;
+  fill: none;
+}
+.skip {
+  stroke: #d85a30;
+  stroke-width: 1.5;
+  fill: none;
+  stroke-dasharray: 6 5;
+}
+.note {
+  font-size: 12px;
+  fill: #3d3d3a;
+  text-anchor: middle;
+  font-family: -apple-system, "Segoe UI", "Helvetica Neue", sans-serif;
+}
+.note-skip {
+  fill: #993c1d;
+}
+.enc rect {
+  fill: #e1f5ee;
+  stroke: #0f6e56;
+}
+.enc .bt {
+  fill: #085041;
+}
+.enc .bs {
+  fill: #0f6e56;
+}
+.dec rect {
+  fill: #eeedfe;
+  stroke: #534ab7;
+}
+.dec .bt {
+  fill: #3c3489;
+}
+.dec .bs {
+  fill: #534ab7;
+}
+.aux rect {
+  fill: #f1efe8;
+  stroke: #5f5e5a;
+}
+.aux .bt {
+  fill: #444441;
+}
+.aux .bs {
+  fill: #5f5e5a;
+}
+.io rect {
+  fill: #f4f4f2;
+  stroke: #9a9893;
+}
+.io .bt {
+  fill: #444441;
+}
+.io .bs {
+  fill: #6b6a66;
+}
+.head rect {
+  fill: #e7f0fb;
+  stroke: #2f6cb5;
+}
+.head .bt {
+  fill: #1f4f88;
+}
+.head .bs {
+  fill: #2f6cb5;
+}/*]]>*/</style>
+<defs>
+<marker markerWidth="6.659999999999999" markerHeight="6.0" viewBox="-0.1 -5 11.1 10" orient="auto-start-reverse" refX="8" id="d0">
+<path d="M2,-4 L8,0 L2,4" fill="none" stroke="context-stroke" stroke-width="1.5" stroke-linecap="round" />
+</marker>
+</defs>
+<g class="node aux">
+<rect x="0" y="0.0" width="200" height="65" />
+<text x="100.0" y="17.0" font-size="14" class="bt">initial_conv</text>
+<text x="100.0" y="33.0" font-size="12" class="bs">3×3 conv + GN + ReLU</text>
+<text x="100.0" y="49.0" font-size="12" class="bs">96→128 ch · 32²</text>
+</g>
+<g class="node enc">
+<rect x="0" y="93.0" width="200" height="65" />
+<text x="100.0" y="110.0" font-size="14" class="bt">outer_enc ×2</text>
+<text x="100.0" y="126.0" font-size="12" class="bs">2× ConvResBlock</text>
+<text x="100.0" y="142.0" font-size="12" class="bs">128 ch · 32²</text>
+</g>
+<g class="node dec">
+<rect x="380" y="93.0" width="200" height="65" />
+<text x="480.0" y="110.0" font-size="14" class="bt">outer_dec ×2</text>
+<text x="480.0" y="126.0" font-size="12" class="bs">2× DeconvResBlock</text>
+<text x="480.0" y="142.0" font-size="12" class="bs">128 ch · 32²</text>
+</g>
+<path d="M200,125.5 L377.5,125.5" class="skip" marker-end="url(#d0)" />
+<g class="node enc">
+<rect x="0" y="186.0" width="200" height="65" />
+<text x="100.0" y="203.0" font-size="14" class="bt">strided_down_om</text>
+<text x="100.0" y="219.0" font-size="12" class="bs">ConvResBlock · stride 2</text>
+<text x="100.0" y="235.0" font-size="12" class="bs">128 ch · 32²→16²</text>
+</g>
+<g class="node dec">
+<rect x="380" y="186.0" width="200" height="65" />
+<text x="480.0" y="203.0" font-size="14" class="bt">strided_up_mo</text>
+<text x="480.0" y="219.0" font-size="12" class="bs">DeconvResBlock · stride 2</text>
+<text x="480.0" y="235.0" font-size="12" class="bs">128 ch · 16²→32²</text>
+</g>
+<path d="M200,218.5 L377.5,218.5" class="skip" marker-end="url(#d0)" />
+<g class="node enc">
+<rect x="0" y="279.0" width="200" height="65" />
+<text x="100.0" y="296.0" font-size="14" class="bt">middle_enc ×2</text>
+<text x="100.0" y="312.0" font-size="12" class="bs">2× ConvResBlock</text>
+<text x="100.0" y="328.0" font-size="12" class="bs">128 ch · 16²</text>
+</g>
+<g class="node dec">
+<rect x="380" y="279.0" width="200" height="65" />
+<text x="480.0" y="296.0" font-size="14" class="bt">middle_dec ×2</text>
+<text x="480.0" y="312.0" font-size="12" class="bs">2× DeconvResBlock</text>
+<text x="480.0" y="328.0" font-size="12" class="bs">128 ch · 16²</text>
+</g>
+<path d="M200,311.5 L377.5,311.5" class="skip" marker-end="url(#d0)" />
+<g class="node enc">
+<rect x="0" y="372.0" width="200" height="65" />
+<text x="100.0" y="389.0" font-size="14" class="bt">strided_down_mi</text>
+<text x="100.0" y="405.0" font-size="12" class="bs">ConvResBlock · stride 2</text>
+<text x="100.0" y="421.0" font-size="12" class="bs">128→160 ch · 16²→8²</text>
+</g>
+<g class="node dec">
+<rect x="380" y="372.0" width="200" height="65" />
+<text x="480.0" y="389.0" font-size="14" class="bt">strided_up_im</text>
+<text x="480.0" y="405.0" font-size="12" class="bs">DeconvResBlock · stride 2</text>
+<text x="480.0" y="421.0" font-size="12" class="bs">160→128 ch · 8²→16²</text>
+</g>
+<path d="M200,404.5 L377.5,404.5" class="skip" marker-end="url(#d0)" />
+<g class="node enc">
+<rect x="0" y="465.0" width="200" height="65" />
+<text x="100.0" y="482.0" font-size="14" class="bt">inner_enc ×2</text>
+<text x="100.0" y="498.0" font-size="12" class="bs">2× ConvResBlock</text>
+<text x="100.0" y="514.0" font-size="12" class="bs">160 ch · 8²</text>
+</g>
+<g class="node dec">
+<rect x="380" y="465.0" width="200" height="65" />
+<text x="480.0" y="482.0" font-size="14" class="bt">inner_dec ×2</text>
+<text x="480.0" y="498.0" font-size="12" class="bs">2× DeconvResBlock</text>
+<text x="480.0" y="514.0" font-size="12" class="bs">160 ch · 8²</text>
+</g>
+<path d="M200,497.5 L377.5,497.5" class="skip" marker-end="url(#d0)" />
+<path d="M100.0,65.0 L100.0,90.5" class="flow" marker-end="url(#d0)" />
+<path d="M100.0,158.0 L100.0,183.5" class="flow" marker-end="url(#d0)" />
+<path d="M100.0,251.0 L100.0,276.5" class="flow" marker-end="url(#d0)" />
+<path d="M100.0,344.0 L100.0,369.5" class="flow" marker-end="url(#d0)" />
+<path d="M100.0,437.0 L100.0,462.5" class="flow" marker-end="url(#d0)" />
+<path d="M480.0,186.0 L480.0,160.5" class="flow" marker-end="url(#d0)" />
+<path d="M480.0,279.0 L480.0,253.5" class="flow" marker-end="url(#d0)" />
+<path d="M480.0,372.0 L480.0,346.5" class="flow" marker-end="url(#d0)" />
+<path d="M480.0,465.0 L480.0,439.5" class="flow" marker-end="url(#d0)" />
+<path d="M 100.0 530.0 L 100.0 570.0 L 480.0 570.0 L 480.0 532.5" class="flow" marker-end="url(#d0)" />
+<text x="100.0" y="-34.0" font-size="12" class="note">obs · [B, 96, 32, 32]</text>
+<path d="M100.0,-26.0 L100.0,-2.5" class="flow" marker-end="url(#d0)" />
+<text x="480.0" y="59.0" font-size="12" class="note">trunk out · [B, 128, 32, 32]</text>
+<path d="M480.0,93.0 L480.0,69.5" class="flow" marker-end="url(#d0)" />
+<text x="290.0" y="592.0" font-size="12" class="note note-skip">skips: per-block, encoder input → mirror decoder (8 total, bundled per level)</text>
+</svg>

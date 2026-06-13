@@ -1,0 +1,153 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"
+     width="1288.0" height="295.0" viewBox="-24.0 -24.0 1288.0 295.0">
+<style>/*<![CDATA[*/
+.node rect {
+  stroke-width: 0.5;
+  rx: 8;
+}
+.node text {
+  text-anchor: middle;
+  dominant-baseline: central;
+  font-family: -apple-system, "Segoe UI", "Helvetica Neue", sans-serif;
+}
+.node .bt {
+  font-size: 14px;
+  font-weight: 500;
+}
+.node .bs {
+  font-size: 12px;
+}
+.flow {
+  stroke: #73726c;
+  stroke-width: 1.5;
+  fill: none;
+}
+.skip {
+  stroke: #d85a30;
+  stroke-width: 1.5;
+  fill: none;
+  stroke-dasharray: 6 5;
+}
+.note {
+  font-size: 12px;
+  fill: #3d3d3a;
+  text-anchor: middle;
+  font-family: -apple-system, "Segoe UI", "Helvetica Neue", sans-serif;
+}
+.note-skip {
+  fill: #993c1d;
+}
+.enc rect {
+  fill: #e1f5ee;
+  stroke: #0f6e56;
+}
+.enc .bt {
+  fill: #085041;
+}
+.enc .bs {
+  fill: #0f6e56;
+}
+.dec rect {
+  fill: #eeedfe;
+  stroke: #534ab7;
+}
+.dec .bt {
+  fill: #3c3489;
+}
+.dec .bs {
+  fill: #534ab7;
+}
+.aux rect {
+  fill: #f1efe8;
+  stroke: #5f5e5a;
+}
+.aux .bt {
+  fill: #444441;
+}
+.aux .bs {
+  fill: #5f5e5a;
+}
+.io rect {
+  fill: #f4f4f2;
+  stroke: #9a9893;
+}
+.io .bt {
+  fill: #444441;
+}
+.io .bs {
+  fill: #6b6a66;
+}
+.head rect {
+  fill: #e7f0fb;
+  stroke: #2f6cb5;
+}
+.head .bt {
+  fill: #1f4f88;
+}
+.head .bs {
+  fill: #2f6cb5;
+}/*]]>*/</style>
+<defs>
+<marker markerWidth="6.659999999999999" markerHeight="6.0" viewBox="-0.1 -5 11.1 10" orient="auto-start-reverse" refX="8" id="d0">
+<path d="M2,-4 L8,0 L2,4" fill="none" stroke="context-stroke" stroke-width="1.5" stroke-linecap="round" />
+</marker>
+</defs>
+<g class="node head">
+<rect x="780.0" y="0.0" width="200" height="65" />
+<text x="880.0" y="17.0" font-size="14" class="bt">PolicyHead</text>
+<text x="880.0" y="33.0" font-size="12" class="bs">head PM (N=1) + 3×3 conv</text>
+<text x="880.0" y="49.0" font-size="12" class="bs">8 = 4 dir × 2 split</text>
+</g>
+<g class="node io">
+<rect x="1040.0" y="0.0" width="200" height="49" />
+<text x="1140.0" y="17.0" font-size="14" class="bt">policy_logits</text>
+<text x="1140.0" y="33.0" font-size="12" class="bs">[B, 8, 32, 32]</text>
+</g>
+<g class="node head">
+<rect x="780.0" y="91.0" width="200" height="65" />
+<text x="880.0" y="108.0" font-size="14" class="bt">PassHead</text>
+<text x="880.0" y="124.0" font-size="12" class="bs">masked avg-pool</text>
+<text x="880.0" y="140.0" font-size="12" class="bs">+ Linear(128 → 1)</text>
+</g>
+<g class="node io">
+<rect x="1040.0" y="91.0" width="200" height="49" />
+<text x="1140.0" y="108.0" font-size="14" class="bt">pass_logit</text>
+<text x="1140.0" y="124.0" font-size="12" class="bs">[B]</text>
+</g>
+<g class="node head">
+<rect x="780.0" y="182.0" width="200" height="65" />
+<text x="880.0" y="199.0" font-size="14" class="bt">ValueHead (direct)</text>
+<text x="880.0" y="215.0" font-size="12" class="bs">conv → 1ch, mask, flatten</text>
+<text x="880.0" y="231.0" font-size="12" class="bs">+ Linear(1024 → 8)</text>
+</g>
+<g class="node io">
+<rect x="1040.0" y="182.0" width="200" height="49" />
+<text x="1140.0" y="199.0" font-size="14" class="bt">value_logits</text>
+<text x="1140.0" y="215.0" font-size="12" class="bs">[B, 8]</text>
+</g>
+<g class="node io">
+<rect x="0.0" y="99.0" width="200" height="49" />
+<text x="100.0" y="116.0" font-size="14" class="bt">obs</text>
+<text x="100.0" y="132.0" font-size="12" class="bs">[B, 96, 32, 32]</text>
+</g>
+<g class="node aux">
+<rect x="260.0" y="91.0" width="200" height="65" />
+<text x="360.0" y="108.0" font-size="14" class="bt">PyramidModule trunk</text>
+<text x="360.0" y="124.0" font-size="12" class="bs">2-contraction U-Net</text>
+<text x="360.0" y="140.0" font-size="12" class="bs">128/128/160 widths</text>
+</g>
+<g class="node io">
+<rect x="520.0" y="99.0" width="200" height="49" />
+<text x="620.0" y="116.0" font-size="14" class="bt">trunk embedding</text>
+<text x="620.0" y="132.0" font-size="12" class="bs">[B, 128, 32, 32]</text>
+</g>
+<path d="M200.0,123.5 L257.5,123.5" class="flow" marker-end="url(#d0)" />
+<path d="M460.0,123.5 L517.5,123.5" class="flow" marker-end="url(#d0)" />
+<path d="M 720.0 123.5 L 750.0 123.5 L 750.0 32.5 L 777.5 32.5" class="flow" marker-end="url(#d0)" />
+<path d="M720.0,123.5 L777.5,123.5" class="flow" marker-end="url(#d0)" />
+<path d="M 720.0 123.5 L 750.0 123.5 L 750.0 214.5 L 777.5 214.5" class="flow" marker-end="url(#d0)" />
+<path d="M980.0,32.5 L1037.5219302482933,24.830409300227544" class="flow" marker-end="url(#d0)" />
+<path d="M980.0,123.5 L1037.5219302482933,115.83040930022754" class="flow" marker-end="url(#d0)" />
+<path d="M980.0,214.5 L1037.5219302482933,206.83040930022756" class="flow" marker-end="url(#d0)" />
+</svg>
