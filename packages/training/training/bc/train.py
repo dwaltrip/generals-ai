@@ -232,11 +232,15 @@ def train_one_epoch(
 
         if (batch_idx + 1) % log_every == 0:
             rate = window_samples / (time.perf_counter() - window_start)
+            elim_str = (
+                f"elim {losses['elim'].item():6.4f} " if "elim" in losses else ""
+            )
             print(
                 f"[epoch {epoch}] batch {batch_idx + 1} | "
                 f"policy {losses['policy'].item():6.4f} "
                 f"value {losses['value'].item():6.4f} "
                 f"pass {losses['pass'].item():6.4f} "
+                f"{elim_str}"
                 f"total {losses['total'].item():6.4f} | "
                 f"{rate:.0f} samples/sec"
             )
@@ -444,11 +448,13 @@ def print_epoch_summary(epoch: int, summary: dict, val_summary: dict | None) -> 
         f"{summary['samples_per_sec']:.0f} samples/sec"
         f"{mfu_str} ({summary['n_batches']} batches)"
     )
+    elim_mean = f"  elim {summary['elim']:.4f}" if "elim" in summary else ""
     print(
         f"[epoch {epoch}] mean: "
         f"policy {summary['policy']:.4f}  "
         f"value {summary['value']:.4f}  "
-        f"pass {summary['pass']:.4f}  |  "
+        f"pass {summary['pass']:.4f}"
+        f"{elim_mean}  |  "
         f"total {summary['total']:.4f}"
     )
     if val_summary is not None:
@@ -472,6 +478,18 @@ def print_epoch_summary(epoch: int, summary: dict, val_summary: dict | None) -> 
             f"pass_frac {_fmt_metric(val_summary['pass_frac'])}  "
             f"{ent_str}"
         )
+        # Elim head health: soft CE vs its soft-marginal floor (positive margin
+        # = beats the constant-predictor baseline), top-1 bin acc, and the
+        # prediction-entropy collapse alarm. Present only when the head is on.
+        if val_summary.get("elim_soft") is not None:
+            floor = val_summary["elim_soft_floor"]
+            print(
+                f"[epoch {epoch}] val | elim "
+                f"soft {val_summary['elim_soft']:.4f} "
+                f"(floor {floor:.4f}, margin {floor - val_summary['elim_soft']:+.4f})  "
+                f"top1 {_fmt_metric(val_summary['elim_top1'])}  "
+                f"H {val_summary['elim_pred_entropy']:.3f}"
+            )
     else:
         print(f"[epoch {epoch}] val skipped (--skip-val)")
 
