@@ -16,6 +16,10 @@ artifact):
           bucket-conditional floor, mean value CE, Δ vs floor, value
           prediction entropy (collapse check), policy CE / top-1. Bucket
           boundaries are report-time choices; nothing is baked into the dump.
+          When the dump carries elim columns, also prints the elim head's
+          per-true-bin, by-bucket, and self-vs-opponent tables (top-1 and
+          prediction entropy are the tax-free reads; the CE-vs-floor margin is
+          tax-confounded at τ>0).
 
 The conditional floor is the entropy of the placement distribution *within*
 the bucket — a stronger baseline than the global marginal, since it credits
@@ -133,7 +137,7 @@ def run_dump(args: argparse.Namespace) -> None:
         )
 
         out = dump_path(run_dir, epoch)
-        save_dump(records, out, {
+        meta = {
             "run_dir": str(run_dir),
             "checkpoint": ckpt.name,
             "epoch": epoch,
@@ -144,7 +148,12 @@ def run_dump(args: argparse.Namespace) -> None:
             "device": device.type,
             "producer": "offline",
             "forward_dtype": "fp32",
-        })
+        }
+        if model.cfg.elim_head_enabled:
+            # Edges label the per-bin report ranges; the report reads them from
+            # meta (the npz carries only columns).
+            meta["elim_bin_edges"] = list(model.cfg.elim_bin_edges)
+        save_dump(records, out, meta)
         print(f"wrote {out} ({records['value_ce'].shape[0]} frames)")
 
         _check_against_epoch_row(records, run_dir, epoch, exact=args.sample_frac >= 1.0)
@@ -162,6 +171,13 @@ def _val_pass(
         seed=0,
         obs_cfg=model.cfg.obs,
         include_frame_info=True,
+        # Switch on the elim targets iff the checkpoint's model has the head,
+        # so the capture's elim columns get their `host_batch` targets. The
+        # in-training producer threads edges from its train dataset; this is the
+        # offline path's equivalent.
+        elim_bin_edges=(
+            model.cfg.elim_bin_edges if model.cfg.elim_head_enabled else None
+        ),
     )
     loader = DataLoader(
         ds,
@@ -222,9 +238,14 @@ def _check_against_epoch_row(
         "top1": float(records["top1"].sum() / max(non_pass.sum(), 1)),
         "n_samples": int(records["is_pass"].shape[0]),
     }
+    keys = ["value", "policy", "top1", "n_samples"]
+    if "elim_ce" in records:
+        alive = records["elim_alive_mask"]
+        ours["elim"] = float(records["elim_ce"][alive].mean())
+        keys.insert(3, "elim")
     label = "exact check" if exact else "approx check (subsampled)"
     print(f"  {label} vs epochs.jsonl:")
-    for key in ("value", "policy", "top1", "n_samples"):
+    for key in keys:
         theirs = val.get(key)
         if theirs is None:
             continue
@@ -260,6 +281,8 @@ def run_report(args: argparse.Namespace) -> None:
         if i == 0:
             _print_histogram(d)
         _print_bucket_table(d, by=args.by)
+        if "elim_ce" in d:
+            _print_elim_report(d, meta, by=args.by)
 
 
 def _print_histogram(d: dict[str, np.ndarray]) -> None:
@@ -327,6 +350,133 @@ def _print_bucket_table(d: dict[str, np.ndarray], by: str) -> None:
             f"| {r['policy_ce']:.4f} | {r['top1']:.1%} |"
         )
     print()
+
+
+# ---------------------------------------------------------------- elim report
+
+
+def _elim_flat(
+    d: dict[str, np.ndarray], sel: np.ndarray
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Flatten the elim columns to alive (player, frame) pairs within the
+    frame selection `sel`. Returns (hard CE, true bin, probs [M, n_bins],
+    channel index 0..7) — channel 0 is the perspective (self), 1..7 opponents."""
+    mask = d["elim_alive_mask"][sel]                       # [n, 8] bool
+    ce = d["elim_ce"][sel][mask]                           # [M]
+    bins = d["elim_bin_target"][sel][mask]                 # [M]
+    probs = d["elim_probs"][sel][mask].astype(np.float32)  # [M, n_bins]
+    ch = np.broadcast_to(np.arange(8), mask.shape)[mask]   # [M]
+    return ce, bins, probs, ch
+
+
+def _elim_stats(
+    ce: np.ndarray, bins: np.ndarray, probs: np.ndarray
+) -> dict[str, float] | None:
+    """Per-group elim metrics over flattened alive pairs. `top1` and `pred_h`
+    are tax-free (argmax / softmax spread); `ce` is the tax-confounded hard CE."""
+    n = int(ce.shape[0])
+    if n == 0:
+        return None
+    return {
+        "n": n,
+        "ce": float(ce.mean()),
+        "top1": float((probs.argmax(axis=1) == bins).mean()),
+        "pred_h": float(-(probs * np.log(probs + 1e-12)).sum(axis=1).mean()),
+    }
+
+
+def _elim_bin_labels(meta: dict, n_bins: int) -> list[str]:
+    """Human range labels for the bins, from the dump's `elim_bin_edges` meta;
+    falls back to plain indices when edges are absent."""
+    edges = meta.get("elim_bin_edges")
+    if not edges:
+        return [str(b) for b in range(n_bins)]
+    labels, lo = [], 0
+    for e in edges:
+        labels.append(f"[{lo},{e})")
+        lo = e
+    labels.append(f"[>={lo}/never]")
+    return labels
+
+
+def _print_elim_per_bin(d: dict[str, np.ndarray], labels: list[str]) -> None:
+    """Per-true-bin table — the which-bins-does-the-head-learn read. `top1`
+    here is per-bin recall (argmax lands on the true bin), so a near-zero top1
+    on the imminent bins (0–1) with healthy top1 on `never` is the lazy-head /
+    class-imbalance signature the Stage-0 read flagged."""
+    ce, bins, probs, _ = _elim_flat(d, np.ones(d["elim_ce"].shape[0], dtype=bool))
+    n_bins = probs.shape[1]
+    total = max(ce.shape[0], 1)
+    print("Elim head — by true bin (alive player·frame pairs):\n")
+    print("| bin | range | pairs | share | mean CE | top1 (recall) | pred H |")
+    print("|---|---|---|---|---|---|---|")
+    for b in range(n_bins):
+        m = bins == b
+        s = _elim_stats(ce[m], bins[m], probs[m])
+        if s is None:
+            print(f"| {b} | {labels[b]} | 0 | — | — | — | — |")
+            continue
+        print(
+            f"| {b} | {labels[b]} | {s['n']:,} | {s['n'] / total:.1%} "
+            f"| {s['ce']:.4f} | {s['top1']:.1%} | {s['pred_h']:.3f} |"
+        )
+    print()
+
+
+def _print_elim_buckets(d: dict[str, np.ndarray], by: str) -> None:
+    """Elim metrics stratified by `by` (players_alive / p_start). The cond floor
+    is the bin-marginal entropy within the bucket — note the CE-vs-floor margin
+    is tax-confounded at τ>0 (the tax-adjusted floor is a deferred tool); read
+    top1 / pred H for the tax-free signal."""
+    keys = d[by]
+    print(
+        f"Elim head — by `{by}` (cond floor = bin entropy within bucket; "
+        "CE-vs-floor Δ tax-confounded at τ>0):\n"
+    )
+    print("| bucket | pairs | persp | cond floor | mean CE | Δ | top1 | pred H |")
+    print("|---|---|---|---|---|---|---|---|")
+    rows = [(f"{by}={v}", keys == v) for v in np.unique(keys)]
+    rows.append(("all", np.ones(keys.shape[0], dtype=bool)))
+    for label, sel in rows:
+        ce, bins, probs, _ = _elim_flat(d, sel)
+        s = _elim_stats(ce, bins, probs)
+        if s is None:
+            continue
+        cond = max(0.0, entropy_nats(np.bincount(bins, minlength=probs.shape[1])))
+        n_persp = int(np.unique(d["persp_val_index"][sel]).size)
+        print(
+            f"| {label} | {s['n']:,} | {n_persp:,} | {cond:.4f} | {s['ce']:.4f} "
+            f"| {s['ce'] - cond:+.4f} | {s['top1']:.1%} | {s['pred_h']:.3f} |"
+        )
+    print()
+
+
+def _print_elim_channel(d: dict[str, np.ndarray]) -> None:
+    """Self (channel 0) vs opponents (1–7) — a distinct estimand split (Stage 0:
+    self ~48% `never` vs opp ~19%). `% never` doubles as a channel-mapping
+    sanity check against that corpus read."""
+    ce, bins, probs, ch = _elim_flat(d, np.ones(d["elim_ce"].shape[0], dtype=bool))
+    n_bins = probs.shape[1]
+    print("Elim head — self (ch0) vs opponents (ch1–7):\n")
+    print("| channel | pairs | mean CE | top1 | pred H | % never |")
+    print("|---|---|---|---|---|---|")
+    for label, m in (("self (ch0)", ch == 0), ("opp (ch1–7)", ch > 0)):
+        s = _elim_stats(ce[m], bins[m], probs[m])
+        if s is None:
+            continue
+        pct_never = float((bins[m] == n_bins - 1).mean())
+        print(
+            f"| {label} | {s['n']:,} | {s['ce']:.4f} | {s['top1']:.1%} "
+            f"| {s['pred_h']:.3f} | {pct_never:.1%} |"
+        )
+    print()
+
+
+def _print_elim_report(d: dict[str, np.ndarray], meta: dict, by: str) -> None:
+    n_bins = d["elim_probs"].shape[-1]
+    _print_elim_per_bin(d, _elim_bin_labels(meta, n_bins))
+    _print_elim_buckets(d, by)
+    _print_elim_channel(d)
 
 
 # ---------------------------------------------------------------- CLI

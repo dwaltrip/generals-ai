@@ -3,9 +3,11 @@
 `FrameRecordCapture` accumulates one record per val frame across the batches
 of a forward-only pass: the value head's full predicted distribution + CE,
 policy CE / entropy / top-k, pass prob, and the frame's provenance scalars
-(`frame_t`, `players_alive`, `p_start`, perspective id). `dump_path` +
-`save_dump` write the columns to `<run>/analysis/stratified_val_epoch_NNN.npz`
-plus a sibling meta json.
+(`frame_t`, `players_alive`, `p_start`, perspective id). When the elim head is
+active it also captures per-player columns (bin distribution + hard CE, bin
+target, alive mask) carrying a player axis. `dump_path` + `save_dump` write the
+columns to `<run>/analysis/stratified_val_epoch_NNN.npz` plus a sibling meta
+json.
 
 The producers: `train.train_loop` captures during the per-epoch val pass when
 `TrainConfig.dump_val_frames` is set, and the offline
@@ -113,6 +115,22 @@ class FrameRecordCapture:
         self._push("top1", (topk[:, 0] == target) & non_pass)
         self._push("top3", (target.unsqueeze(1) == topk).any(dim=1) & non_pass)
         self._push("pass_prob", torch.sigmoid(out["pass_logit"].float()))
+
+        # Elim head: per-(player, frame) bin distribution + hard CE. The columns
+        # carry a player axis (probs [B, 8, n_bins]; ce/target/mask [B, 8]) and
+        # are masked to alive players at report time. Present only when the head
+        # is active — non-elim runs add no elim columns. CE is unweighted (the
+        # report wants per-bin unweighted CE; matches the loss's `elim` only when
+        # `elim_bin_weights` is None, the current default).
+        if "elim_logits" in out:
+            elim_logp = F.log_softmax(out["elim_logits"].float(), dim=2)
+            elim_ce = -elim_logp.gather(
+                2, moved_batch["elim_bin_target"].unsqueeze(2)
+            ).squeeze(2)
+            self._push("elim_probs", elim_logp.exp().to(torch.float16))
+            self._push("elim_ce", elim_ce)
+            self._push("elim_bin_target", host_batch["elim_bin_target"])
+            self._push("elim_alive_mask", host_batch["elim_alive_mask"])
 
         self.n_frames += int(host_batch["is_pass"].shape[0])
 

@@ -513,7 +513,7 @@ def write_val_dump(
     """
     records = capture.finalize()
     path = dump_path(config.run_dir, epoch)
-    save_dump(records, path, {
+    meta = {
         "run_dir": str(config.run_dir),
         "checkpoint": ckpt_name(epoch),
         "epoch": epoch,
@@ -529,14 +529,24 @@ def write_val_dump(
         # Under AMP the records derive from an fp16 forward (offline dumps
         # are fp32-forward) — the comparability caveat lives here.
         "forward_dtype": "fp16" if amp_dtype is not None else "fp32",
-    })
+    }
+    if config.arch.elim_head_enabled:
+        meta["elim_bin_edges"] = list(config.arch.elim_bin_edges)
+    save_dump(records, path, meta)
     dump_value = float(records["value_ce"].mean())
     diff = dump_value - val_summary["value"]
-    print(
+    msg = (
         f"[epoch {epoch}] val dump: {capture.n_frames:,} frames -> "
         f"analysis/{path.name} | mean value CE {dump_value:.6g} "
         f"vs val {val_summary['value']:.6g} (diff {diff:+.2e})"
     )
+    if "elim_ce" in records:
+        # Same correctness check for the elim column: dump's masked-mean hard CE
+        # vs the recorded val `elim`. Diverges only if capture and loss disagree.
+        alive = records["elim_alive_mask"]
+        dump_elim = float(records["elim_ce"][alive].mean())
+        msg += f" | mean elim CE {dump_elim:.6g} vs val {val_summary['elim']:.6g}"
+    print(msg)
 
 
 def train_loop(

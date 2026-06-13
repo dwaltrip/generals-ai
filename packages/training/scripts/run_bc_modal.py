@@ -48,6 +48,15 @@ app = modal.App("bc-train", image=image)
 parsed_replays_vol = modal.Volume.from_name("generals-ai.parsed-replays")
 training_runs_vol = modal.Volume.from_name("generals-ai.training-runs")
 
+# TODO(mid-run-visibility): the run_dir (epochs.jsonl, batches.jsonl,
+# checkpoints) is only externalized when train_remote returns — Modal commits
+# the volume on function exit and there's no mid-run commit, so nothing is
+# fetchable until a cell finishes. For long runs (24k Stage 2) we want partial
+# progress + per-epoch crash durability. Options to investigate: a per-epoch
+# `training_runs_vol.commit()` driven by an `on_epoch_end` hook threaded
+# through bc_run (keeps the platform concern at this layer), OR Modal's
+# background auto-commit for volumes if our pinned version supports it.
+
 
 @app.function(
     gpu="T4",  # default; overridden via `with_options(gpu=...)` per-call
