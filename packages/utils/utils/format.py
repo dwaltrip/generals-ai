@@ -95,11 +95,17 @@ def md_table(
 ) -> str:
     """GitHub-flavored markdown table via `tabulate`. `align` is an optional
     per-column alignment (`"left"`/`"right"`/`"center"`), handy for right-
-    aligning numeric columns."""
+    aligning numeric columns.
+
+    Uses the `pipe` format rather than `github`: both render on GitHub, but
+    `github` always emits a plain `|----|` separator and drops the alignment,
+    while `pipe` emits the `|:---|---:|` markers GFM honors — so `align`
+    actually takes effect in rendered output, not just in the raw whitespace.
+    """
     # disable_numparse: cells are pre-formatted strings; without this tabulate
     # re-parses numeric-looking ones and reformats them (e.g. "666.0" -> "666"),
     # clobbering our chosen precision.
-    kwargs: dict = {"headers": list(headers), "tablefmt": "github", "disable_numparse": True}
+    kwargs: dict = {"headers": list(headers), "tablefmt": "pipe", "disable_numparse": True}
     if align is not None:
         kwargs["colalign"] = tuple(align)
     # tabulate sizes each column to max(len(header) + MIN_PADDING, widest cell),
