@@ -27,6 +27,11 @@ def _config_table(cfg: ModelConfig) -> str:
         ("trunk depths (N / M / M)",
          f"{cfg.n_outer} / {cfg.m_middle} / {cfg.m_inner}"),
         ("value head variant", cfg.value_head_variant),
+        # Train-time regularization (eval no-op, no params) — listed so the
+        # config table fully reflects the value-head settings a run was swept on.
+        ("value head dropout — 2d / flat / skip-2d (train-time)",
+         f"{cfg.value_head_dropout2d} / {cfg.value_head_dropout} "
+         f"/ {cfg.value_head_skip_dropout2d}"),
     ]
     return md_table(["field", "value"], rows)
 

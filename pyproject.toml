@@ -66,7 +66,7 @@ dev = [
 
 [tool.pytest.ini_options]
 addopts = "--import-mode=importlib"
-pythonpath = ["replay-parser/tests"]
+pythonpath = ["replay-parser/tests", "tools"]
 testpaths = [
     "packages/eval-bot/tests",
     "packages/eval-tools/tests",
@@ -76,6 +76,9 @@ testpaths = [
     "packages/self-play/tests",
     "packages/training/tests",
     "packages/utils/tests",
+    # Cross-cutting tests with no owning workspace package (e.g. the tools/
+    # model-arch diagram ↔ live-model consistency guard).
+    "tests",
 ]
 
 # Ruff config lives in `ruff.toml`.

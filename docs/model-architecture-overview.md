@@ -16,13 +16,14 @@ Compact view — per-level ResBlock runs collapsed:
 
 ## Config
 
-| field                                 | value           |
-|:--------------------------------------|:----------------|
-| obs channels (`in_ch`)                | 96              |
-| board (H × W)                         | 32 × 32         |
-| trunk widths (outer / middle / inner) | 128 / 128 / 160 |
-| trunk depths (N / M / M)              | 2 / 2 / 2       |
-| value head variant                    | direct          |
+| field                                                 | value           |
+|:------------------------------------------------------|:----------------|
+| obs channels (`in_ch`)                                | 96              |
+| board (H × W)                                         | 32 × 32         |
+| trunk widths (outer / middle / inner)                 | 128 / 128 / 160 |
+| trunk depths (N / M / M)                              | 2 / 2 / 2       |
+| value head variant                                    | direct          |
+| value head dropout — 2d / flat / skip-2d (train-time) | 0.0 / 0.0 / 0.0 |
 
 ## Parameters
 

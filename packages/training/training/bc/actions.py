@@ -26,6 +26,12 @@ N, E, S, W = 0, 1, 2, 3
 #   sub  = dir * 2 + split             # direction-major
 #   flat = cell_padded * 8 + sub       # cell-major
 
+# TODO(constants): the policy channel count (8 = 4 dir × 2 split) is a magic
+# literal here and in policy.py / mask.py / loss.py. Promote NUM_DIRECTIONS /
+# NUM_SPLITS / POLICY_CHANNELS to named constants and have all sites import
+# them, so the action-space shape has one source of truth. (Parallel: ValueHead's
+# n_classes default of 8 in heads/value.py is really ELIGIBLE_PLAYER_COUNT.)
+
 _PASS_FLAT_IDX = -1  # cross_entropy ignore_index sentinel
 
 

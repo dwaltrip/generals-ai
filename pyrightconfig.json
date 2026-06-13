@@ -13,6 +13,7 @@
     "packages/eval-tools",
     "packages/settings",
     "scripts",
+    "tests",
   ],
   "exclude": ["**/tmp/**", "**/__pycache__/**", "**/_archive/**"],
   "typeCheckingMode": "basic",
@@ -40,6 +41,13 @@
     {
       "root": "packages/game-runner",
       "extraPaths": ["replay-parser/tools/timestep_viewer"]
+    },
+    // Root `tests/` contains tests for `tools/model_arch/`.
+    {
+      "root": "tests",
+      "extraPaths": ["tools"],
+      // reportPrivateImportUsage off: it instantiates the torch model to check it.
+      "reportPrivateImportUsage": "none"
     }
   ]
 }
