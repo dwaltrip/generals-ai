@@ -53,11 +53,10 @@ from training.analysis.run_comparison import (
     build_summary_table,
     build_table,
     build_wide_table,
-    load_epochs,
     parse_run_arg,
     resolve_cols,
 )
-from training.analysis.run_metrics import floor_for_run
+from training.analysis.run_metrics import floor_for_run, load_epoch_rows
 
 
 _MAX_ALL_RUNS = 15
@@ -234,9 +233,8 @@ def main() -> None:
     runs: list[tuple[str, list[dict]]] = []
     run_dirs: list[Path] = []
     for run_dir, label in pairs:
-        try:
-            epochs = load_epochs(run_dir)
-        except FileNotFoundError:
+        epochs = load_epoch_rows(run_dir)
+        if not epochs:
             parser.error(f"no epochs.jsonl in {run_dir}")
         runs.append((label, epochs))
         run_dirs.append(run_dir)

@@ -14,7 +14,6 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-import json
 import math
 from pathlib import Path
 from typing import NamedTuple
@@ -81,6 +80,14 @@ _COL_REGISTRY: list[ColSpec] = [
     ColSpec("sps", "rate", optional=True),
     ColSpec("pass_frac", "pct", optional=True),
     ColSpec("pass_acc", "pct", optional=True),
+    # Elim head (optional; present only on elim runs). t_/v_ are train/val CE;
+    # e_top1 is top-1 bin accuracy, e_H the prediction entropy (collapse check).
+    ColSpec("t_elim", "loss", optional=True),
+    ColSpec("t_esoft", "loss", optional=True),
+    ColSpec("v_elim", "loss", optional=True),
+    ColSpec("v_esoft", "loss", optional=True),
+    ColSpec("e_top1", "pct", optional=True),
+    ColSpec("e_H", "loss", optional=True),
 ]
 
 ALL_COL_NAMES = [col.name for col in _COL_REGISTRY]
@@ -97,16 +104,27 @@ LONG_NAMES: dict[str, str] = {
     "v_pass": "val_pass",
     "v_tot": "val_total",
     "gap": "value_gap",
+    "t_elim": "train_elim",
+    "t_esoft": "train_elim_soft",
+    "v_elim": "val_elim",
+    "v_esoft": "val_elim_soft",
+    "e_top1": "val_elim_top1",
+    "e_H": "val_elim_entropy",
 }
 
-# Groups cover the non-optional columns only; optional ones are always
-# summoned by name.
+# The train/val/top groups cover non-optional columns only; optional ones are
+# otherwise summoned by name. `elim` is the exception — a named group for the
+# (all-optional) elim-head columns, so an elim run's metrics come in via one
+# token (`--cols elim`).
 _DEFAULT_NAMES = [col.name for col in _COL_REGISTRY if not col.optional]
+
+_ELIM_NAMES = ["t_elim", "t_esoft", "v_elim", "v_esoft", "e_top1", "e_H"]
 
 GROUPS: dict[str, list[str]] = {
     "train": [n for n in _DEFAULT_NAMES if n.startswith("t_")],
     "val": [n for n in _DEFAULT_NAMES if n.startswith("v_") or n.startswith("top")],
     "top": [n for n in _DEFAULT_NAMES if n.startswith("top")],
+    "elim": _ELIM_NAMES,
 }
 
 VALID_TOKENS = sorted(set(ALL_COL_NAMES) | set(GROUPS))
@@ -117,11 +135,14 @@ Available columns:
   train:  t_pol  t_val  t_pass  t_tot
   val:    v_pol  v_val  v_pass  v_tot  top1  top3
   optional (hidden by default):  gap  t_vsoft  v_vsoft  v_H  v_eH  sps  pass_frac  pass_acc
+  elim (optional; --cols elim):  t_elim  t_esoft  v_elim  v_esoft  e_top1  e_H
 
-Groups (expand to all in category):  train  val  top
+Groups (expand to all in category):  train  val  top  elim
 
 Naming: t_* is short for train_*, v_* for val_*; gap is v_val − t_val;
-v_H is mean val policy entropy (nats, non-pass frames), v_eH = e^(v_H)"""
+v_H is mean val policy entropy (nats, non-pass frames), v_eH = e^(v_H).
+elim: t_/v_elim are train/val elim CE; e_top1 is top-1 bin accuracy,
+e_H the elim prediction entropy (nats)."""
 
 
 def _val(e: dict) -> dict:
@@ -161,6 +182,12 @@ _EXTRACTORS: dict[str, Extract] = {
     "sps":        lambda e: e.get("samples_per_sec"),
     "pass_frac":  lambda e: _val(e).get("pass_frac"),
     "pass_acc":   lambda e: _val(e).get("pass_acc"),
+    "t_elim":     lambda e: e.get("elim"),
+    "t_esoft":    lambda e: e.get("elim_soft"),
+    "v_elim":     lambda e: _val(e).get("elim"),
+    "v_esoft":    lambda e: _val(e).get("elim_soft"),
+    "e_top1":     lambda e: _val(e).get("elim_top1"),
+    "e_H":        lambda e: _val(e).get("elim_pred_entropy"),
 }
 
 
@@ -258,13 +285,6 @@ def parse_run_arg(raw: str, base: Path | None) -> tuple[Path, str | None]:
     if base is not None and not p.is_absolute() and not p.exists():
         p = base / path_str
     return p, label
-
-
-def load_epochs(run_dir: Path) -> list[dict]:
-    """Raises FileNotFoundError when the run dir has no epochs.jsonl."""
-    path = run_dir / "epochs.jsonl"
-    with open(path) as f:
-        return [json.loads(line) for line in f if line.strip()]
 
 
 # ---------------------------------------------------------------------------

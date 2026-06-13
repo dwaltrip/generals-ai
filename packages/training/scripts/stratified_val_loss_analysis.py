@@ -50,14 +50,16 @@ import numpy as np
 import torch
 from torch.utils.data import DataLoader
 
-from settings import INTERMEDIATE_DIR
 from training.analysis.marginal_entropy import N_CLASSES, entropy_nats
-from training.analysis.run_metrics import resolve_manifest
+from training.analysis.run_metrics import (
+    load_epoch_rows,
+    resolve_epochs,
+    resolve_val_samples,
+)
 from training.bc.checkpoint import load_bc_model
 from training.bc.dataset import IterableDataset, assert_safe_loader
 from training.bc.eval import FrameRecordCapture, dump_path, save_dump
 from training.bc.model import BCModel
-from training.bc.splits import load_manifest, samples_for_split
 from training.shared.device import (
     dataloader_kwargs,
     disable_mps_fallback,
@@ -65,41 +67,6 @@ from training.shared.device import (
     obs_for_model,
     pick_device,
 )
-
-
-def load_epoch_rows(run_dir: Path) -> list[dict]:
-    path = run_dir / "epochs.jsonl"
-    if not path.is_file():
-        return []
-    return [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
-
-
-def resolve_epochs(arg: str, run_dir: Path) -> list[int]:
-    """`all` → every checkpoint on disk; `best` → argmin val.value in
-    epochs.jsonl; otherwise a comma list of epoch numbers."""
-    if arg == "all":
-        ckpts = sorted((run_dir / "checkpoints").glob("epoch_*.pt"))
-        return [int(p.stem.split("_")[1]) for p in ckpts]
-    if arg == "best":
-        rows = [r for r in load_epoch_rows(run_dir) if (r.get("val") or {}).get("value")]
-        if not rows:
-            raise SystemExit("--epochs best needs val rows in epochs.jsonl")
-        return [min(rows, key=lambda r: r["val"]["value"])["epoch"]]
-    return [int(tok) for tok in arg.split(",")]
-
-
-def resolve_val_samples(run_dir: Path) -> list[tuple[Path, int]]:
-    """The run's val split as (sim_path, k) pairs, via the same manifest
-    resolution the floor display uses (recorded path, basename fallback)."""
-    args = json.loads((run_dir / "args.json").read_text())
-    manifest_path = resolve_manifest(args["manifest"])
-    if manifest_path is None:
-        raise SystemExit(f"cannot resolve manifest {args['manifest']!r} locally")
-    recorded = args.get("intermediate")
-    intermediate = (
-        Path(recorded) if recorded and Path(recorded).is_dir() else INTERMEDIATE_DIR
-    )
-    return samples_for_split(load_manifest(manifest_path), "val", intermediate)
 
 
 # ---------------------------------------------------------------- dump

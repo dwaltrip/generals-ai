@@ -20,9 +20,8 @@ from training.analysis.run_comparison import (
     build_cols,
     build_summary_table,
     build_table,
-    load_epochs,
 )
-from training.analysis.run_metrics import floor_for_run
+from training.analysis.run_metrics import floor_for_run, load_epoch_rows
 
 
 # Per-epoch columns: the defaults plus the optional quality columns
@@ -69,10 +68,7 @@ def build_quality_report(run_dir: Path) -> str:
     if header:
         parts.append(header)
 
-    try:
-        epochs = load_epochs(run_dir)
-    except FileNotFoundError:
-        epochs = []
+    epochs = load_epoch_rows(run_dir)
     if not epochs:
         parts.append("*no epoch records — epochs.jsonl absent or empty*")
         return "\n\n".join(parts) + "\n"
