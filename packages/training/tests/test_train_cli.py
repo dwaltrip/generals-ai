@@ -15,6 +15,7 @@ from pathlib import Path
 
 import pytest
 
+from training.bc.model_config import build_model_cfg
 from training.bc.train_cli import build_arg_parser, config_from_args
 from training.bc.train_config import TrainConfig
 
@@ -47,6 +48,23 @@ def test_config_file_over_defaults(tmp_path: Path) -> None:
     assert cfg.weight_decay == 1e-4          # unset recipe → default
     assert cfg.manifest == Path("m.json")
     assert cfg.run_dir.parent == tmp_path / "runs"
+
+
+def test_lambda_elim_requires_enabled_head(tmp_path: Path) -> None:
+    """A loss weight on the elim head without the head built is a config error,
+    not a silent no-op; the matching arch flag makes it legal."""
+    paths = {"manifest": Path("m"), "intermediate": Path("i"), "run_dir": tmp_path}
+    with pytest.raises(ValueError, match="lambda_elim > 0 requires"):
+        TrainConfig(**paths, lambda_elim=0.1)
+    # With the head enabled it constructs, and the weights coerce to a tuple.
+    cfg = TrainConfig(
+        **paths,
+        arch=build_model_cfg(elim_head_enabled=True),
+        lambda_elim=0.1,
+        elim_bin_weights=[1.0, 2.0, 0.5],
+    )
+    assert cfg.lambda_elim == 0.1
+    assert cfg.elim_bin_weights == (1.0, 2.0, 0.5)
 
 
 def test_operational_flags_overlay(tmp_path: Path) -> None:

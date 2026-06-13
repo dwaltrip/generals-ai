@@ -30,7 +30,8 @@ class TrainConfig:
       - `arch` (model design) — from the `--config` file; recorded in the
         checkpoint's `arch` key so a checkpoint self-describes its model.
       - recipe (`lr`, `batch_size`, `epochs`, `lambda_value`,
-        `value_target_tau`, `seed`, `precision`, `shuffle_buffer_size`,
+        `value_target_tau`, `lambda_elim`, `elim_target_tau`,
+        `elim_bin_weights`, `seed`, `precision`, `shuffle_buffer_size`,
         `gpu`, `dump_val_frames`, `manifest`, `intermediate`) — from the
         `--config` file; the run's reproducible identity, not in the
         checkpoint.
@@ -68,6 +69,17 @@ class TrainConfig:
     # the resume path needs legacy pinning à la `checkpoint.LEGACY_ARCH`.
     lambda_value: float = 0.5
     value_target_tau: float = 0.0
+    # Next-elimination aux head (6.13-5), forwarded into `loss.LossConfig`.
+    # `lambda_elim`/`elim_target_tau` mirror the value-head pair (λ weights the
+    # elim term; τ>0 soft-ordinal targets). `elim_bin_weights` is the optional
+    # per-bin class-imbalance reweighting (6.13-6 vectors), None = unweighted —
+    # Stage 1 runs unweighted, weights are the pre-registered floor-miss remedy.
+    # Defaults reproduce "no elim head"; same resume-legacy-pinning caveat as
+    # lambda_value/value_target_tau. `lambda_elim > 0` requires
+    # `arch.elim_head_enabled` (checked below).
+    lambda_elim: float = 0.0
+    elim_target_tau: float = 0.0
+    elim_bin_weights: tuple[float, ...] | None = None
     seed: int = 0
     shuffle_buffer_size: int = 2048
     # Modal GPU class for the run. Recorded provenance that rides into the
@@ -157,6 +169,23 @@ class TrainConfig:
         if self.value_target_tau < 0:
             raise ValueError(
                 f"value_target_tau must be >= 0; got {self.value_target_tau}"
+            )
+        if self.lambda_elim < 0:
+            raise ValueError(f"lambda_elim must be >= 0; got {self.lambda_elim}")
+        if self.elim_target_tau < 0:
+            raise ValueError(
+                f"elim_target_tau must be >= 0; got {self.elim_target_tau}"
+            )
+        # No loss weight on an absent head — a config asking for elim gradient
+        # without the head built is a mistake, not a silent no-op.
+        if self.lambda_elim > 0 and not self.arch.elim_head_enabled:
+            raise ValueError(
+                "lambda_elim > 0 requires arch.elim_head_enabled "
+                "(no loss weight on an absent head)"
+            )
+        if self.elim_bin_weights is not None:
+            object.__setattr__(
+                self, "elim_bin_weights", tuple(self.elim_bin_weights)
             )
         if self.shuffle_buffer_size < 0:
             raise ValueError(f"shuffle_buffer_size must be >= 0; got {self.shuffle_buffer_size}")

@@ -16,6 +16,8 @@ from __future__ import annotations
 import torch
 import torch.nn.functional as F
 
+from training.bc.loss import _soft_target_kernel
+
 
 class PolicyEntropyMeter:
     """Running mean of per-frame policy entropy over non-pass frames.
@@ -48,6 +50,79 @@ class PolicyEntropyMeter:
     def mean(self) -> float | None:
         """Mean entropy in nats; `None` if no non-pass frames were seen."""
         return self._sum / self._n if self._n > 0 else None
+
+
+class ElimMeter:
+    """Next-elimination head diagnostics over alive (player, frame) entries.
+
+    Three reads on the per-epoch record:
+      - **top-1 bin accuracy** — argmax bin == target bin.
+      - **prediction entropy** — mean Shannon entropy (nats) of the per-player
+        bin softmax; the collapse alarm (falling toward 0 while top-1 stalls).
+      - **soft-target marginal floor** — the head's trivial baseline, the CE of
+        always predicting the *marginal* soft-target distribution. The in-loop
+        health check is `elim_soft < floor`: a head that's learned anything
+        beats the best constant predictor. The **soft** floor (not a hard-CE
+        floor) is the self-consistent comparison for `elim_soft` — at τ>0 a head
+        that knows the task still pays a softness tax in hard CE, and that tax is
+        baked into this floor too (it's `H(q)` of the smoothed marginal `q`), so
+        the comparison is apples-to-apples. See `6.13-5` (metrics) / 6.12-4.
+
+    Built only when the elim head is active; one meter per val pass, no reset.
+    Restricted to the alive mask — the loss's supervised domain.
+    """
+
+    def __init__(self, n_bins: int, target_tau: float) -> None:
+        self.n_bins = n_bins
+        self.tau = target_tau
+        self._hist = torch.zeros(n_bins, dtype=torch.long)  # marginal of hard targets
+        self._ent_sum = 0.0
+        self._top1 = 0
+        self._n = 0
+
+    def update(
+        self,
+        elim_logits: torch.Tensor,
+        bin_target: torch.Tensor,
+        alive_mask: torch.Tensor,
+    ) -> None:
+        """Fold one batch in. `elim_logits` [B, 8, n_bins]; `bin_target` [B, 8]
+        int64; `alive_mask` [B, 8] bool. Only alive (player, frame) entries
+        count — the same population the elim loss reduces over."""
+        if not bool(alive_mask.any()):
+            return
+        logits = elim_logits[alive_mask]               # [N, n_bins]
+        targets = bin_target[alive_mask]               # [N]
+
+        self._top1 += int((logits.argmax(dim=1) == targets).sum())
+        # fp32 entropy: under AMP the logits are fp16, and entropy sums tiny
+        # p·log p terms — keep the reduction in fp32 like PolicyEntropyMeter.
+        logp = F.log_softmax(logits.float(), dim=1)
+        self._ent_sum += float((-(logp.exp() * logp).sum(dim=1)).sum().item())
+        self._hist += torch.bincount(targets.cpu(), minlength=self.n_bins)
+        self._n += int(alive_mask.sum())
+
+    def top1(self) -> float | None:
+        return self._top1 / self._n if self._n > 0 else None
+
+    def pred_entropy(self) -> float | None:
+        """Mean per-player bin-softmax entropy in nats; `None` if no entries."""
+        return self._ent_sum / self._n if self._n > 0 else None
+
+    def soft_floor(self) -> float | None:
+        """CE of predicting the marginal soft target — `H(q)`, where `q` is the
+        (τ-smoothed) marginal over the alive targets seen. The constant-predictor
+        baseline `elim_soft` must beat. `None` if no entries."""
+        if self._n == 0:
+            return None
+        p = self._hist.float() / self._hist.sum()      # hard marginal
+        if self.tau > 0:
+            kernel = _soft_target_kernel(self.tau, self.n_bins, torch.device("cpu"))
+            q = p @ kernel                             # smoothed marginal
+        else:
+            q = p
+        q = q.clamp_min(1e-12)
+        return float(-(q * q.log()).sum().item())
 
 
 # 8-bucket action histogram keys. Index = `flat_action_idx % 8` =

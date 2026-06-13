@@ -209,7 +209,7 @@ def train_one_epoch(
         window_samples += B
         n_batches_seen += 1
 
-        logger.log_batch({
+        record = {
             "epoch": epoch,
             "batch_idx": batch_idx,
             "batch_size": B,
@@ -221,7 +221,14 @@ def train_one_epoch(
             "lr": optim.param_groups[0]["lr"],
             "n_non_pass": int(losses["n_non_pass"].item()),
             "wall_time_sec": round(time.perf_counter() - run_start, 3),
-        })
+        }
+        # Elim keys appear only when the head is built — keep non-elim rows
+        # byte-identical.
+        if "elim" in losses:
+            record["elim"] = float(losses["elim"].item())
+            record["elim_soft"] = float(losses["elim_soft"].item())
+            record["n_elim"] = int(losses["n_elim"].item())
+        logger.log_batch(record)
 
         if (batch_idx + 1) % log_every == 0:
             rate = window_samples / (time.perf_counter() - window_start)
@@ -271,6 +278,9 @@ def build_dataloader(
         obs_cfg=config.arch.obs,
         shuffle_buffer_size=config.shuffle_buffer_size,
         prof_sink=active_sink(),
+        elim_bin_edges=(
+            config.arch.elim_bin_edges if config.arch.elim_head_enabled else None
+        ),
     )
     dl_kwargs = dataloader_kwargs(
         num_workers=config.num_workers,
@@ -542,6 +552,9 @@ def train_loop(
     loss_cfg = LossConfig(
         lambda_value=config.lambda_value,
         value_target_tau=config.value_target_tau,
+        lambda_elim=config.lambda_elim,
+        elim_target_tau=config.elim_target_tau,
+        elim_bin_weights=config.elim_bin_weights,
     )
 
     run_start = time.perf_counter()
@@ -583,6 +596,10 @@ def train_loop(
                     amp_dtype=amp_dtype,
                     loss_cfg=loss_cfg,
                     capture=capture,
+                    elim_bin_edges=(
+                        config.arch.elim_bin_edges
+                        if config.arch.elim_head_enabled else None
+                    ),
                 )
                 if capture is not None:
                     write_val_dump(

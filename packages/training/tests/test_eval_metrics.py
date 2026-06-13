@@ -4,7 +4,7 @@ import math
 
 import torch
 
-from training.bc.eval.metrics import ActionDistMeter, PolicyEntropyMeter
+from training.bc.eval.metrics import ActionDistMeter, ElimMeter, PolicyEntropyMeter
 from training.bc.model import MASK_NEG
 
 
@@ -52,3 +52,54 @@ def test_action_dist_meter_empty_returns_none_dicts():
     meter = ActionDistMeter()
     assert all(v is None for v in meter.pred_dist().values())
     assert all(v is None for v in meter.target_dist().values())
+
+
+def test_elim_meter_perfect_head_masks_and_soft_floor():
+    """A near-one-hot head scores top1=1 over the alive entries (masked channels
+    excluded even when their predictions are wrong), near-zero prediction
+    entropy, and a τ=0 soft floor equal to the entropy of the hard target
+    marginal (here uniform over 4 bins → ln 4)."""
+    n_bins = 4
+    bin_target = torch.tensor(
+        [[0, 1, 2, 3, 0, 1, 2, 3], [3, 2, 1, 0, 3, 2, 1, 0]]
+    )
+    logits = torch.zeros(2, 8, n_bins)
+    logits.scatter_(2, bin_target.unsqueeze(-1), 10.0)   # peak on the target bin
+    alive = torch.ones(2, 8, dtype=torch.bool)
+    alive[:, 6:] = False                                  # mask last two channels
+    logits[:, 6:, :] = 0.0                                # corrupt them (must be ignored)
+
+    m = ElimMeter(n_bins=n_bins, target_tau=0.0)
+    m.update(logits, bin_target, alive)
+
+    assert m.top1() == 1.0                                # masked wrong preds excluded
+    ent = m.pred_entropy()
+    assert ent is not None and ent < 0.01                # near one-hot
+    floor = m.soft_floor()
+    assert floor is not None and math.isclose(floor, math.log(4), rel_tol=1e-6)
+
+
+def test_elim_meter_tau_inflates_soft_floor():
+    """The softness tax is baked into the floor: with all targets in one bin the
+    hard marginal entropy is 0, but a τ>0 smoothed marginal has positive
+    entropy — so `elim_soft` is compared against a floor that already pays the
+    same tax it does."""
+    bin_target = torch.zeros(1, 8, dtype=torch.long)      # all bin 0
+    logits = torch.zeros(1, 8, 4)
+    alive = torch.ones(1, 8, dtype=torch.bool)
+
+    hard = ElimMeter(4, target_tau=0.0)
+    hard.update(logits, bin_target, alive)
+    soft = ElimMeter(4, target_tau=1.0)
+    soft.update(logits, bin_target, alive)
+
+    hard_floor = hard.soft_floor()
+    assert hard_floor is not None and hard_floor < 1e-9   # degenerate marginal ≈ 0
+    assert soft.soft_floor() > 0.5                        # smoothing lifts it well clear
+
+
+def test_elim_meter_empty_returns_none():
+    m = ElimMeter(4, target_tau=0.0)
+    assert m.top1() is None
+    assert m.pred_entropy() is None
+    assert m.soft_floor() is None

@@ -174,6 +174,19 @@ def load_parent_config(parent_args_path: Path) -> dict:
     return data
 
 
+def _json_normalize(v: object) -> object:
+    """Recursively coerce tuples to lists so a config value compares equal to its
+    JSON-round-tripped form. `asdict(config)` keeps tuple-valued fields (e.g.
+    `arch.elim_bin_edges`) as tuples, but a parent loaded from `args.json` has
+    them as lists — without this, an unchanged resume would spuriously trip the
+    arch-drift guard."""
+    if isinstance(v, list | tuple):
+        return [_json_normalize(x) for x in v]
+    if isinstance(v, dict):
+        return {k: _json_normalize(x) for k, x in v.items()}
+    return v
+
+
 def check_drift(config: TrainConfig, parent: dict, force_config_mismatch: bool) -> None:
     """Abort on disallowed config drift between a resume config and its parent.
 
@@ -191,7 +204,7 @@ def check_drift(config: TrainConfig, parent: dict, force_config_mismatch: bool) 
     cfg = asdict(config)
     locked, trajectory = [], []
     for name, new_val in cfg.items():
-        if name in _DRIFT_EXCLUDED or parent.get(name) == new_val:
+        if name in _DRIFT_EXCLUDED or _json_normalize(parent.get(name)) == _json_normalize(new_val):
             continue
         if name == "arch" and "arch" not in parent:
             print("--resume: parent predates the `arch` key; skipping arch-drift "

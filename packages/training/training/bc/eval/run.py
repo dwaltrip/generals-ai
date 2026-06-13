@@ -32,6 +32,12 @@ want on the loss curve:
       property of the val set) but echoed in every row for grep-ability
       when comparing the two.
 
+    - **elim head** (present only when the head is active, via `elim_bin_edges`):
+      `elim_soft` / `elim` losses plus `elim_top1`, `elim_soft_floor`,
+      `elim_pred_entropy` from `ElimMeter`. The health check is
+      `elim_soft < elim_soft_floor` (beats the constant-predictor baseline);
+      `elim_pred_entropy` is the collapse alarm. Absent keys on non-elim runs.
+
 Architectural notes:
     - Top-k uses the same flat masked layout as `bc_loss` (via
       `flatten_policy_logits`) — one `torch.topk(k=3)` call per batch.
@@ -51,7 +57,7 @@ from torch.utils.data import DataLoader
 
 from training.bc.dataset import IterableDataset, assert_safe_loader
 from training.bc.eval.dump import FrameRecordCapture
-from training.bc.eval.metrics import ActionDistMeter, PolicyEntropyMeter
+from training.bc.eval.metrics import ActionDistMeter, ElimMeter, PolicyEntropyMeter
 from training.bc.loss import (
     DEFAULT_LOSS_CFG,
     LossAccumulator,
@@ -76,6 +82,7 @@ def run_val(
     amp_dtype: torch.dtype | None = None,
     loss_cfg: LossConfig = DEFAULT_LOSS_CFG,
     capture: FrameRecordCapture | None = None,
+    elim_bin_edges: tuple[int, ...] | None = None,
 ) -> dict:
     """Run one full validation pass and return the summary metrics.
 
@@ -102,6 +109,7 @@ def run_val(
         seed=seed,
         obs_cfg=obs_cfg,
         include_frame_info=capture is not None,
+        elim_bin_edges=elim_bin_edges,
     )
     val_loader = DataLoader(
         val_ds,
@@ -119,6 +127,12 @@ def run_val(
     acc = LossAccumulator(loss_cfg)
     ent_meter = PolicyEntropyMeter()
     dist_meter = ActionDistMeter()
+    # Elim diagnostics ride the same forward; built only when the head is active.
+    elim_meter = (
+        ElimMeter(n_bins=len(elim_bin_edges) + 1, target_tau=loss_cfg.elim_target_tau)
+        if elim_bin_edges is not None
+        else None
+    )
     n_top1_correct = 0
     n_top3_correct = 0
     n_pass_correct = 0
@@ -178,6 +192,13 @@ def run_val(
 
             dist_meter.update(topk[:, 0], action_target, non_pass)
 
+            if elim_meter is not None and "elim_logits" in out:
+                elim_meter.update(
+                    out["elim_logits"],
+                    batch["elim_bin_target"],
+                    batch["elim_alive_mask"],
+                )
+
     duration_sec = time.perf_counter() - val_start
     s = acc.summary()
     n_non_pass = int(s["n_non_pass"])  # a count; summary() widens it to float | int
@@ -188,7 +209,7 @@ def run_val(
     pass_frac = n_pass_observed / n_samples if n_samples > 0 else None
     samples_per_sec = n_samples / duration_sec if duration_sec > 0 else 0.0
 
-    return {
+    summary = {
         "policy": s["policy"],
         "value": s["value"],
         "value_soft": s["value_soft"],
@@ -208,3 +229,14 @@ def run_val(
         "action_dist": dist_meter.pred_dist(),
         "action_target_dist": dist_meter.target_dist(),
     }
+    # Elim head metrics — present only when the head is active, so non-elim val
+    # rows are unchanged. `elim_soft` is the health metric (vs `elim_soft_floor`,
+    # the soft-marginal floor); `elim` (hard CE) is recorded but not the in-loop
+    # check at τ>0 (it pays the softness tax — see ElimMeter).
+    if elim_meter is not None:
+        summary["elim_soft"] = s.get("elim_soft")
+        summary["elim"] = s.get("elim")
+        summary["elim_top1"] = elim_meter.top1()
+        summary["elim_soft_floor"] = elim_meter.soft_floor()
+        summary["elim_pred_entropy"] = elim_meter.pred_entropy()
+    return summary
