@@ -45,6 +45,7 @@ import statistics
 from replay_parser._collector.wire import decode as decode_wire_blob
 from replay_parser._shared import is_vanilla_ffa
 from replay_parser.decode import decode_wire_array
+from game_types import StaticMap
 from settings import DB_PATH, EVAL_MAP_SETS_DIR, PROJECT_ROOT
 from utils.json_io import write_json
 
@@ -65,7 +66,7 @@ class Candidate:
 @dataclass
 class SelectedMap:
     cand: Candidate
-    static: object  # game_types.StaticMap
+    static: StaticMap
 
 
 def load_used_ids(splits_dir: Path) -> set[str]:
