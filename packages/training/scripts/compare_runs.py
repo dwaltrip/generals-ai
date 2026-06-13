@@ -44,7 +44,7 @@ This is a CLI-wrapper around `run_comparison.py`.
 from __future__ import annotations
 
 import argparse
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 import sys
 
@@ -59,6 +59,7 @@ from training.analysis.run_comparison import (
 )
 from training.analysis.run_metrics import floor_for_run
 
+
 _MAX_ALL_RUNS = 15
 
 _TIMESTAMP_FMTS = ("%Y-%m-%dT%H-%M-%SZ", "%Y%m%d-%H%M%S")
@@ -67,7 +68,7 @@ _TIMESTAMP_FMTS = ("%Y-%m-%dT%H-%M-%SZ", "%Y%m%d-%H%M%S")
 def _parse_run_timestamp(name: str) -> datetime | None:
     for fmt in _TIMESTAMP_FMTS:
         try:
-            return datetime.strptime(name, fmt).replace(tzinfo=timezone.utc)
+            return datetime.strptime(name, fmt).replace(tzinfo=UTC)
         except ValueError:
             continue
     return None

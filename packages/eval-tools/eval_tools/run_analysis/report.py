@@ -37,7 +37,8 @@ def render_report(agg: dict, config: dict, groups: list, run_name: str) -> str:
 
     out.append(
         f"{hl['n_games']} games · {len(config['policy_specs'])} players · "
-        f"maps `{config.get('maps', config.get('maps_arg', '?'))}` · "  # maps_arg: key in older run dirs
+        # maps_arg: key in older run dirs
+        f"maps `{config.get('maps', config.get('maps_arg', '?'))}` · "
         f"max_turns {config.get('max_turns', '?')} · "
         f"{hl['n_draws']} draws\n"
     )
