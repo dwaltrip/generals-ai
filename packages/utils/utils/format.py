@@ -66,10 +66,12 @@ def format_ns_exact(ns: int | None) -> str:
     return f"{ns / 1e9:.2f} s"
 
 
-def format_loss(val: float, *, dp: int | None = None) -> str:
+def format_loss(val: float | None, *, dp: int | None = None, missing: str = "—") -> str:
     """Format a loss value.  When *dp* is None (default), uses 4 decimal places
     under 1 and 3 above (`0.4190`, `1.223`).  When set, uses that many decimal
-    places everywhere."""
+    places everywhere.  None or NaN renders as *missing*."""
+    if val is None or val != val:  # NaN != NaN
+        return missing
     if dp is not None:
         return f"{val:.{dp}f}"
     if val < 1:
@@ -82,8 +84,11 @@ def format_rate(val: float) -> str:
     return f"{round(val):,}"
 
 
-def format_pct(fraction: float, *, digits: int = 1) -> str:
-    """Format a 0–1 fraction as a percentage (`0.179 -> 17.9%`)."""
+def format_pct(fraction: float | None, *, digits: int = 1, missing: str = "—") -> str:
+    """Format a 0–1 fraction as a percentage (`0.179 -> 17.9%`).  None or NaN
+    renders as *missing* (e.g. precision for a bin the model never predicts)."""
+    if fraction is None or fraction != fraction:  # NaN != NaN
+        return missing
     return f"{fraction * 100:.{digits}f}%"
 
 

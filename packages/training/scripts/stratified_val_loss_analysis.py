@@ -17,9 +17,11 @@ artifact):
           prediction entropy (collapse check), policy CE / top-1. Bucket
           boundaries are report-time choices; nothing is baked into the dump.
           When the dump carries elim columns, also prints the elim head's
-          per-true-bin, by-bucket, and self-vs-opponent tables (top-1 and
-          prediction entropy are the tax-free reads; the CE-vs-floor margin is
-          tax-confounded at τ>0).
+          per-true-bin table (recall / precision / pred-freq), by-bucket and
+          self-vs-opponent tables, and — with `--confusion` — the full
+          confusion matrix. The argmax/softmax reads (precision, recall,
+          prediction entropy, the matrix) are tax-free; the CE-vs-floor margin
+          is tax-confounded at τ>0.
 
 The conditional floor is the entropy of the placement distribution *within*
 the bucket — a stronger baseline than the global marginal, since it credits
@@ -35,7 +37,7 @@ Usage:
     stratified_val_loss_analysis.py dump RUN_DIR [--epochs all|best|2,4]
         [--sample-frac 0.25] [--device auto] [--num-workers 4]
     stratified_val_loss_analysis.py report RUN_DIR [--epochs all|best|2,4]
-        [--by players_alive|p_start]
+        [--by players_alive|p_start] [--confusion]
 """
 
 from __future__ import annotations
@@ -47,6 +49,13 @@ import random
 
 import numpy as np
 
+from training.analysis.elim_metrics import (
+    bin_labels,
+    confusion_counts,
+    elim_flat,
+    elim_stats,
+    per_bin_metrics,
+)
 from training.analysis.marginal_entropy import N_CLASSES, entropy_nats
 from training.analysis.run_metrics import (
     load_epoch_rows,
@@ -56,6 +65,7 @@ from training.analysis.run_metrics import (
 from training.bc.checkpoint import load_bc_model
 from training.bc.eval import capture_val_frames, dump_path, save_dump
 from training.shared.device import disable_mps_fallback, pick_device
+from utils.format import format_count, format_loss, format_pct, md_table
 
 
 # ---------------------------------------------------------------- dump
@@ -184,7 +194,7 @@ def run_report(args: argparse.Namespace) -> None:
             _print_histogram(d)
         _print_bucket_table(d, by=args.by)
         if "elim_ce" in d:
-            _print_elim_report(d, meta, by=args.by)
+            _print_elim_report(d, meta, by=args.by, confusion=args.confusion)
 
 
 def _print_histogram(d: dict[str, np.ndarray]) -> None:
@@ -257,71 +267,65 @@ def _print_bucket_table(d: dict[str, np.ndarray], by: str) -> None:
 # ---------------------------------------------------------------- elim report
 
 
-def _elim_flat(
-    d: dict[str, np.ndarray], sel: np.ndarray
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """Flatten the elim columns to alive (player, frame) pairs within the
-    frame selection `sel`. Returns (hard CE, true bin, probs [M, n_bins],
-    channel index 0..7) — channel 0 is the perspective (self), 1..7 opponents."""
-    mask = d["elim_alive_mask"][sel]                       # [n, 8] bool
-    ce = d["elim_ce"][sel][mask]                           # [M]
-    bins = d["elim_bin_target"][sel][mask]                 # [M]
-    probs = d["elim_probs"][sel][mask].astype(np.float32)  # [M, n_bins]
-    ch = np.broadcast_to(np.arange(8), mask.shape)[mask]   # [M]
-    return ce, bins, probs, ch
-
-
-def _elim_stats(
-    ce: np.ndarray, bins: np.ndarray, probs: np.ndarray
-) -> dict[str, float] | None:
-    """Per-group elim metrics over flattened alive pairs. `top1` and `pred_h`
-    are tax-free (argmax / softmax spread); `ce` is the tax-confounded hard CE."""
-    n = int(ce.shape[0])
-    if n == 0:
-        return None
-    return {
-        "n": n,
-        "ce": float(ce.mean()),
-        "top1": float((probs.argmax(axis=1) == bins).mean()),
-        "pred_h": float(-(probs * np.log(probs + 1e-12)).sum(axis=1).mean()),
-    }
-
-
-def _elim_bin_labels(meta: dict, n_bins: int) -> list[str]:
-    """Human range labels for the bins, from the dump's `elim_bin_edges` meta;
-    falls back to plain indices when edges are absent."""
-    edges = meta.get("elim_bin_edges")
-    if not edges:
-        return [str(b) for b in range(n_bins)]
-    labels, lo = [], 0
-    for e in edges:
-        labels.append(f"[{lo},{e})")
-        lo = e
-    labels.append(f"[>={lo}/never]")
-    return labels
-
-
 def _print_elim_per_bin(d: dict[str, np.ndarray], labels: list[str]) -> None:
-    """Per-true-bin table — the which-bins-does-the-head-learn read. `top1`
-    here is per-bin recall (argmax lands on the true bin), so a near-zero top1
-    on the imminent bins (0–1) with healthy top1 on `never` is the lazy-head /
-    class-imbalance signature the Stage-0 read flagged."""
-    ce, bins, probs, _ = _elim_flat(d, np.ones(d["elim_ce"].shape[0], dtype=bool))
+    """Per-true-bin table — which bins the head learns. `recall` is argmax
+    landing on the true bin; `precision` is how often a bin the head *calls* is
+    right; `pred-freq` is how often it predicts that bin. Class-weighting
+    inflates recall via over-prediction while precision stays put, so precision
+    (vs `base`) is the read that separates learning from guessing."""
+    ce, bins, probs, _ = elim_flat(d, np.ones(d["elim_ce"].shape[0], dtype=bool))
     n_bins = probs.shape[1]
     total = max(ce.shape[0], 1)
-    print("Elim head — by true bin (alive player·frame pairs):\n")
-    print("| bin | range | pairs | share | mean CE | top1 (recall) | pred H |")
-    print("|---|---|---|---|---|---|---|")
+    C = confusion_counts(probs, bins, n_bins)
+    m = per_bin_metrics(C)
+    headers = [
+        "bin", "range", "pairs", "base", "mean CE",
+        "recall", "precision", "pred-freq", "pred H",
+    ]
+    rows: list[list[object]] = []
     for b in range(n_bins):
-        m = bins == b
-        s = _elim_stats(ce[m], bins[m], probs[m])
-        if s is None:
-            print(f"| {b} | {labels[b]} | 0 | — | — | — | — |")
-            continue
-        print(
-            f"| {b} | {labels[b]} | {s['n']:,} | {s['n'] / total:.1%} "
-            f"| {s['ce']:.4f} | {s['top1']:.1%} | {s['pred_h']:.3f} |"
-        )
+        s = elim_stats(*(arr[bins == b] for arr in (ce, bins, probs)))
+        rows.append([
+            b,
+            labels[b],
+            format_count(int(m["support"][b])),
+            format_pct(m["support"][b] / total),
+            format_loss(s["ce"] if s else None, dp=4),
+            format_pct(m["recall"][b]),
+            format_pct(m["precision"][b]),
+            format_pct(m["pred_freq"][b]),
+            format_loss(s["pred_h"] if s else None, dp=3),
+        ])
+    print("Elim head — by true bin (alive player·frame pairs):\n")
+    print(md_table(headers, rows, align=["right", "left"] + ["right"] * 7))
+    print()
+
+
+def _print_elim_confusion(d: dict[str, np.ndarray], labels: list[str]) -> None:
+    """Full confusion matrix `C[true, pred]` behind the per-bin recall/precision
+    — opt-in (`--confusion`) since it's bulky. The `total` column is each true
+    bin's support (recall denominators); the `total` row is each predicted bin's
+    frequency (precision denominators); off-diagonal mass is where the head
+    confuses bins (e.g. true-`never` players called an imminent bin)."""
+    _, bins, probs, _ = elim_flat(d, np.ones(d["elim_ce"].shape[0], dtype=bool))
+    n_bins = probs.shape[1]
+    C = confusion_counts(probs, bins, n_bins)
+    headers = ["true ↓ / pred →", *(str(p) for p in range(n_bins)), "total"]
+    rows: list[list[object]] = [
+        [
+            f"{b} {labels[b]}",
+            *(format_count(int(C[b, p])) for p in range(n_bins)),
+            format_count(int(C[b].sum())),
+        ]
+        for b in range(n_bins)
+    ]
+    rows.append([
+        "total",
+        *(format_count(int(C[:, p].sum())) for p in range(n_bins)),
+        format_count(int(C.sum())),
+    ])
+    print("Elim head — confusion counts (rows = true bin, cols = predicted bin):\n")
+    print(md_table(headers, rows, align=["left"] + ["right"] * (n_bins + 1)))
     print()
 
 
@@ -340,8 +344,8 @@ def _print_elim_buckets(d: dict[str, np.ndarray], by: str) -> None:
     rows = [(f"{by}={v}", keys == v) for v in np.unique(keys)]
     rows.append(("all", np.ones(keys.shape[0], dtype=bool)))
     for label, sel in rows:
-        ce, bins, probs, _ = _elim_flat(d, sel)
-        s = _elim_stats(ce, bins, probs)
+        ce, bins, probs, _ = elim_flat(d, sel)
+        s = elim_stats(ce, bins, probs)
         if s is None:
             continue
         cond = max(0.0, entropy_nats(np.bincount(bins, minlength=probs.shape[1])))
@@ -357,13 +361,13 @@ def _print_elim_channel(d: dict[str, np.ndarray]) -> None:
     """Self (channel 0) vs opponents (1–7) — a distinct estimand split (Stage 0:
     self ~48% `never` vs opp ~19%). `% never` doubles as a channel-mapping
     sanity check against that corpus read."""
-    ce, bins, probs, ch = _elim_flat(d, np.ones(d["elim_ce"].shape[0], dtype=bool))
+    ce, bins, probs, ch = elim_flat(d, np.ones(d["elim_ce"].shape[0], dtype=bool))
     n_bins = probs.shape[1]
     print("Elim head — self (ch0) vs opponents (ch1–7):\n")
     print("| channel | pairs | mean CE | top1 | pred H | % never |")
     print("|---|---|---|---|---|---|")
     for label, m in (("self (ch0)", ch == 0), ("opp (ch1–7)", ch > 0)):
-        s = _elim_stats(ce[m], bins[m], probs[m])
+        s = elim_stats(ce[m], bins[m], probs[m])
         if s is None:
             continue
         pct_never = float((bins[m] == n_bins - 1).mean())
@@ -374,9 +378,14 @@ def _print_elim_channel(d: dict[str, np.ndarray]) -> None:
     print()
 
 
-def _print_elim_report(d: dict[str, np.ndarray], meta: dict, by: str) -> None:
+def _print_elim_report(
+    d: dict[str, np.ndarray], meta: dict, by: str, confusion: bool
+) -> None:
     n_bins = d["elim_probs"].shape[-1]
-    _print_elim_per_bin(d, _elim_bin_labels(meta, n_bins))
+    labels = bin_labels(meta, n_bins)
+    _print_elim_per_bin(d, labels)
+    if confusion:
+        _print_elim_confusion(d, labels)
     _print_elim_buckets(d, by)
     _print_elim_channel(d)
 
@@ -409,6 +418,10 @@ def main() -> None:
     p_rep.add_argument("--epochs", default="all", help="all | best | comma list")
     p_rep.add_argument(
         "--by", default="players_alive", choices=("players_alive", "p_start"),
+    )
+    p_rep.add_argument(
+        "--confusion", action="store_true",
+        help="also print the full elim confusion matrix (bulky)",
     )
     p_rep.set_defaults(fn=run_report)
 
