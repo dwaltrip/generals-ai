@@ -41,6 +41,12 @@ VALUE_HEAD_VARIANTS = ("direct", "pyramid")
 # `direct` variant (`pre` = Identity) the two are the same computation.
 VALUE_HEAD_DROPOUT2D_SITES = ("post_pre", "pre_pre")
 
+# Elim-head spatial readout. "mean" = masked global average (v1); "lse" = masked
+# log-sum-exp with a learnable temperature that starts at ≈mean and can sharpen
+# toward max — the lever for surfacing spatially-localized elimination evidence
+# the mean pool dilutes.
+ELIM_POOLS = ("mean", "lse")
+
 
 @dataclass(frozen=True)
 class ModelConfig:
@@ -92,8 +98,15 @@ class ModelConfig:
     #                       (single source of truth — the head sizes its output
     #                       from it). Δ < edges[0] is bin 0; the top bin merges
     #                       "Δ ≥ edges[-1]" with the winner's "never".
+    #   elim_pool         — spatial readout: "mean" (masked global avg, v1) or
+    #                       "lse" (masked log-sum-exp, learnable temperature).
+    #   elim_head_hidden  — pre-pool capacity: 0 = single linear conv (v1); >0
+    #                       inserts Conv(C→hidden)→ReLU before the readout conv,
+    #                       so the head can form a nonlinear per-cell feature.
     elim_head_enabled: bool
     elim_bin_edges: tuple[int, ...]
+    elim_pool: str
+    elim_head_hidden: int
     # --- obs encoding (determines in_ch) ---
     obs: ObsConfig
     # --- structural constants ---
@@ -192,6 +205,14 @@ class ModelConfig:
             raise ValueError(f"elim_bin_edges must be positive; got {edges!r}")
         if any(b <= a for a, b in zip(edges, edges[1:], strict=False)):
             raise ValueError(f"elim_bin_edges must be strictly increasing; got {edges!r}")
+        if self.elim_pool not in ELIM_POOLS:
+            raise ValueError(
+                f"elim_pool must be one of {ELIM_POOLS}; got {self.elim_pool!r}"
+            )
+        if self.elim_head_hidden < 0:
+            raise ValueError(
+                f"elim_head_hidden must be >= 0; got {self.elim_head_hidden}"
+            )
         if self.H < 1 or self.W < 1:
             raise ValueError("H/W must be positive")
 
@@ -212,6 +233,8 @@ MODEL_CONFIG_DEFAULTS = ModelConfig(
     value_head_skip_dropout2d=0.0,
     elim_head_enabled=False,
     elim_bin_edges=(10, 20, 40, 80, 160, 320, 640),
+    elim_pool="mean",
+    elim_head_hidden=0,
     obs=OBS_CONFIG_DEFAULTS,
 )
 

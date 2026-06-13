@@ -63,7 +63,10 @@ class BCModel(nn.Module):
         # model carries zero extra state_dict keys and every pre-elim checkpoint
         # still loads strict=True. Assigning `None` registers no submodule.
         self.elim_head = (
-            EliminationHead(in_ch=cfg.outer_width, n_bins=cfg.elim_n_bins)
+            EliminationHead(
+                in_ch=cfg.outer_width, n_bins=cfg.elim_n_bins,
+                pool=cfg.elim_pool, hidden=cfg.elim_head_hidden,
+            )
             if cfg.elim_head_enabled
             else None
         )

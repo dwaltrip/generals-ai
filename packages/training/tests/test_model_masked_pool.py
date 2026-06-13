@@ -168,6 +168,67 @@ def test_elim_head_masked_pool_excludes_padded_cells() -> None:
     assert torch.allclose(out, expected, atol=1e-6)
 
 
+def test_elim_head_lse_pool_finite_with_finite_beta_grad() -> None:
+    """The `lse` readout (masked log-sum-exp, learnable β) yields finite logits
+    AND a finite β gradient on a partial board. Regression: masking z with -inf
+    feeds 0·(-inf)=NaN into β's grad through logsumexp — the head masks in
+    exponent-space with a finite sentinel instead."""
+    torch.manual_seed(4)
+    in_ch, H, W = 16, 20, 18
+    head = EliminationHead(in_ch=in_ch, n_bins=8, pool="lse")
+
+    x = torch.randn(2, in_ch, H_PADDED, W_PADDED, requires_grad=True)
+    valid_mask = torch.zeros(2, 1, H_PADDED, W_PADDED, dtype=torch.bool)
+    valid_mask[:, 0, :H, :W] = True
+
+    out = head(x, valid_mask)
+    assert out.shape == (2, 8, 8)
+    assert torch.isfinite(out).all()
+
+    out.pow(2).mean().backward()
+    assert head.raw_beta.grad is not None and torch.isfinite(head.raw_beta.grad).all()
+    assert torch.isfinite(x.grad).all()
+
+
+def test_elim_head_lse_pool_lies_between_masked_mean_and_max() -> None:
+    """The smooth-max lse readout sits between the masked mean and masked max
+    per (player, bin) — its defining interpolation property, and a check that
+    the pool excludes padded cells in both the sum and the max."""
+    torch.manual_seed(5)
+    in_ch, H, W = 16, 20, 18
+    head = EliminationHead(in_ch=in_ch, n_bins=8, pool="lse")
+    head.eval()
+
+    x = torch.randn(1, in_ch, H_PADDED, W_PADDED)
+    valid_mask = torch.zeros(1, 1, H_PADDED, W_PADDED, dtype=torch.bool)
+    valid_mask[0, 0, :H, :W] = True
+
+    out = head(x, valid_mask).view(1, -1)               # [1, 8·8] lse logits
+
+    z = head.conv(x).flatten(2)                          # [1, 64, H·W]
+    mb = valid_mask.flatten(2)                            # [1, 1, H·W]
+    mean_p = (z * mb).sum(2) / mb.sum(2).clamp(min=1)
+    max_p = z.masked_fill(~mb.bool(), float("-inf")).amax(2)
+
+    tol = 1e-4
+    assert (out >= mean_p - tol).all() and (out <= max_p + tol).all()
+    # β≈0.5 → strictly interior, not collapsed onto either bound
+    assert (out > mean_p + tol).any() and (out < max_p - tol).any()
+
+
+def test_elim_head_capacity_adds_prepool_conv() -> None:
+    """`hidden > 0` inserts Conv→ReLU before the readout conv: the head still
+    emits [B, 8, n_bins] and gains the pre-stage's parameters."""
+    thin = EliminationHead(in_ch=192, n_bins=8, hidden=0)
+    wide = EliminationHead(in_ch=192, n_bins=8, hidden=192)
+    assert sum(p.numel() for p in thin.pre.parameters()) == 0
+    assert sum(p.numel() for p in wide.pre.parameters()) > 0
+
+    x = torch.randn(2, 192, H_PADDED, W_PADDED)
+    vm = torch.ones(2, 1, H_PADDED, W_PADDED, dtype=torch.bool)
+    assert wide(x, vm).shape == (2, 8, 8)
+
+
 def test_value_head_invalid_variant_raises() -> None:
     with pytest.raises(ValueError, match="variant must be one of"):
         ValueHead(in_ch=128, H=H_PADDED, W=W_PADDED, variant="nope")
