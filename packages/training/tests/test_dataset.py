@@ -10,7 +10,13 @@ import numpy as np
 import pytest
 
 from training.bc.constants import ELIGIBLE_PLAYER_COUNT, MAX_BOARD_SIDE
-from training.bc.dataset import IterableDataset, _shuffle_buffered
+from training.bc.dataset import (
+    IterableDataset,
+    _elim_targets,
+    _ElimCtx,
+    _precompute_elim,
+    _shuffle_buffered,
+)
 from training.bc.filters import is_eligible
 from training.bc.obs_config import OBS_CONFIG_DEFAULTS
 
@@ -130,6 +136,54 @@ def test_walk_stops_at_elim_timestep(
             )
             return
     pytest.skip("no eliminated perspectives in fixture")
+
+
+_ELIM_EDGES = np.array([10, 20, 40, 80, 160, 320, 640], dtype=np.int64)
+
+
+def _synthetic_sim(real_slots: list[int], deaths: list[tuple[int, int]], T: int):
+    """Minimal sim dict for the elim precompute: only `ownership[0]` (to recover
+    the starting slots) and `death_events` (timestep, slot) are read."""
+    own = np.full((T, 1, 8), -1, dtype=np.int64)
+    own[0, 0, : len(real_slots)] = real_slots
+    de = np.array(deaths, dtype=np.int32).reshape(-1, 2)
+    return {"ownership": own, "death_events": de}
+
+
+def test_elim_precompute_winner_vs_phantom() -> None:
+    """`_precompute_elim` distinguishes the three slot kinds: dead-real slots get
+    their elim timestep, the winner (real, absent from deaths) the large finite
+    sentinel, phantom slots (never played) the -1 marker."""
+    # 4-player game: slots 0..3 real, 4..7 phantom. Slot 0 wins; 1/2/3 die.
+    sim = _synthetic_sim([0, 1, 2, 3], [(10, 1), (20, 2), (30, 3)], T=40)
+    death_by_slot, is_real = _precompute_elim(sim, _ELIM_EDGES)
+
+    sentinel = 40 + 640
+    assert list(death_by_slot) == [sentinel, 10, 20, 30, -1, -1, -1, -1]
+    assert list(is_real) == [True, True, True, True, False, False, False, False]
+
+
+def test_elim_targets_masks_phantom_and_dead_channels() -> None:
+    """The load-bearing case: a sub-8-player game's non-existent channels are
+    masked out (never trained as 'alive, never dies'), and a real-but-already-
+    eliminated channel is masked too — only currently-alive real players carry a
+    target."""
+    sim = _synthetic_sim([0, 1, 2, 3], [(10, 1), (20, 2), (30, 3)], T=40)
+    elim = _ElimCtx(_ELIM_EDGES, *_precompute_elim(sim, _ELIM_EDGES))
+    # Perspective = slot 0 → canonical channel order [0,1,2,3,4,5,6,7].
+    raw_order = [0, 1, 2, 3, 4, 5, 6, 7]
+
+    bins, alive = _elim_targets(elim, raw_order, t=5)
+    # Phantom channels 4..7 masked out — the whole point of the real_slots mask.
+    assert list(alive) == [True, True, True, True, False, False, False, False]
+    # ch0 winner → top bin (Δ=675 ≥ 640); ch1/2/3 → bins by Δ = 5/15/25.
+    assert list(bins) == [7, 0, 1, 2, 0, 0, 0, 0]
+
+    # After slot 1's elimination at t=10: its channel is real but dead → masked.
+    bins2, alive2 = _elim_targets(elim, raw_order, t=15)
+    assert not alive2[1]            # death (10) > 15 is False → dead
+    assert alive2[0] and alive2[2] and alive2[3]
+    assert not alive2[4:].any()    # phantoms still masked
 
 
 def test_is_eligible_matches_filter(intermediate_root: Path) -> None:

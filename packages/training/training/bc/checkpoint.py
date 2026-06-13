@@ -42,6 +42,11 @@ LEGACY_ARCH = ModelConfig(
     # Pre-field behavior: dropout2d (where used) sat after `pre`; skip
     # connections were never dropped.
     value_head_dropout2d_site="post_pre", value_head_skip_dropout2d=0.0,
+    # Pre-field behavior: no elim head existed. Edges are a hardcoded literal
+    # (NOT aliased to MODEL_CONFIG_DEFAULTS, per the divergence-allowed contract
+    # above) — a pre-elim checkpoint back-fills these and reconstructs as "no
+    # elim head", so `load_state_dict(strict=True)` still passes.
+    elim_head_enabled=False, elim_bin_edges=(10, 20, 40, 80, 160, 320, 640),
     obs=LEGACY_OBS_CFG,
 )
 

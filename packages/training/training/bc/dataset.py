@@ -24,6 +24,7 @@ dominated by one perspective's consecutive frames.
 from __future__ import annotations
 
 from collections.abc import Iterable, Iterator
+from dataclasses import dataclass
 from pathlib import Path
 import random
 from typing import TYPE_CHECKING
@@ -118,6 +119,75 @@ def _shuffle_buffered[T](
     yield from buffer
 
 
+@dataclass(frozen=True)
+class _ElimCtx:
+    """Per-game precompute backing the next-elimination head's targets.
+
+    `edges` is the dataset-constant bin-edge array; `death_by_slot` and
+    `is_real` are per-game [8]-arrays indexed by *raw* slot id. Built once per
+    game in `_walk` (when the elim head is enabled) and threaded into every
+    `encode_frame` call for that game.
+    """
+
+    edges: np.ndarray          # [n_bins - 1] strictly-increasing bin edges
+    death_by_slot: np.ndarray  # [8] int64 — elim timestep; winner sentinel; -1 = phantom
+    is_real: np.ndarray        # [8] bool — slot actually played this game
+
+
+def _precompute_elim(
+    sim: dict[str, np.ndarray], edges: np.ndarray
+) -> tuple[np.ndarray, np.ndarray]:
+    """Per-game `(death_by_slot, is_real)` for the elim targets.
+
+    `death_by_slot[s]` is slot `s`'s elimination timestep, a large finite winner
+    sentinel (`T + max_edge`; integer-typed, not `np.inf`) for the one real slot
+    absent from `death_events`, or `-1` for a phantom slot that never played.
+    `is_real[s]` marks the slots present at t=0. The winner-vs-phantom split is
+    what `real_slots` resolves: the winner is real-and-absent-from-deaths, a
+    phantom is not-real — and only the latter must be masked out.
+
+    The obs encoder always runs at P=8 and `opp_slots` always yields 7 ids from
+    `range(8)`, but FFA games can start with <8 players (~7% of the corpus, see
+    `6.13-6`). Without `is_real`, those phantom channels would inherit the winner
+    sentinel and train as "alive, never dies" on every frame.
+    """
+    own0 = sim["ownership"][0]
+    real = np.unique(own0)
+    real = real[real >= 0].astype(np.intp)
+    T = sim["ownership"].shape[0]
+    sentinel = T + int(edges[-1])
+
+    death_by_slot = np.full(8, -1, dtype=np.int64)
+    death_by_slot[real] = sentinel  # winner default; dead slots overwritten below
+    deaths = sim["death_events"]
+    if deaths.size:
+        death_by_slot[deaths[:, 1].astype(np.intp)] = deaths[:, 0]
+
+    is_real = np.zeros(8, dtype=np.bool_)
+    is_real[real] = True
+    return death_by_slot, is_real
+
+
+def _elim_targets(
+    elim: _ElimCtx, raw_order: list[int], t: int
+) -> tuple[np.ndarray, np.ndarray]:
+    """Per-channel `(elim_bin_target[8], elim_alive_mask[8])` at frame `t`.
+
+    `raw_order` is the canonical channel→raw-slot map (`[perspective_slot,
+    *opp_slots]`). A channel is alive iff its slot is real AND not yet
+    eliminated (`death > t` matches the existing aliveness convention — a player
+    eliminated at `t` counts dead at frame `t`). Live `Δ = death − t` digitizes
+    into a bin; the winner's large sentinel Δ lands in the top bin (merged with
+    "never"). Dead and phantom channels get bin 0, masked out by `alive`.
+    """
+    raw = np.asarray(raw_order, dtype=np.intp)
+    death_ch = elim.death_by_slot[raw]
+    alive = elim.is_real[raw] & (death_ch > t)
+    delta = death_ch - t
+    bins = np.where(alive, np.digitize(delta, elim.edges, right=False), 0)
+    return bins.astype(np.int64), alive
+
+
 def encode_frame(
     sim: dict[str, np.ndarray],
     meta: dict[str, np.ndarray],
@@ -130,6 +200,7 @@ def encode_frame(
     bfs_cache: bfs.BFSCache,
     H: int,
     W: int,
+    elim: _ElimCtx | None = None,
 ) -> dict[str, torch.Tensor]:
     """
     One (game, perspective, timestep) → one training sample dict.
@@ -138,6 +209,10 @@ def encode_frame(
     `build_mask` (legality, stateless), `actions.encode` (action target), and
     the value-target extraction. DataLoader's default collate stacks the
     result keywise into batched tensors.
+
+    `elim`, when set (the next-elimination head is enabled), adds the per-player
+    `elim_bin_target` / `elim_alive_mask` keys; `None` leaves them off so
+    non-elim runs carry no extra collate/transfer weight.
 
     Pure-read of `state` + `bfs_cache`. `step_memory` must already have been
     called for this `(t, vis)` — `__iter__` enforces this ordering.
@@ -165,7 +240,7 @@ def encode_frame(
         # class label for F.cross_entropy.
         value_target = int(meta["placement"][k]) - 1
 
-        return {
+        sample = {
             "obs": torch.from_numpy(obs_np),
             "mask": torch.from_numpy(mask_np),
             "valid_mask": torch.from_numpy(valid_mask_np),
@@ -173,6 +248,11 @@ def encode_frame(
             "is_pass": torch.tensor(is_pass, dtype=torch.bool),
             "value_target": torch.tensor(value_target, dtype=torch.int64),
         }
+        if elim is not None:
+            bins, alive = _elim_targets(elim, [perspective_slot, *opp_slots], t)
+            sample["elim_bin_target"] = torch.from_numpy(bins)
+            sample["elim_alive_mask"] = torch.from_numpy(alive)
+        return sample
 
 
 def assert_safe_loader(loader: DataLoader) -> None:
@@ -220,6 +300,7 @@ class IterableDataset(TorchIterableDataset):
         shuffle_buffer_size: int = 0,
         prof_sink: FileSink | None = None,
         include_frame_info: bool = False,
+        elim_bin_edges: tuple[int, ...] | None = None,
     ) -> None:
         """
         `samples` is a list of `(sim_path, perspective_k)` pairs. Caller is
@@ -240,6 +321,11 @@ class IterableDataset(TorchIterableDataset):
         stratified analysis. Off by default:
         the training loop doesn't consume them, and the extra keys would ride
         through collate + device transfer for nothing.
+
+        `elim_bin_edges`, when set, switches on the next-elimination head's
+        per-player targets (`elim_bin_target` / `elim_alive_mask`). Pass the
+        model's `arch.elim_bin_edges` iff `arch.elim_head_enabled`; `None` (the
+        default) leaves the targets off so non-elim runs are unaffected.
         """
         self._groups = _group_by_path(samples)
         self._seed = seed
@@ -248,6 +334,11 @@ class IterableDataset(TorchIterableDataset):
         self._epoch = 0
         self._prof_sink = prof_sink
         self._frame_info = include_frame_info
+        self._elim_edges = (
+            np.asarray(elim_bin_edges, dtype=np.int64)
+            if elim_bin_edges is not None
+            else None
+        )
         # Index of each (path, k) pair in the caller's `samples` order, so
         # `sample_idx` survives the group/epoch shuffles and lets offline
         # consumers join frames back to the manifest entry they came from.
@@ -387,6 +478,14 @@ class IterableDataset(TorchIterableDataset):
                 # count is the starting player count.
                 p_start = int((np.unique(sim["ownership"][0]) >= 0).sum())
 
+            # Per-game elim precompute (winner-vs-phantom resolution lives here,
+            # once per game, not per perspective). `None` when the head is off.
+            elim_ctx = (
+                _ElimCtx(self._elim_edges, *_precompute_elim(sim, self._elim_edges))
+                if self._elim_edges is not None
+                else None
+            )
+
             for k in ks:
                 perspective_slot = int(meta["perspective_player_ids"][k])
                 opp_slots = canonical_slot_order(perspective_slot)[1:]
@@ -408,6 +507,7 @@ class IterableDataset(TorchIterableDataset):
                             sim, meta, k, t,
                             perspective_slot, opp_slots, vis,
                             state, bfs_cache, H, W,
+                            elim=elim_ctx,
                         )
                     if self._frame_info:
                         sample["frame_t"] = torch.tensor(t, dtype=torch.int64)

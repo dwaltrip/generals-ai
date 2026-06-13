@@ -164,6 +164,28 @@ def test_load_missing_toplevel_key_uses_legacy(tmp_path, monkeypatch):
     assert loaded.cfg.value_head_dropout == LEGACY_ARCH.value_head_dropout  # 0.0, not 0.5
 
 
+def test_load_pre_elim_checkpoint_backfills_disabled(tmp_path):
+    """A checkpoint whose `arch` predates the elim-head fields back-fills them
+    from LEGACY_ARCH (head disabled) and loads strict=True with an identical key
+    set — the entire reason the head is arch-gated. Guards the backward-compat
+    contract: existing checkpoints keep loading after the head lands."""
+    cfg = build_model_cfg()
+    src = BCModel(cfg)
+    arch = asdict(cfg)
+    del arch["elim_head_enabled"]   # simulate a pre-elim checkpoint
+    del arch["elim_bin_edges"]
+    ckpt = tmp_path / "epoch_001.pt"
+    torch.save({"model": src.state_dict(), "arch": arch, "epoch": 1}, ckpt)
+
+    loaded = load_bc_model(ckpt, torch.device("cpu"))
+    assert loaded.cfg.elim_head_enabled is False
+    assert loaded.cfg.elim_bin_edges == LEGACY_ARCH.elim_bin_edges
+    # No elim params on either side, and strict load already passed in
+    # load_bc_model — assert key parity explicitly as the backstop.
+    assert src.state_dict().keys() == loaded.state_dict().keys()
+    assert not any("elim" in k for k in loaded.state_dict())
+
+
 def test_fresh_partial_obs_uses_live_default(monkeypatch):
     """A fresh config from a partial `obs` dict (not a checkpoint load) fills
     `obs_dtype` from the live defaults — the complement of the load-path

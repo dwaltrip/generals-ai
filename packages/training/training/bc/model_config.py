@@ -80,6 +80,20 @@ class ModelConfig:
     value_head_dropout: float
     value_head_dropout2d_site: str
     value_head_skip_dropout2d: float
+    # --- aux heads ---
+    # Next-elimination auxiliary head (6.13-5 / 6.13-6). Per-player, per-frame
+    # time-to-elimination as an ordinal-bucketed categorical, read off the shared
+    # trunk to enrich it for the policy + future PPO critic. Opt-in and
+    # arch-gated: the head is constructed only when enabled, so every pre-elim
+    # checkpoint still loads `strict=True`.
+    #   elim_head_enabled — construct the head + emit `elim_logits`.
+    #   elim_bin_edges    — geometric bin edges (strictly increasing, positive);
+    #                       `n_bins = len(edges) + 1` is the derived class count
+    #                       (single source of truth — the head sizes its output
+    #                       from it). Δ < edges[0] is bin 0; the top bin merges
+    #                       "Δ ≥ edges[-1]" with the winner's "never".
+    elim_head_enabled: bool
+    elim_bin_edges: tuple[int, ...]
     # --- obs encoding (determines in_ch) ---
     obs: ObsConfig
     # --- structural constants ---
@@ -97,6 +111,16 @@ class ModelConfig:
         a clear error rather than a cryptic state_dict shape mismatch.
         """
         return self.obs.obs_channels
+
+    @property
+    def elim_n_bins(self) -> int:
+        """Number of elim-head bins = `len(elim_bin_edges) + 1`.
+
+        The single source of truth for the head's output size and the elim
+        loss's class count — derived, never stored, so the edges tuple can't
+        drift from the class count it implies.
+        """
+        return len(self.elim_bin_edges) + 1
 
     @classmethod
     def validate_partial(cls, d: dict) -> list[str]:
@@ -118,6 +142,13 @@ class ModelConfig:
         if isinstance(self.obs, dict):
             merged = {**asdict(OBS_CONFIG_DEFAULTS), **self.obs}
             object.__setattr__(self, "obs", ObsConfig(**merged))
+        # Coerce edges to a tuple of ints: a config JSON / asdict round-trip
+        # hands them back as a list, and the field's identity (equality, hash on
+        # this frozen dataclass) must not depend on which container they arrive
+        # in.
+        object.__setattr__(
+            self, "elim_bin_edges", tuple(int(e) for e in self.elim_bin_edges)
+        )
         # Widths required-even: the bottleneck ResBlock's `C/2` intermediate
         # floors on odd channel counts, a silent asymmetry. (GroupNorm
         # divisibility is handled separately by `_gn`'s fallback ladder.)
@@ -150,6 +181,17 @@ class ModelConfig:
                 "value_head_skip_dropout2d requires the pyramid variant — "
                 "the direct head has no pre-module skips to drop"
             )
+        # Edges must be a non-empty, strictly increasing sequence of positive
+        # ints — validated even when the head is disabled, so a malformed sweep
+        # config fails at construction rather than only when the head is turned
+        # on. `np.digitize` relies on the strict-increase invariant.
+        edges = self.elim_bin_edges
+        if len(edges) < 1:
+            raise ValueError(f"elim_bin_edges must be non-empty; got {edges!r}")
+        if edges[0] < 1:
+            raise ValueError(f"elim_bin_edges must be positive; got {edges!r}")
+        if any(b <= a for a, b in zip(edges, edges[1:], strict=False)):
+            raise ValueError(f"elim_bin_edges must be strictly increasing; got {edges!r}")
         if self.H < 1 or self.W < 1:
             raise ValueError("H/W must be positive")
 
@@ -168,6 +210,8 @@ MODEL_CONFIG_DEFAULTS = ModelConfig(
     value_head_dropout=0.0,
     value_head_dropout2d_site="post_pre",
     value_head_skip_dropout2d=0.0,
+    elim_head_enabled=False,
+    elim_bin_edges=(10, 20, 40, 80, 160, 320, 640),
     obs=OBS_CONFIG_DEFAULTS,
 )
 
