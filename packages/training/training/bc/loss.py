@@ -1,14 +1,21 @@
 """
-Behavioral-cloning loss: policy CE + value CE + pass BCE.
+Behavioral-cloning loss: policy CE + value CE + pass BCE, plus an optional
+next-elimination aux term.
 
-Three supervision signals, combined per `LossConfig` weights:
+Supervision signals, combined per `LossConfig` weights:
 
-    total = policy_ce + λ · value_soft + μ · pass_bce
+    total = policy_ce + λ · value_soft + μ · pass_bce  [+ λ_elim · elim_soft]
+
+The bracketed elim term is present only when the model emits `elim_logits` (the
+next-elimination head is built); otherwise the loss is exactly the three-signal
+form above.
 
 Each component is mean-reduced over its eligible samples in the batch:
   - policy_ce is mean over *non-pass* frames only (pass frames carry no
     action signal — they're voluntary "do nothing" moves).
   - value losses and pass_bce are mean over the full batch.
+  - elim CE is mean over alive (player, frame) pairs (the per-player masked
+    mean — real, currently-alive players only).
 
 The mean-per-component reduction means the weights λ, μ control the
 *relative* head importance independent of how many pass frames the batch
@@ -64,6 +71,18 @@ class LossConfig:
     # the mass an adjacent rank gets relative to the peak is exp(-1/τ)
     # (e.g. τ=0.6 → ~0.19).
     value_target_tau: float = 0.0
+    # Next-elimination aux-head knobs (6.13-5). `lambda_elim` weights the elim
+    # term in the total (0 = no elim gradient); `elim_target_tau` is its soft-
+    # ordinal smoothing (tau=0 is one-hot, same family as `value_target_tau`).
+    # `elim_bin_weights` is optional per-bin CE weights for the class imbalance
+    # measured in 6.13-6 (None = unweighted; Stage 1 runs unweighted, weights
+    # are the pre-registered floor-miss remedy). When set, the weight applies to
+    # both the hard reporting CE and the soft objective, so `elim == elim_soft`
+    # still holds at tau=0. The elim term is a no-op unless the model emits
+    # `elim_logits`, so these defaults leave non-elim runs untouched.
+    lambda_elim: float = 0.0
+    elim_target_tau: float = 0.0
+    elim_bin_weights: tuple[float, ...] | None = None
 
     def __post_init__(self) -> None:
         if self.lambda_value < 0:
@@ -74,6 +93,21 @@ class LossConfig:
             raise ValueError(
                 f"value_target_tau must be >= 0; got {self.value_target_tau}"
             )
+        if self.lambda_elim < 0:
+            raise ValueError(f"lambda_elim must be >= 0; got {self.lambda_elim}")
+        if self.elim_target_tau < 0:
+            raise ValueError(
+                f"elim_target_tau must be >= 0; got {self.elim_target_tau}"
+            )
+        if self.elim_bin_weights is not None:
+            weights = tuple(float(w) for w in self.elim_bin_weights)
+            if any(w < 0 for w in weights):
+                raise ValueError(
+                    f"elim_bin_weights must be non-negative; got {weights}"
+                )
+            # Coerce to tuple (a config JSON hands a list) so the frozen
+            # dataclass stays hashable and the @cache weight-tensor key is stable.
+            object.__setattr__(self, "elim_bin_weights", weights)
 
 
 @cache
@@ -91,6 +125,19 @@ def _soft_target_kernel(
     ranks = torch.arange(n_classes, dtype=torch.float32, device=device)
     dist = (ranks.unsqueeze(0) - ranks.unsqueeze(1)).abs()
     return F.softmax(-dist / tau, dim=1)
+
+
+@cache
+def _elim_weight_tensor(
+    weights: tuple[float, ...], device: torch.device
+) -> torch.Tensor:
+    """Per-bin CE weight vector for the elim head, as an fp32 device tensor.
+
+    Cached per `(weights, device)` — the tuple is hashable (LossConfig coerces
+    it) so it keys the cache directly. fp32 because autocast routes
+    cross_entropy to fp32.
+    """
+    return torch.tensor(weights, dtype=torch.float32, device=device)
 
 
 # Shared no-knobs-set instance: the default for `bc_loss` / `run_val`
@@ -128,6 +175,15 @@ def bc_loss(
         - `pass`:     pass BCE (mean over batch)
         - `n_non_pass`: 0-d int tensor, number of non-pass frames in the batch
                        (debugging signal for the overfit harness)
+
+    When `model_out` carries `elim_logits` (the next-elimination head is built),
+    three more keys appear (absent otherwise, so non-elim runs are unchanged):
+        - `elim`:      hard elim CE, masked-mean over alive (player, frame)
+                       pairs — the reporting metric
+        - `elim_soft`: soft-target elim CE, the trained objective
+                       (same tensor as `elim` at τ=0)
+        - `n_elim`:    0-d int tensor, count of alive (player, frame) pairs
+                       (the accumulator weight for the elim means)
     """
     policy_logits = model_out["policy_logits"]  # [B, 8, H, W]
     pass_logit = model_out["pass_logit"]        # [B]
@@ -186,14 +242,64 @@ def bc_loss(
 
     total = policy_ce + cfg.lambda_value * value_soft + cfg.mu_pass * pass_bce
 
-    return {
-        "total": total,
+    out = {
         "policy": policy_ce,
         "value": value_ce,
         "value_soft": value_soft,
         "pass": pass_bce,
         "n_non_pass": n_non_pass,
     }
+
+    # --- Elim CE (only when the model emits the head's logits) ---
+    # A disabled head is a clean no-op: existing consumers are untouched, and
+    # the per-player masked-mean reduction added here is the discrimination the
+    # value head lacks.
+    if "elim_logits" in model_out:
+        elim_logits = model_out["elim_logits"]          # [B, 8, n_bins]
+        elim_bin_target = targets["elim_bin_target"]    # [B, 8] int64
+        elim_alive_mask = targets["elim_alive_mask"]    # [B, 8] bool
+        n_bins = elim_logits.shape[2]
+        weight = (
+            _elim_weight_tensor(cfg.elim_bin_weights, elim_logits.device)
+            if cfg.elim_bin_weights is not None
+            else None
+        )
+        # Per-(player, frame) CE with reduction="none" so we apply the alive
+        # mask + masked mean ourselves. Hard CE against the bin label is the
+        # reporting metric; the soft variant (soft ordinal targets) is the
+        # objective at τ>0. Weight, when set, applies to both — so they stay
+        # equal at τ=0.
+        logits_flat = elim_logits.reshape(-1, n_bins)            # [B·8, n_bins]
+        target_flat = elim_bin_target.reshape(-1)                # [B·8]
+        ce_hard = F.cross_entropy(
+            logits_flat, target_flat, weight=weight, reduction="none"
+        ).reshape(elim_logits.shape[:2])                         # [B, 8]
+        if cfg.elim_target_tau > 0:
+            kernel = _soft_target_kernel(
+                cfg.elim_target_tau, n_bins, elim_logits.device
+            )
+            ce_soft = F.cross_entropy(
+                logits_flat, kernel[target_flat], weight=weight, reduction="none"
+            ).reshape(elim_logits.shape[:2])
+        else:
+            ce_soft = ce_hard
+
+        # Masked mean over alive (player, frame) pairs. Channel 0 (self) is
+        # always alive in-trajectory, so the denominator is ≥ B — the
+        # clamp(min=1) mirrors the policy-CE safe divide as cheap insurance.
+        mask = elim_alive_mask.to(ce_hard.dtype)                 # [B, 8]
+        n_elim = elim_alive_mask.sum()                           # 0-d, stays on device
+        denom = n_elim.clamp(min=1)
+        elim = (ce_hard * mask).sum() / denom
+        elim_soft = (ce_soft * mask).sum() / denom
+
+        total = total + cfg.lambda_elim * elim_soft
+        out["elim"] = elim
+        out["elim_soft"] = elim_soft
+        out["n_elim"] = n_elim
+
+    out["total"] = total
+    return out
 
 
 @dataclass
@@ -211,9 +317,11 @@ class LossAccumulator:
         the epoch mean weights each batch by its sample count `B`.
       - `total` is *derived* from the component epoch means using the
         `cfg` weights. This preserves the identity
-        `total == policy + λ·value_soft + μ·pass` at every aggregation
-        level — useful when reading the log to see which head is driving
-        the loss. `cfg` must match the one given to `bc_loss`.
+        `total == policy + λ·value_soft + μ·pass [+ λ_elim·elim_soft]` at
+        every aggregation level — useful when reading the log to see which
+        head is driving the loss. `cfg` must match the one given to `bc_loss`.
+        The elim term contributes only when elim batches were folded in
+        (otherwise `elim_soft` and `lambda_elim` are both 0).
 
     One accumulator per epoch per split (train + val each get their own).
     No `reset()` — instantiate a fresh accumulator at the start of each
@@ -227,6 +335,12 @@ class LossAccumulator:
     sum_value: float = 0.0       # weighted by batch_size per batch
     sum_value_soft: float = 0.0  # weighted by batch_size per batch
     sum_pass: float = 0.0        # weighted by batch_size per batch
+    # Elim means use their own weight: the alive (player, frame) count, distinct
+    # from both n_non_pass and n_samples. Stay zero for non-elim runs (the keys
+    # are absent from `bc_loss`'s return), so the elim term drops out of total.
+    n_elim: int = 0
+    sum_elim: float = 0.0        # weighted by n_elim per batch
+    sum_elim_soft: float = 0.0   # weighted by n_elim per batch
 
     def update(
         self,
@@ -241,6 +355,12 @@ class LossAccumulator:
         self.sum_value += losses["value"].item() * batch_size
         self.sum_value_soft += losses["value_soft"].item() * batch_size
         self.sum_pass += losses["pass"].item() * batch_size
+        # Elim keys appear only when the head is built; weight by n_elim.
+        if "elim" in losses:
+            n_e = int(losses["n_elim"].item())
+            self.n_elim += n_e
+            self.sum_elim += losses["elim"].item() * n_e
+            self.sum_elim_soft += losses["elim_soft"].item() * n_e
 
     def summary(self) -> dict[str, float | int]:
         """
@@ -254,8 +374,19 @@ class LossAccumulator:
         value = self.sum_value / self.n_samples if self.n_samples > 0 else 0.0
         value_soft = self.sum_value_soft / self.n_samples if self.n_samples > 0 else 0.0
         pass_ = self.sum_pass / self.n_samples if self.n_samples > 0 else 0.0
-        total = policy + self.cfg.lambda_value * value_soft + self.cfg.mu_pass * pass_
-        return {
+        # Elim means weight by the running alive-pair count, NOT n_samples.
+        elim = self.sum_elim / self.n_elim if self.n_elim > 0 else 0.0
+        elim_soft = self.sum_elim_soft / self.n_elim if self.n_elim > 0 else 0.0
+        # Hardcoded total identity — must carry the elim term or the component
+        # sum silently breaks for elim runs. Inert for non-elim runs: lambda_elim
+        # defaults to 0 and elim_soft is 0 when no elim batches were folded.
+        total = (
+            policy
+            + self.cfg.lambda_value * value_soft
+            + self.cfg.mu_pass * pass_
+            + self.cfg.lambda_elim * elim_soft
+        )
+        summary: dict[str, float | int] = {
             "policy": policy,
             "value": value,
             "value_soft": value_soft,
@@ -264,3 +395,10 @@ class LossAccumulator:
             "n_non_pass": self.n_non_pass,
             "n_samples": self.n_samples,
         }
+        # Presence-gate the elim entries so non-elim summaries are byte-identical
+        # to before.
+        if self.n_elim > 0:
+            summary["elim"] = elim
+            summary["elim_soft"] = elim_soft
+            summary["n_elim"] = self.n_elim
+        return summary

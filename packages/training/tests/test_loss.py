@@ -27,16 +27,24 @@ from training.bc.loss import LossAccumulator, LossConfig, bc_loss
 def _fake_losses(
     policy: float, value: float, pass_: float, n_non_pass: int,
     value_soft: float | None = None,
+    elim: float | None = None, elim_soft: float | None = None,
+    n_elim: int | None = None,
 ) -> dict[str, torch.Tensor]:
     """Mimic the `bc_loss` return dict shape with synthetic scalars.
-    `value_soft` defaults to `value` (the τ=0 relationship)."""
-    return {
+    `value_soft` defaults to `value` (the τ=0 relationship). The elim keys are
+    omitted unless `elim` is given — matching a non-elim `bc_loss` return."""
+    out = {
         "policy": torch.tensor(policy),
         "value": torch.tensor(value),
         "value_soft": torch.tensor(value if value_soft is None else value_soft),
         "pass": torch.tensor(pass_),
         "n_non_pass": torch.tensor(n_non_pass),
     }
+    if elim is not None:
+        out["elim"] = torch.tensor(elim)
+        out["elim_soft"] = torch.tensor(elim if elim_soft is None else elim_soft)
+        out["n_elim"] = torch.tensor(n_elim if n_elim is not None else 0)
+    return out
 
 
 def test_weighted_means_and_total_reconciliation() -> None:
@@ -72,6 +80,160 @@ def test_weighted_means_and_total_reconciliation() -> None:
 
     assert s["n_non_pass"] == 6
     assert s["n_samples"] == 16
+
+
+def _elim_batch(B: int, n_bins: int, seed: int = 0):
+    """A minimal `(model_out, targets)` pair carrying the elim head's logits +
+    per-player targets, plus the other heads' tensors so `bc_loss` runs whole."""
+    torch.manual_seed(seed)
+    model_out = {
+        "policy_logits": torch.randn(B, 8, 4, 4),
+        "pass_logit": torch.randn(B),
+        "value_logits": torch.randn(B, 8),
+        "elim_logits": torch.randn(B, 8, n_bins),
+    }
+    alive = torch.ones(B, 8, dtype=torch.bool)
+    alive[:, 5:] = False               # mask out a few channels (dead/phantom)
+    targets = {
+        "mask": torch.ones(B, 4, 4, 8, dtype=torch.bool),
+        "action_target": torch.full((B,), _PASS_FLAT_IDX, dtype=torch.int64),
+        "is_pass": torch.ones(B, dtype=torch.bool),
+        "value_target": torch.zeros(B, dtype=torch.int64),
+        "elim_bin_target": torch.randint(0, n_bins, (B, 8)),
+        "elim_alive_mask": alive,
+    }
+    return model_out, targets
+
+
+def test_bc_loss_elim_masked_mean_and_total_identity() -> None:
+    """Elim term: `elim` is the per-player CE averaged over alive (player,
+    frame) pairs only (masked-out channels don't contribute), `n_elim` is the
+    alive count, and `total` reconciles with all four components including the
+    elim term. τ=0 keeps `elim_soft == elim`."""
+    B, n_bins = 4, 8
+    model_out, targets = _elim_batch(B, n_bins, seed=1)
+    cfg = LossConfig(lambda_elim=0.3)
+    losses = bc_loss(model_out, targets, cfg)
+
+    assert {"elim", "elim_soft", "n_elim"} <= losses.keys()
+    alive = targets["elim_alive_mask"]
+    assert int(losses["n_elim"]) == int(alive.sum())
+
+    # Hand-compute the masked per-player mean.
+    ce = torch.nn.functional.cross_entropy(
+        model_out["elim_logits"].reshape(-1, n_bins),
+        targets["elim_bin_target"].reshape(-1),
+        reduction="none",
+    ).reshape(B, 8)
+    expected = (ce * alive).sum() / alive.sum()
+    assert losses["elim"].item() == pytest.approx(expected.item(), rel=1e-6)
+    # τ=0 → soft equals hard.
+    assert losses["elim_soft"].item() == pytest.approx(losses["elim"].item(), rel=1e-6)
+
+    # Total carries the elim term alongside the other three.
+    expected_total = (
+        losses["policy"]
+        + cfg.lambda_value * losses["value_soft"]
+        + cfg.mu_pass * losses["pass"]
+        + cfg.lambda_elim * losses["elim_soft"]
+    )
+    assert losses["total"].item() == pytest.approx(expected_total.item(), rel=1e-6)
+
+
+def test_bc_loss_elim_mask_excludes_dead_channels() -> None:
+    """Masked-out channels are genuinely excluded: flipping a masked channel's
+    target (which would change an *unmasked* mean) leaves `elim` unchanged."""
+    B, n_bins = 3, 8
+    model_out, targets = _elim_batch(B, n_bins, seed=2)
+    base = bc_loss(model_out, targets, LossConfig(lambda_elim=0.5))
+
+    # Perturb a masked (dead) channel's target — must not move the loss.
+    perturbed = dict(targets)
+    bt = targets["elim_bin_target"].clone()
+    bt[:, 7] = (bt[:, 7] + 3) % n_bins        # channel 7 is masked off
+    perturbed["elim_bin_target"] = bt
+    after = bc_loss(model_out, perturbed, LossConfig(lambda_elim=0.5))
+    assert after["elim"].item() == pytest.approx(base["elim"].item(), rel=1e-6)
+
+
+def test_bc_loss_elim_soft_differs_at_tau() -> None:
+    """τ>0 makes the soft elim CE diverge from the hard reporting CE, and the
+    total reconciles against the soft objective."""
+    B, n_bins = 4, 8
+    model_out, targets = _elim_batch(B, n_bins, seed=3)
+    cfg = LossConfig(lambda_elim=0.2, elim_target_tau=1.0)
+    losses = bc_loss(model_out, targets, cfg)
+    assert losses["elim_soft"].item() != pytest.approx(losses["elim"].item())
+    expected_total = (
+        losses["policy"]
+        + cfg.lambda_value * losses["value_soft"]
+        + cfg.mu_pass * losses["pass"]
+        + cfg.lambda_elim * losses["elim_soft"]
+    )
+    assert losses["total"].item() == pytest.approx(expected_total.item(), rel=1e-6)
+
+
+def test_bc_loss_no_elim_keys_without_head() -> None:
+    """A model_out without `elim_logits` yields no elim keys and a total
+    untouched by `lambda_elim` — the disabled-head no-op."""
+    B = 4
+    torch.manual_seed(0)
+    model_out = {
+        "policy_logits": torch.randn(B, 8, 4, 4),
+        "pass_logit": torch.randn(B),
+        "value_logits": torch.randn(B, 8),
+    }
+    targets = {
+        "mask": torch.ones(B, 4, 4, 8, dtype=torch.bool),
+        "action_target": torch.full((B,), _PASS_FLAT_IDX, dtype=torch.int64),
+        "is_pass": torch.ones(B, dtype=torch.bool),
+        "value_target": torch.zeros(B, dtype=torch.int64),
+    }
+    with_lambda = bc_loss(model_out, targets, LossConfig(lambda_elim=0.9))
+    assert "elim" not in with_lambda and "n_elim" not in with_lambda
+    baseline = bc_loss(model_out, targets, LossConfig(lambda_elim=0.0))
+    assert with_lambda["total"].item() == pytest.approx(baseline["total"].item())
+
+
+def test_accumulator_elim_weighted_by_alive_count() -> None:
+    """The accumulator weights elim means by the per-batch alive count `n_elim`
+    (distinct from n_non_pass / n_samples), and the epoch total carries the
+    elim term."""
+    cfg = LossConfig(lambda_elim=0.4)
+    acc = LossAccumulator(cfg)
+    acc.update(
+        _fake_losses(policy=2.0, value=1.0, pass_=0.5, n_non_pass=4,
+                     elim=1.2, elim_soft=1.1, n_elim=10),
+        batch_size=8,
+    )
+    acc.update(
+        _fake_losses(policy=1.0, value=2.0, pass_=0.3, n_non_pass=2,
+                     elim=0.6, elim_soft=0.5, n_elim=30),
+        batch_size=8,
+    )
+    s = acc.summary()
+    # Elim weighted by n_elim: (1.2*10 + 0.6*30) / 40, soft likewise.
+    assert s["elim"] == pytest.approx((1.2 * 10 + 0.6 * 30) / 40)
+    assert s["elim_soft"] == pytest.approx((1.1 * 10 + 0.5 * 30) / 40)
+    assert s["n_elim"] == 40
+    expected_total = (
+        s["policy"] + cfg.lambda_value * s["value_soft"]
+        + cfg.mu_pass * s["pass"] + cfg.lambda_elim * s["elim_soft"]
+    )
+    assert s["total"] == pytest.approx(expected_total)
+
+
+def test_accumulator_no_elim_keys_for_non_elim_run() -> None:
+    """Without elim batches, the summary is byte-identical to before — no elim
+    keys, total unchanged."""
+    acc = LossAccumulator(LossConfig(lambda_elim=0.5))
+    acc.update(_fake_losses(policy=2.0, value=1.0, pass_=0.5, n_non_pass=4), batch_size=8)
+    s = acc.summary()
+    assert "elim" not in s and "n_elim" not in s
+    # lambda_elim set but no elim folded → term is 0.
+    assert s["total"] == pytest.approx(
+        s["policy"] + 0.5 * s["value_soft"] + 1.0 * s["pass"]
+    )
 
 
 def test_all_pass_batch_contributes_zero_policy_weight() -> None:

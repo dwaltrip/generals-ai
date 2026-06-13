@@ -22,6 +22,7 @@ from __future__ import annotations
 import torch
 import torch.nn as nn
 
+from training.bc.model.heads.elimination import EliminationHead
 from training.bc.model.heads.pass_head import PassHead
 from training.bc.model.heads.policy import PolicyHead
 from training.bc.model.heads.value import ValueHead
@@ -58,6 +59,14 @@ class BCModel(nn.Module):
             dropout2d_site=cfg.value_head_dropout2d_site,
             skip_dropout2d_p=cfg.value_head_skip_dropout2d,
         )
+        # Arch-gated aux head: constructed only when enabled, so a disabled
+        # model carries zero extra state_dict keys and every pre-elim checkpoint
+        # still loads strict=True. Assigning `None` registers no submodule.
+        self.elim_head = (
+            EliminationHead(in_ch=cfg.outer_width, n_bins=cfg.elim_n_bins)
+            if cfg.elim_head_enabled
+            else None
+        )
 
     def forward(
         self, obs: torch.Tensor, valid_mask: torch.Tensor
@@ -72,10 +81,15 @@ class BCModel(nn.Module):
             legality mask)
           - `pass_logit`: `[B]`              (pre-sigmoid; masked pool)
           - `value_logits`: `[B, 8]`          (padded cells masked before flatten)
+          - `elim_logits`: `[B, 8, n_bins]`   (only when the elim head is built;
+            downstream consumers presence-gate on the key)
         """
         trunk_out = self.trunk(obs)
-        return {
+        out = {
             "policy_logits": self.policy_head(trunk_out),
             "pass_logit": self.pass_head(trunk_out, valid_mask),
             "value_logits": self.value_head(trunk_out, valid_mask),
         }
+        if self.elim_head is not None:
+            out["elim_logits"] = self.elim_head(trunk_out, valid_mask)
+        return out

@@ -8,6 +8,7 @@ import from the specific module.
 """
 
 from training.bc.model.bc_model import BCModel
+from training.bc.model.heads.elimination import EliminationHead
 from training.bc.model.heads.pass_head import PassHead
 from training.bc.model.heads.policy import MASK_NEG, PolicyHead, flatten_policy_logits
 from training.bc.model.heads.value import ValueHead
@@ -17,6 +18,7 @@ from training.bc.model.trunk import PyramidModule
 __all__ = [
     "MASK_NEG",
     "BCModel",
+    "EliminationHead",
     "PassHead",
     "PolicyHead",
     "PyramidModule",
