@@ -1,3 +1,5 @@
+# Analysis results
+analysis/probes
 
 # Manifests at `data/training/splits/` stay tracked
 training/bench
@@ -6,6 +8,7 @@ training/probes
 training/runs
 training/runs-cloud
 training/sweeps
+
 # Eval: map packs are regenerable (tracked manifest + DB); runs-cloud holds
 # pulled cloud-run artifacts.
 eval/map-sets/*/maps-*.jsonl.gz
