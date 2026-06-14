@@ -130,29 +130,29 @@ class _ElimCtx:
     call for that game. Both elim variants read off this one precompute.
     """
 
-    edges: np.ndarray          # [n_bins - 1] strictly-increasing bin edges
+    edges: np.ndarray | None   # [n_bins - 1] strictly-increasing bin edges; None for next_death
     death_by_slot: np.ndarray  # [8] int64 — elim timestep; winner sentinel; -1 = phantom
     is_real: np.ndarray        # [8] bool — slot actually played this game
     sentinel: int              # winner's stand-in death tick (> any real death)
 
 
 def _precompute_elim(
-    sim: dict[str, np.ndarray], edges: np.ndarray
+    sim: dict[str, np.ndarray], edges: np.ndarray | None
 ) -> tuple[np.ndarray, np.ndarray, int]:
     """Per-game `(death_by_slot, is_real, sentinel)` for the elim targets.
 
     `death_by_slot[s]` is slot `s`'s elimination timestep, the large finite
-    winner `sentinel` (`T + max_edge`; integer-typed, not `np.inf`) for the one
-    real slot absent from `death_events`, or `-1` for a phantom slot that never
-    played. `is_real[s]` marks the slots present at t=0. The winner-vs-phantom
-    split is what `real_slots` resolves: the winner is real-and-absent-from-
-    deaths, a phantom is not-real — and only the latter must be masked out.
+    winner `sentinel` (integer-typed, not `np.inf`) for the one real slot absent
+    from `death_events`, or `-1` for a phantom slot that never played.
+    `is_real[s]` marks the slots present at t=0. The winner-vs-phantom split is
+    what `real_slots` resolves: the winner is real-and-absent-from-deaths, a
+    phantom is not-real — and only the latter must be masked out.
 
-    `sentinel = T + max_edge` is sized for the time_bin head (so the winner's
-    `Δ = sentinel − t` always lands in the top "never" bin); the next_death head
-    reuses it only as "larger than any real death tick" (real deaths are ≤ T−1),
-    so the winner never wins the soonest-death argmin unless it is the lone
-    survivor.
+    The sentinel only has to exceed every real death tick (real deaths are ≤
+    T−1) so the winner never wins the soonest-death argmin unless it is the lone
+    survivor. For the time_bin head it is additionally sized as `T + max_edge`
+    so the winner's `Δ = sentinel − t` lands in the top "never" bin; next_death
+    passes no edges and uses `T + 1`.
 
     The obs encoder always runs at P=8 and `opp_slots` always yields 7 ids from
     `range(8)`, but FFA games can start with <8 players (~7% of the corpus, see
@@ -163,7 +163,7 @@ def _precompute_elim(
     real = np.unique(own0)
     real = real[real >= 0].astype(np.intp)
     T = sim["ownership"].shape[0]
-    sentinel = T + int(edges[-1])
+    sentinel = T + (int(edges[-1]) if edges is not None else 1)
 
     death_by_slot = np.full(8, -1, dtype=np.int64)
     death_by_slot[real] = sentinel  # winner default; dead slots overwritten below
@@ -188,6 +188,7 @@ def _elim_targets(
     into a bin; the winner's large sentinel Δ lands in the top bin (merged with
     "never"). Dead and phantom channels get bin 0, masked out by `alive`.
     """
+    assert elim.edges is not None, "time_bin targets require bin edges"
     raw = np.asarray(raw_order, dtype=np.intp)
     death_ch = elim.death_by_slot[raw]
     alive = elim.is_real[raw] & (death_ch > t)
@@ -376,16 +377,18 @@ class IterableDataset(TorchIterableDataset):
         the training loop doesn't consume them, and the extra keys would ride
         through collate + device transfer for nothing.
 
-        `elim_bin_edges`, when set, switches on an elimination head's per-frame
-        targets; `elim_head_variant` selects which (`"time_bin"` →
-        `elim_bin_target`/`elim_alive_mask`; `"next_death"` →
-        `next_elim_target`/`next_elim_alive_mask`/`next_elim_dt`). Pass the
-        model's `arch.elim_bin_edges` + `arch.elim_head_variant` iff the elim
-        head is enabled (`arch.elim_head_variant is not None`); the edges are
-        needed by both variants (they size the per-game precompute's winner
-        sentinel). `None` edges leave the targets off, so non-elim runs are
-        unaffected.
+        `elim_head_variant`, when set, switches on an elimination head's
+        per-frame targets and selects which: `"time_bin"` →
+        `elim_bin_target`/`elim_alive_mask` (requires `elim_bin_edges` — they
+        size the bins and the winner sentinel); `"next_death"` →
+        `next_elim_target`/`next_elim_alive_mask`/`next_elim_dt` (no edges — the
+        next-victim target is invariant to them, so the sentinel is just "beyond
+        the last tick"). Pass the model's `arch.elim_head_variant` (+
+        `arch.elim_bin_edges` for time_bin) iff the elim head is enabled. A
+        `None` variant leaves the targets off, so non-elim runs are unaffected.
         """
+        if elim_head_variant == "time_bin" and elim_bin_edges is None:
+            raise ValueError("time_bin elim head requires elim_bin_edges")
         self._groups = _group_by_path(samples)
         self._seed = seed
         self._obs_cfg = obs_cfg
@@ -542,7 +545,7 @@ class IterableDataset(TorchIterableDataset):
             # once per game, not per perspective). `None` when the head is off.
             elim_ctx = (
                 _ElimCtx(self._elim_edges, *_precompute_elim(sim, self._elim_edges))
-                if self._elim_edges is not None
+                if self._elim_variant is not None
                 else None
             )
 
