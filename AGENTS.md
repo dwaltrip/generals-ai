@@ -2,6 +2,8 @@
 
 Building an AI bot to play the [generals.io](https://generals.io) strategy game in FFA mode.
 
+Always check [`README.md`](./README.md) — it carries current material this file doesn't duplicate (e.g. the frozen-representation probe tooling). It's known to be partly out of date and is being brought back into sync over time, so prefer the docs it links and this file where they conflict, but read it for anything not covered here.
+
 ## Sub-projects
 
 ### replay-collector
