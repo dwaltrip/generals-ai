@@ -208,7 +208,10 @@ def cache_probe_features(
         if not obs_buf:
             return
         obs_batch = torch.stack(obs_buf).to(device).float()
-        feats_chunks.append(source(obs_batch).cpu())
+        # Store features fp16 on CPU — the [N, C, H, W] cache is the run's memory
+        # ceiling (≈0.75 MB/frame at C=192), so fp16 halves it. Minibatches cast
+        # back to fp32 at train/eval time.
+        feats_chunks.append(source(obs_batch).cpu().half())
         target_chunks.append(torch.stack([e["target"] for e in extracted_buf]))
         for key in extracted_buf[0]:
             if key == "target":
@@ -221,8 +224,9 @@ def cache_probe_features(
     for frame in ds:
         obs_buf.append(frame["obs"])
         extracted_buf.append(task.extract_target(frame))
-        if len(obs_buf) >= chunk:
-            flush()
+        # Cap check precedes the chunk-flush: trim the still-buffered overflow to
+        # land exactly on max_frames, then flush + stop. (If the chunk-flush ran
+        # first it would commit past the cap, leaving nothing to trim.)
         if max_frames is not None and n_kept + len(obs_buf) >= max_frames:
             overflow = (n_kept + len(obs_buf)) - max_frames
             if overflow > 0:
@@ -230,6 +234,8 @@ def cache_probe_features(
                 del extracted_buf[-overflow:]
             flush()
             break
+        if len(obs_buf) >= chunk:
+            flush()
     flush()
 
     return ProbeCache(
@@ -258,7 +264,7 @@ def _evaluate(
     with torch.no_grad():
         for start in range(0, cache.n, batch_size):
             sl = slice(start, start + batch_size)
-            feats = cache.feats[sl].to(device)
+            feats = cache.feats[sl].to(device).float()
             aux = {k: v[sl].to(device) for k, v in cache.aux.items()}
             preds.append(head(feats, aux).cpu().float())
     pred = torch.cat(preds, dim=0)
@@ -302,7 +308,7 @@ def train_probe_head(
         perm = torch.randperm(train.n, generator=rng)
         for start in range(0, train.n, batch_size):
             idx = perm[start : start + batch_size]
-            feats = train.feats[idx].to(device)
+            feats = train.feats[idx].to(device).float()
             target = train.target[idx].to(device)
             aux = {k: v[idx].to(device) for k, v in train.aux.items()}
             optim.zero_grad()
