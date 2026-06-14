@@ -141,6 +141,32 @@ class FrameRecordCapture:
             self._push("elim_bin_target", host_batch["elim_bin_target"])
             self._push("elim_alive_mask", host_batch["elim_alive_mask"])
 
+        # who-dies-next head: the cross-player softmax over the alive field, its
+        # per-frame CE, the next-victim target, the alive mask, and the
+        # ticks-to-next-death horizon. The horizon (`next_elim_dt`) is dumped so
+        # the confidence-ramp / horizon-stratified reads are computable offline
+        # without a re-run. Masked to the alive players (dead/phantom → -inf →
+        # prob 0); winner-tail frames (target -1) get NaN CE (nan-aware
+        # reductions downstream), mirroring the pass-frame policy CE.
+        if "next_elim_logits" in out:
+            nd_alive = moved_batch["next_elim_alive_mask"]
+            nd_logits = out["next_elim_logits"].float().masked_fill(
+                ~nd_alive, float("-inf")
+            )
+            nd_logp = F.log_softmax(nd_logits, dim=1)               # [B, 8]
+            nd_target = moved_batch["next_elim_target"]            # [B]; -1 = none
+            nd_ce = -nd_logp.gather(
+                1, nd_target.clamp(min=0).unsqueeze(1)
+            ).squeeze(1)
+            nd_ce = torch.where(
+                nd_target < 0, torch.full_like(nd_ce, float("nan")), nd_ce
+            )
+            self._push("next_elim_probs", nd_logp.exp().to(torch.float16))
+            self._push("next_elim_ce", nd_ce)
+            self._push("next_elim_target", host_batch["next_elim_target"])
+            self._push("next_elim_alive_mask", host_batch["next_elim_alive_mask"])
+            self._push("next_elim_dt", host_batch["next_elim_dt"])
+
         self.n_frames += int(host_batch["is_pass"].shape[0])
 
     def finalize(
@@ -172,6 +198,7 @@ def iter_val_forward(
     obs_cfg: ObsConfig,
     include_frame_info: bool,
     elim_bin_edges: tuple[int, ...] | None,
+    elim_head_variant: str | None = None,
     seed: int = 0,
     amp_dtype: torch.dtype | None = None,
     pin_memory: bool | None = None,
@@ -195,6 +222,7 @@ def iter_val_forward(
         obs_cfg=obs_cfg,
         include_frame_info=include_frame_info,
         elim_bin_edges=elim_bin_edges,
+        elim_head_variant=elim_head_variant,
     )
     loader = DataLoader(
         ds,
@@ -242,7 +270,8 @@ def capture_val_frames(
     walked sample list back to full-val-split positions for `finalize`.
     """
     capture = FrameRecordCapture()
-    elim_bin_edges = model.cfg.elim_bin_edges if model.cfg.elim_head_enabled else None
+    elim_on = model.cfg.elim_head_variant is not None
+    elim_bin_edges = model.cfg.elim_bin_edges if elim_on else None
     start = time.perf_counter()
     last_report = start
     for host_batch, moved, out in iter_val_forward(
@@ -254,6 +283,7 @@ def capture_val_frames(
         obs_cfg=model.cfg.obs,
         include_frame_info=True,
         elim_bin_edges=elim_bin_edges,
+        elim_head_variant=model.cfg.elim_head_variant,
     ):
         capture.add_batch(host_batch, moved, out)
         if progress_every_sec is not None:

@@ -59,7 +59,7 @@ def test_lambda_elim_requires_enabled_head(tmp_path: Path) -> None:
     # With the head enabled it constructs, and the weights coerce to a tuple.
     cfg = TrainConfig(
         **paths,
-        arch=build_model_cfg(elim_head_enabled=True),
+        arch=build_model_cfg(elim_head_variant="time_bin"),
         lambda_elim=0.1,
         elim_bin_weights=[1.0, 2.0, 0.5],
     )

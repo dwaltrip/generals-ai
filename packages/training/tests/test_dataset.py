@@ -14,6 +14,7 @@ from training.bc.dataset import (
     IterableDataset,
     _elim_targets,
     _ElimCtx,
+    _next_death_target,
     _precompute_elim,
     _shuffle_buffered,
 )
@@ -156,9 +157,9 @@ def test_elim_precompute_winner_vs_phantom() -> None:
     sentinel, phantom slots (never played) the -1 marker."""
     # 4-player game: slots 0..3 real, 4..7 phantom. Slot 0 wins; 1/2/3 die.
     sim = _synthetic_sim([0, 1, 2, 3], [(10, 1), (20, 2), (30, 3)], T=40)
-    death_by_slot, is_real = _precompute_elim(sim, _ELIM_EDGES)
+    death_by_slot, is_real, sentinel = _precompute_elim(sim, _ELIM_EDGES)
 
-    sentinel = 40 + 640
+    assert sentinel == 40 + 640
     assert list(death_by_slot) == [sentinel, 10, 20, 30, -1, -1, -1, -1]
     assert list(is_real) == [True, True, True, True, False, False, False, False]
 
@@ -184,6 +185,43 @@ def test_elim_targets_masks_phantom_and_dead_channels() -> None:
     assert not alive2[1]            # death (10) > 15 is False → dead
     assert alive2[0] and alive2[2] and alive2[3]
     assert not alive2[4:].any()    # phantoms still masked
+
+
+def test_next_death_target_picks_soonest_and_masks_winner_tail() -> None:
+    """who-dies-next target: the next victim is the alive channel with the
+    soonest death; the alive mask is the softmax domain; winner-tail frames (only
+    the winner left) return target/-dt = -1 so the loss ignores them."""
+    # Slots 0..3 real; 0 wins; deaths at 10/20/30 for slots 1/2/3.
+    sim = _synthetic_sim([0, 1, 2, 3], [(10, 1), (20, 2), (30, 3)], T=40)
+    elim = _ElimCtx(_ELIM_EDGES, *_precompute_elim(sim, _ELIM_EDGES))
+    raw_order = [0, 1, 2, 3, 4, 5, 6, 7]
+
+    # At t=5: all four real players alive; soonest death is slot 1 at t=10.
+    nxt, alive, dt = _next_death_target(elim, raw_order, t=5)
+    assert nxt == 1 and dt == 5
+    assert list(alive) == [True, True, True, True, False, False, False, False]
+
+    # At t=15 (slot 1 dead): next victim is slot 2 (death 20), dt=5.
+    nxt2, alive2, dt2 = _next_death_target(elim, raw_order, t=15)
+    assert nxt2 == 2 and dt2 == 5
+    assert not alive2[1]
+
+    # At t=35 (all opponents dead, only the winner left): no real next death →
+    # masked frame.
+    nxt3, alive3, dt3 = _next_death_target(elim, raw_order, t=35)
+    assert nxt3 == -1 and dt3 == -1
+    assert list(alive3) == [True, False, False, False, False, False, False, False]
+
+
+def test_next_death_target_ties_resolve_to_lowest_channel() -> None:
+    """Two deaths at the same tick resolve to the lowest canonical channel index
+    (argmin's first-min rule) — the fixed tie convention."""
+    # Slots 2 and 3 both die at t=20.
+    sim = _synthetic_sim([0, 1, 2, 3], [(10, 1), (20, 2), (20, 3)], T=40)
+    elim = _ElimCtx(_ELIM_EDGES, *_precompute_elim(sim, _ELIM_EDGES))
+    raw_order = [0, 1, 2, 3, 4, 5, 6, 7]
+    nxt, _alive, dt = _next_death_target(elim, raw_order, t=15)
+    assert nxt == 2 and dt == 5   # channel 2 over channel 3
 
 
 def test_is_eligible_matches_filter(intermediate_root: Path) -> None:

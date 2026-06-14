@@ -19,7 +19,13 @@ import pytest
 import torch
 
 from training.bc.constants import H_PADDED, W_PADDED
-from training.bc.model import BCModel, EliminationHead, PassHead, ValueHead
+from training.bc.model import (
+    BCModel,
+    ElimNextDeathHead,
+    ElimTimeBinHead,
+    PassHead,
+    ValueHead,
+)
 from training.bc.model_config import build_model_cfg
 from training.bc.obs_config import OBS_CHANNELS
 
@@ -124,10 +130,10 @@ def test_elim_head_disabled_by_default_adds_no_state() -> None:
     assert "elim_logits" not in out
 
 
-def test_elim_head_enabled_shape_and_isolated_keys() -> None:
-    """Enabled: forward emits `elim_logits` shaped [B, 8, n_bins], and the only
-    state_dict keys added vs the disabled model live under `elim_head.`."""
-    cfg = build_model_cfg(elim_head_enabled=True)
+def test_elim_head_time_bin_shape_and_isolated_keys() -> None:
+    """time_bin variant: forward emits `elim_logits` shaped [B, 8, n_bins], and
+    the only state_dict keys added vs the off model live under `elim_head.`."""
+    cfg = build_model_cfg(elim_head_variant="time_bin")
     m = BCModel(cfg)
     assert m.elim_head is not None
 
@@ -137,6 +143,27 @@ def test_elim_head_enabled_shape_and_isolated_keys() -> None:
     with torch.no_grad():
         out = m(obs, vm)
     assert out["elim_logits"].shape == (3, 8, cfg.elim_n_bins)
+    assert "next_elim_logits" not in out
+
+    extra = set(m.state_dict()) - set(BCModel().state_dict())
+    assert extra and all(k.startswith("elim_head.") for k in extra)
+
+
+def test_elim_head_next_death_shape_and_isolated_keys() -> None:
+    """next_death variant: forward emits `next_elim_logits` shaped [B, 8] (one
+    per-player logit, the cross-player softmax is taken at loss time), and the
+    only added state_dict keys live under `elim_head.`."""
+    cfg = build_model_cfg(elim_head_variant="next_death")
+    m = BCModel(cfg)
+    assert m.elim_head is not None
+
+    m.eval()
+    obs = torch.zeros(3, OBS_CHANNELS, H_PADDED, W_PADDED)
+    vm = torch.ones(3, 1, H_PADDED, W_PADDED, dtype=torch.bool)
+    with torch.no_grad():
+        out = m(obs, vm)
+    assert out["next_elim_logits"].shape == (3, 8)
+    assert "elim_logits" not in out
 
     extra = set(m.state_dict()) - set(BCModel().state_dict())
     assert extra and all(k.startswith("elim_head.") for k in extra)
@@ -150,7 +177,7 @@ def test_elim_head_masked_pool_excludes_padded_cells() -> None:
     region before the pool runs."""
     torch.manual_seed(3)
     in_ch, H, W = 16, 20, 18
-    head = EliminationHead(in_ch=in_ch, n_bins=8)
+    head = ElimTimeBinHead(in_ch=in_ch, n_bins=8)
     head.eval()
 
     x = torch.randn(1, in_ch, H_PADDED, W_PADDED)
@@ -175,7 +202,7 @@ def test_elim_head_lse_pool_finite_with_finite_beta_grad() -> None:
     exponent-space with a finite sentinel instead."""
     torch.manual_seed(4)
     in_ch, H, W = 16, 20, 18
-    head = EliminationHead(in_ch=in_ch, n_bins=8, pool="lse")
+    head = ElimTimeBinHead(in_ch=in_ch, n_bins=8, pool="lse")
 
     x = torch.randn(2, in_ch, H_PADDED, W_PADDED, requires_grad=True)
     valid_mask = torch.zeros(2, 1, H_PADDED, W_PADDED, dtype=torch.bool)
@@ -196,7 +223,7 @@ def test_elim_head_lse_pool_lies_between_masked_mean_and_max() -> None:
     the pool excludes padded cells in both the sum and the max."""
     torch.manual_seed(5)
     in_ch, H, W = 16, 20, 18
-    head = EliminationHead(in_ch=in_ch, n_bins=8, pool="lse")
+    head = ElimTimeBinHead(in_ch=in_ch, n_bins=8, pool="lse")
     head.eval()
 
     x = torch.randn(1, in_ch, H_PADDED, W_PADDED)
@@ -216,11 +243,32 @@ def test_elim_head_lse_pool_lies_between_masked_mean_and_max() -> None:
     assert (out > mean_p + tol).any() and (out < max_p - tol).any()
 
 
+def test_next_death_head_shape_and_finite_beta_grad() -> None:
+    """The who-dies-next head pools to [B, 8] (one logit per player) via the
+    masked lse readout, with finite logits and a finite β gradient on a partial
+    board — the same exponent-space masking guard as the time_bin lse pool."""
+    torch.manual_seed(6)
+    in_ch, H, W = 16, 20, 18
+    head = ElimNextDeathHead(in_ch=in_ch)
+
+    x = torch.randn(2, in_ch, H_PADDED, W_PADDED, requires_grad=True)
+    valid_mask = torch.zeros(2, 1, H_PADDED, W_PADDED, dtype=torch.bool)
+    valid_mask[:, 0, :H, :W] = True
+
+    out = head(x, valid_mask)
+    assert out.shape == (2, 8)
+    assert torch.isfinite(out).all()
+
+    out.pow(2).mean().backward()
+    assert head.raw_beta.grad is not None and torch.isfinite(head.raw_beta.grad).all()
+    assert torch.isfinite(x.grad).all()
+
+
 def test_elim_head_capacity_adds_prepool_conv() -> None:
     """`hidden > 0` inserts Conv→ReLU before the readout conv: the head still
     emits [B, 8, n_bins] and gains the pre-stage's parameters."""
-    thin = EliminationHead(in_ch=192, n_bins=8, hidden=0)
-    wide = EliminationHead(in_ch=192, n_bins=8, hidden=192)
+    thin = ElimTimeBinHead(in_ch=192, n_bins=8, hidden=0)
+    wide = ElimTimeBinHead(in_ch=192, n_bins=8, hidden=192)
     assert sum(p.numel() for p in thin.pre.parameters()) == 0
     assert sum(p.numel() for p in wide.pre.parameters()) > 0
 

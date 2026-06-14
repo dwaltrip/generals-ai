@@ -47,6 +47,13 @@ VALUE_HEAD_DROPOUT2D_SITES = ("post_pre", "pre_pre")
 # the mean pool dilutes.
 ELIM_POOLS = ("mean", "lse")
 
+# The "on" variants of the elimination head — `elim_head_variant` is the single
+# gate, with `None` meaning no head (the default). "time_bin" = the original
+# per-player time-to-elimination ordinal-bucket head (6.13-5/6.13-6).
+# "next_death" = a single cross-player softmax over players for "who is
+# eliminated next" (6.13-12/6.13-13). The two are mutually exclusive.
+ELIM_HEAD_VARIANTS = ("time_bin", "next_death")
+
 
 @dataclass(frozen=True)
 class ModelConfig:
@@ -87,12 +94,20 @@ class ModelConfig:
     value_head_dropout2d_site: str
     value_head_skip_dropout2d: float
     # --- aux heads ---
-    # Next-elimination auxiliary head (6.13-5 / 6.13-6). Per-player, per-frame
-    # time-to-elimination as an ordinal-bucketed categorical, read off the shared
-    # trunk to enrich it for the policy + future PPO critic. Opt-in and
-    # arch-gated: the head is constructed only when enabled, so every pre-elim
-    # checkpoint still loads `strict=True`.
-    #   elim_head_enabled — construct the head + emit `elim_logits`.
+    # Elimination auxiliary head — read off the shared trunk to enrich it for the
+    # policy + future PPO critic. Opt-in and arch-gated: the head is constructed
+    # only when a variant is set, so every pre-elim checkpoint still loads
+    # `strict=True`.
+    #   elim_head_variant  — the single gate (see ELIM_HEAD_VARIANTS):
+    #     None         — no elim head (the default).
+    #     "time_bin"   — per-player, per-frame time-to-elimination as an
+    #                    ordinal-bucketed categorical (6.13-5/6.13-6, the
+    #                    original). Uses elim_pool / elim_bin_edges /
+    #                    elim_head_hidden below.
+    #     "next_death" — a single cross-player softmax over players for
+    #                    "who is eliminated next" (6.13-12/6.13-13). Ignores
+    #                    the time_bin-specific knobs below.
+    # The remaining elim knobs are time_bin-specific (next_death ignores them):
     #   elim_bin_edges    — geometric bin edges (strictly increasing, positive);
     #                       `n_bins = len(edges) + 1` is the derived class count
     #                       (single source of truth — the head sizes its output
@@ -103,7 +118,7 @@ class ModelConfig:
     #   elim_head_hidden  — pre-pool capacity: 0 = single linear conv (v1); >0
     #                       inserts Conv(C→hidden)→ReLU before the readout conv,
     #                       so the head can form a nonlinear per-cell feature.
-    elim_head_enabled: bool
+    elim_head_variant: str | None
     elim_bin_edges: tuple[int, ...]
     elim_pool: str
     elim_head_hidden: int
@@ -209,6 +224,12 @@ class ModelConfig:
             raise ValueError(
                 f"elim_pool must be one of {ELIM_POOLS}; got {self.elim_pool!r}"
             )
+        if not (self.elim_head_variant is None
+                or self.elim_head_variant in ELIM_HEAD_VARIANTS):
+            raise ValueError(
+                f"elim_head_variant must be None or one of {ELIM_HEAD_VARIANTS}; "
+                f"got {self.elim_head_variant!r}"
+            )
         if self.elim_head_hidden < 0:
             raise ValueError(
                 f"elim_head_hidden must be >= 0; got {self.elim_head_hidden}"
@@ -231,7 +252,7 @@ MODEL_CONFIG_DEFAULTS = ModelConfig(
     value_head_dropout=0.0,
     value_head_dropout2d_site="post_pre",
     value_head_skip_dropout2d=0.0,
-    elim_head_enabled=False,
+    elim_head_variant=None,
     elim_bin_edges=(10, 20, 40, 80, 160, 320, 640),
     elim_pool="mean",
     elim_head_hidden=0,

@@ -166,24 +166,42 @@ def test_load_missing_toplevel_key_uses_legacy(tmp_path, monkeypatch):
 
 def test_load_pre_elim_checkpoint_backfills_disabled(tmp_path):
     """A checkpoint whose `arch` predates the elim-head fields back-fills them
-    from LEGACY_ARCH (head disabled) and loads strict=True with an identical key
-    set — the entire reason the head is arch-gated. Guards the backward-compat
+    from LEGACY_ARCH (head off) and loads strict=True with an identical key set —
+    the entire reason the head is arch-gated. Guards the backward-compat
     contract: existing checkpoints keep loading after the head lands."""
     cfg = build_model_cfg()
     src = BCModel(cfg)
     arch = asdict(cfg)
-    del arch["elim_head_enabled"]   # simulate a pre-elim checkpoint
+    del arch["elim_head_variant"]   # simulate a pre-elim checkpoint
     del arch["elim_bin_edges"]
     ckpt = tmp_path / "epoch_001.pt"
     torch.save({"model": src.state_dict(), "arch": arch, "epoch": 1}, ckpt)
 
     loaded = load_bc_model(ckpt, torch.device("cpu"))
-    assert loaded.cfg.elim_head_enabled is False
+    assert loaded.cfg.elim_head_variant is None
     assert loaded.cfg.elim_bin_edges == LEGACY_ARCH.elim_bin_edges
     # No elim params on either side, and strict load already passed in
     # load_bc_model — assert key parity explicitly as the backstop.
     assert src.state_dict().keys() == loaded.state_dict().keys()
     assert not any("elim" in k for k in loaded.state_dict())
+
+
+def test_load_checkpoint_migrates_retired_elim_head_enabled(tmp_path):
+    """A checkpoint from the `elim_head_enabled` era (recorded the now-retired
+    bool, no `elim_head_variant`) migrates: `enabled=True` → `"time_bin"`. Guards
+    the `_arch_for_load` translation shim that keeps those checkpoints loadable
+    after the field was folded into `elim_head_variant`."""
+    cfg = build_model_cfg(elim_head_variant="time_bin")
+    src = BCModel(cfg)
+    arch = asdict(cfg)
+    arch.pop("elim_head_variant")
+    arch["elim_head_enabled"] = True   # simulate the retired-field era
+    ckpt = tmp_path / "epoch_001.pt"
+    torch.save({"model": src.state_dict(), "arch": arch, "epoch": 1}, ckpt)
+
+    loaded = load_bc_model(ckpt, torch.device("cpu"))
+    assert loaded.cfg.elim_head_variant == "time_bin"
+    assert src.state_dict().keys() == loaded.state_dict().keys()
 
 
 def test_fresh_partial_obs_uses_live_default(monkeypatch):

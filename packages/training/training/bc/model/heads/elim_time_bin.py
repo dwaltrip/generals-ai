@@ -1,12 +1,13 @@
-"""Next-elimination auxiliary head — per-player time-to-elimination logits.
+"""Time-bin elimination head — per-player time-to-elimination logits.
 
-Per frame and per canonical player channel (0 = perspective, 1..7 = opponents in
-`opp_slots` order), predicts how soon that player is eliminated as an ordinal-
-bucketed categorical. The eventual winner falls in the top "never" bin. Read off
-the shared trunk to enrich it for the BC policy and the future PPO critic; not a
-value-head replacement (the value head predicts the perspective's *own* final
-placement, this head the *whole field's* elimination dynamics). See
-`docs/2026-06/6.13-5-next-elimination-head-design.md`.
+The `time_bin` variant of the elimination aux head (see `ElimNextDeathHead` for
+the `next_death` variant). Per frame and per canonical player channel (0 =
+perspective, 1..7 = opponents in `opp_slots` order), predicts how soon that
+player is eliminated as an ordinal-bucketed categorical. The eventual winner
+falls in the top "never" bin. Read off the shared trunk to enrich it for the BC
+policy and the future PPO critic; not a value-head replacement (the value head
+predicts the perspective's *own* final placement, this head the *whole field's*
+elimination dynamics). See `docs/2026-06/6.13-5-next-elimination-head-design.md`.
 """
 
 from __future__ import annotations
@@ -17,8 +18,10 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from training.bc.model.heads.pool import masked_lse_pool, masked_mean_pool
 
-class EliminationHead(nn.Module):
+
+class ElimTimeBinHead(nn.Module):
     """Per-player elimination-bin logits pooled from the trunk embedding.
 
     Structure (mirrors `PassHead`'s masked pool, widened per player·bin):
@@ -86,19 +89,8 @@ class EliminationHead(nn.Module):
         """x: [B, C, H, W], valid_mask: [B, 1, H, W] bool → [B, n_players, n_bins]."""
         z = self.conv(self.pre(x))                          # [B, P·n_bins, H, W]
         if self.pool == "mean":
-            m = valid_mask.to(x.dtype)
-            summed = (z * m).sum(dim=(2, 3))                # [B, P·n_bins]
-            count = m.sum(dim=(2, 3)).clamp(min=1.0)        # [B, 1]
-            pooled = summed / count
+            pooled = masked_mean_pool(z, valid_mask)        # [B, P·n_bins]
         else:  # "lse" — masked, length-normalized log-sum-exp (smooth max)
             beta = F.softplus(self.raw_beta).to(torch.float32)
-            mb = valid_mask.flatten(2).bool()               # [B, 1, H·W]
-            # Mask in exponent-space (post-β) with a finite sentinel, NOT -inf on
-            # z: a -inf cell feeds 0·(-inf)=NaN into β's gradient through
-            # logsumexp. A β-independent -1e9 underflows to weight 0 with finite
-            # grad and no β leak as β→0.
-            s = (beta * z.flatten(2).float()).masked_fill(~mb, -1e9)
-            lse = torch.logsumexp(s, dim=2)                 # [B, P·n_bins]
-            log_n = mb.sum(dim=2).clamp(min=1).float().log()  # [B, 1]
-            pooled = ((lse - log_n) / beta).to(x.dtype)     # [B, P·n_bins]
+            pooled = masked_lse_pool(z, valid_mask, beta).to(x.dtype)
         return pooled.view(pooled.shape[0], self.n_players, self.n_bins)

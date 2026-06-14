@@ -22,7 +22,8 @@ from __future__ import annotations
 import torch
 import torch.nn as nn
 
-from training.bc.model.heads.elimination import EliminationHead
+from training.bc.model.heads.elim_next_death import ElimNextDeathHead
+from training.bc.model.heads.elim_time_bin import ElimTimeBinHead
 from training.bc.model.heads.pass_head import PassHead
 from training.bc.model.heads.policy import PolicyHead
 from training.bc.model.heads.value import ValueHead
@@ -59,17 +60,21 @@ class BCModel(nn.Module):
             dropout2d_site=cfg.value_head_dropout2d_site,
             skip_dropout2d_p=cfg.value_head_skip_dropout2d,
         )
-        # Arch-gated aux head: constructed only when enabled, so a disabled
-        # model carries zero extra state_dict keys and every pre-elim checkpoint
-        # still loads strict=True. Assigning `None` registers no submodule.
-        self.elim_head = (
-            EliminationHead(
+        # Arch-gated aux head: constructed only for an enabled variant, so an
+        # off model (variant None) carries zero extra state_dict keys and every
+        # pre-elim checkpoint still loads strict=True. Assigning `None` registers
+        # no submodule. The variant picks the head and (in `forward`) its output
+        # key — `time_bin` emits `elim_logits`, `next_death` `next_elim_logits`.
+        self.elim_variant = cfg.elim_head_variant
+        if cfg.elim_head_variant == "time_bin":
+            self.elim_head: nn.Module | None = ElimTimeBinHead(
                 in_ch=cfg.outer_width, n_bins=cfg.elim_n_bins,
                 pool=cfg.elim_pool, hidden=cfg.elim_head_hidden,
             )
-            if cfg.elim_head_enabled
-            else None
-        )
+        elif cfg.elim_head_variant == "next_death":
+            self.elim_head = ElimNextDeathHead(in_ch=cfg.outer_width)
+        else:
+            self.elim_head = None
 
     def forward(
         self, obs: torch.Tensor, valid_mask: torch.Tensor
@@ -84,8 +89,11 @@ class BCModel(nn.Module):
             legality mask)
           - `pass_logit`: `[B]`              (pre-sigmoid; masked pool)
           - `value_logits`: `[B, 8]`          (padded cells masked before flatten)
-          - `elim_logits`: `[B, 8, n_bins]`   (only when the elim head is built;
-            downstream consumers presence-gate on the key)
+          - `elim_logits`: `[B, 8, n_bins]`   (only the `time_bin` elim variant)
+          - `next_elim_logits`: `[B, 8]`      (only the `next_death` elim variant)
+
+          The two elim keys are mutually exclusive (one variant is built at a
+          time); downstream consumers presence-gate on whichever key is emitted.
         """
         trunk_out = self.trunk(obs)
         out = {
@@ -94,5 +102,6 @@ class BCModel(nn.Module):
             "value_logits": self.value_head(trunk_out, valid_mask),
         }
         if self.elim_head is not None:
-            out["elim_logits"] = self.elim_head(trunk_out, valid_mask)
+            key = "elim_logits" if self.elim_variant == "time_bin" else "next_elim_logits"
+            out[key] = self.elim_head(trunk_out, valid_mask)
         return out

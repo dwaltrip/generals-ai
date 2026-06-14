@@ -176,7 +176,7 @@ def bc_loss(
         - `n_non_pass`: 0-d int tensor, number of non-pass frames in the batch
                        (debugging signal for the overfit harness)
 
-    When `model_out` carries `elim_logits` (the next-elimination head is built),
+    When `model_out` carries `elim_logits` (the time_bin elim head is built),
     three more keys appear (absent otherwise, so non-elim runs are unchanged):
         - `elim`:      hard elim CE, masked-mean over alive (player, frame)
                        pairs — the reporting metric
@@ -184,6 +184,13 @@ def bc_loss(
                        (same tensor as `elim` at τ=0)
         - `n_elim`:    0-d int tensor, count of alive (player, frame) pairs
                        (the accumulator weight for the elim means)
+
+    When `model_out` carries `next_elim_logits` (the next_death elim head is
+    built — mutually exclusive with `elim_logits`), two keys appear instead:
+        - `next_elim`:   hard who-dies-next CE, mean over frames with a defined
+                         next victim (winner-tail frames excluded via -1)
+        - `n_next_elim`: 0-d int tensor, count of those frames (the accumulator
+                         weight for the `next_elim` mean)
     """
     policy_logits = model_out["policy_logits"]  # [B, 8, H, W]
     pass_logit = model_out["pass_logit"]        # [B]
@@ -298,6 +305,30 @@ def bc_loss(
         out["elim_soft"] = elim_soft
         out["n_elim"] = n_elim
 
+    # --- Who-dies-next CE (only when the next_death head emits its logits) ---
+    # The `next_death` elim variant: a single cross-player softmax per frame over
+    # "which alive player is eliminated next". Shares `lambda_elim` with the
+    # time_bin head — only one variant is built per model, so they never both
+    # contribute. Hard CE only (no soft-ordinal smoothing): the target is a
+    # nominal player index, not an ordinal bin.
+    if "next_elim_logits" in model_out:
+        nd_logits = model_out["next_elim_logits"]       # [B, 8]
+        nd_target = targets["next_elim_target"]         # [B] int64, -1 = ignore
+        nd_alive = targets["next_elim_alive_mask"]      # [B, 8] bool
+        # Cross-player softmax over the alive field only: dead/phantom channels
+        # get -inf logits → zero prob, zero gradient. Channel 0 (self) is always
+        # alive in-trajectory, so no included row is all-masked. ignore_index=-1
+        # drops the winner-tail frames that carry no next death; reduction="sum"
+        # over the kept frames / their count mirrors the policy-CE safe divide.
+        masked_logits = nd_logits.masked_fill(~nd_alive, float("-inf"))
+        n_next_elim = (nd_target != -1).sum()           # 0-d, stays on device
+        next_elim = F.cross_entropy(
+            masked_logits, nd_target, ignore_index=-1, reduction="sum"
+        ) / n_next_elim.clamp(min=1)
+        total = total + cfg.lambda_elim * next_elim
+        out["next_elim"] = next_elim
+        out["n_next_elim"] = n_next_elim
+
     out["total"] = total
     return out
 
@@ -341,6 +372,11 @@ class LossAccumulator:
     n_elim: int = 0
     sum_elim: float = 0.0        # weighted by n_elim per batch
     sum_elim_soft: float = 0.0   # weighted by n_elim per batch
+    # who-dies-next (next_death variant) means: weight by the count of frames
+    # with a defined next victim. Zero for non-next_death runs (the keys are
+    # absent from `bc_loss`'s return), so the term drops out of total.
+    n_next_elim: int = 0
+    sum_next_elim: float = 0.0   # weighted by n_next_elim per batch
 
     def update(
         self,
@@ -361,6 +397,12 @@ class LossAccumulator:
             self.n_elim += n_e
             self.sum_elim += losses["elim"].item() * n_e
             self.sum_elim_soft += losses["elim_soft"].item() * n_e
+        # next_death keys appear only when that variant is built; weight by the
+        # defined-next-victim frame count.
+        if "next_elim" in losses:
+            n_nx = int(losses["n_next_elim"].item())
+            self.n_next_elim += n_nx
+            self.sum_next_elim += losses["next_elim"].item() * n_nx
 
     def summary(self) -> dict[str, float | int]:
         """
@@ -377,14 +419,21 @@ class LossAccumulator:
         # Elim means weight by the running alive-pair count, NOT n_samples.
         elim = self.sum_elim / self.n_elim if self.n_elim > 0 else 0.0
         elim_soft = self.sum_elim_soft / self.n_elim if self.n_elim > 0 else 0.0
-        # Hardcoded total identity — must carry the elim term or the component
+        # who-dies-next mean weights by the running defined-next-victim count.
+        next_elim = (
+            self.sum_next_elim / self.n_next_elim if self.n_next_elim > 0 else 0.0
+        )
+        # Hardcoded total identity — must carry the elim terms or the component
         # sum silently breaks for elim runs. Inert for non-elim runs: lambda_elim
-        # defaults to 0 and elim_soft is 0 when no elim batches were folded.
+        # defaults to 0, and elim_soft / next_elim are 0 when no such batches were
+        # folded. The two elim variants are mutually exclusive, so at most one of
+        # elim_soft / next_elim is nonzero.
         total = (
             policy
             + self.cfg.lambda_value * value_soft
             + self.cfg.mu_pass * pass_
             + self.cfg.lambda_elim * elim_soft
+            + self.cfg.lambda_elim * next_elim
         )
         summary: dict[str, float | int] = {
             "policy": policy,
@@ -401,4 +450,7 @@ class LossAccumulator:
             summary["elim"] = elim
             summary["elim_soft"] = elim_soft
             summary["n_elim"] = self.n_elim
+        if self.n_next_elim > 0:
+            summary["next_elim"] = next_elim
+            summary["n_next_elim"] = self.n_next_elim
         return summary

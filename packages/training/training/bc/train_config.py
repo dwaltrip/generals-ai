@@ -76,7 +76,7 @@ class TrainConfig:
     # Stage 1 runs unweighted, weights are the pre-registered floor-miss remedy.
     # Defaults reproduce "no elim head"; same resume-legacy-pinning caveat as
     # lambda_value/value_target_tau. `lambda_elim > 0` requires
-    # `arch.elim_head_enabled` (checked below).
+    # `arch.elim_head_variant is not None` (checked below).
     lambda_elim: float = 0.0
     elim_target_tau: float = 0.0
     elim_bin_weights: tuple[float, ...] | None = None
@@ -178,9 +178,9 @@ class TrainConfig:
             )
         # No loss weight on an absent head — a config asking for elim gradient
         # without the head built is a mistake, not a silent no-op.
-        if self.lambda_elim > 0 and not self.arch.elim_head_enabled:
+        if self.lambda_elim > 0 and self.arch.elim_head_variant is None:
             raise ValueError(
-                "lambda_elim > 0 requires arch.elim_head_enabled "
+                "lambda_elim > 0 requires arch.elim_head_variant is not None "
                 "(no loss weight on an absent head)"
             )
         if self.elim_bin_weights is not None:

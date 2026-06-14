@@ -120,9 +120,10 @@ def run_dump(args: argparse.Namespace) -> None:
             "producer": "offline",
             "forward_dtype": "fp32",
         }
-        if model.cfg.elim_head_enabled:
+        if model.cfg.elim_head_variant == "time_bin":
             # Edges label the per-bin report ranges; the report reads them from
-            # meta (the npz carries only columns).
+            # meta (the npz carries only columns). next_death runs carry no bin
+            # edges (the report's elim tables are time_bin-only).
             meta["elim_bin_edges"] = list(model.cfg.elim_bin_edges)
         save_dump(records, out, meta)
         print(f"wrote {out} ({records['value_ce'].shape[0]} frames)")

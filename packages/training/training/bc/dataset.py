@@ -121,30 +121,38 @@ def _shuffle_buffered[T](
 
 @dataclass(frozen=True)
 class _ElimCtx:
-    """Per-game precompute backing the next-elimination head's targets.
+    """Per-game precompute backing the elimination heads' targets.
 
-    `edges` is the dataset-constant bin-edge array; `death_by_slot` and
-    `is_real` are per-game [8]-arrays indexed by *raw* slot id. Built once per
-    game in `_walk` (when the elim head is enabled) and threaded into every
-    `encode_frame` call for that game.
+    `edges` is the dataset-constant bin-edge array (time_bin head only);
+    `death_by_slot` and `is_real` are per-game [8]-arrays indexed by *raw* slot
+    id; `sentinel` is the winner's stand-in death tick. Built once per game in
+    `_walk` (when an elim head is enabled) and threaded into every `encode_frame`
+    call for that game. Both elim variants read off this one precompute.
     """
 
     edges: np.ndarray          # [n_bins - 1] strictly-increasing bin edges
     death_by_slot: np.ndarray  # [8] int64 — elim timestep; winner sentinel; -1 = phantom
     is_real: np.ndarray        # [8] bool — slot actually played this game
+    sentinel: int              # winner's stand-in death tick (> any real death)
 
 
 def _precompute_elim(
     sim: dict[str, np.ndarray], edges: np.ndarray
-) -> tuple[np.ndarray, np.ndarray]:
-    """Per-game `(death_by_slot, is_real)` for the elim targets.
+) -> tuple[np.ndarray, np.ndarray, int]:
+    """Per-game `(death_by_slot, is_real, sentinel)` for the elim targets.
 
-    `death_by_slot[s]` is slot `s`'s elimination timestep, a large finite winner
-    sentinel (`T + max_edge`; integer-typed, not `np.inf`) for the one real slot
-    absent from `death_events`, or `-1` for a phantom slot that never played.
-    `is_real[s]` marks the slots present at t=0. The winner-vs-phantom split is
-    what `real_slots` resolves: the winner is real-and-absent-from-deaths, a
-    phantom is not-real — and only the latter must be masked out.
+    `death_by_slot[s]` is slot `s`'s elimination timestep, the large finite
+    winner `sentinel` (`T + max_edge`; integer-typed, not `np.inf`) for the one
+    real slot absent from `death_events`, or `-1` for a phantom slot that never
+    played. `is_real[s]` marks the slots present at t=0. The winner-vs-phantom
+    split is what `real_slots` resolves: the winner is real-and-absent-from-
+    deaths, a phantom is not-real — and only the latter must be masked out.
+
+    `sentinel = T + max_edge` is sized for the time_bin head (so the winner's
+    `Δ = sentinel − t` always lands in the top "never" bin); the next_death head
+    reuses it only as "larger than any real death tick" (real deaths are ≤ T−1),
+    so the winner never wins the soonest-death argmin unless it is the lone
+    survivor.
 
     The obs encoder always runs at P=8 and `opp_slots` always yields 7 ids from
     `range(8)`, but FFA games can start with <8 players (~7% of the corpus, see
@@ -165,7 +173,7 @@ def _precompute_elim(
 
     is_real = np.zeros(8, dtype=np.bool_)
     is_real[real] = True
-    return death_by_slot, is_real
+    return death_by_slot, is_real, sentinel
 
 
 def _elim_targets(
@@ -188,6 +196,39 @@ def _elim_targets(
     return bins.astype(np.int64), alive
 
 
+def _next_death_target(
+    elim: _ElimCtx, raw_order: list[int], t: int
+) -> tuple[int, np.ndarray, int]:
+    """Per-frame `(next_victim_channel, alive_mask[8], dt)` for who-dies-next.
+
+    `raw_order` is the canonical channel→raw-slot map (`[perspective_slot,
+    *opp_slots]`). A channel is alive iff its slot is real AND not yet eliminated
+    (`death > t`) — the same convention as the time_bin head; this is the domain
+    of the cross-player softmax. The next victim is the alive channel with the
+    soonest death tick; the winner's `sentinel` death is larger than any real
+    death, so it only wins this argmin when it is the lone survivor.
+
+    Returns the next-victim channel index, the alive mask, and `dt = death − t`
+    (ticks until that death — the horizon, dumped for offline confidence-ramp /
+    horizon-stratified reads). Frames with no real future death — the winner's
+    tail, where only the winner remains alive — get `target = -1` (a CE
+    `ignore_index` sentinel, masked from the loss) and `dt = -1`. Ties (two
+    deaths at the same tick) resolve to the lowest canonical channel index via
+    `argmin`'s first-min rule — a fixed, deterministic convention.
+    """
+    raw = np.asarray(raw_order, dtype=np.intp)
+    death_ch = elim.death_by_slot[raw]                       # [8]
+    alive = elim.is_real[raw] & (death_ch > t)               # [8]
+    # Soonest death among alive channels; non-alive channels can't be the victim.
+    cand = np.where(alive, death_ch, np.iinfo(np.int64).max)
+    nxt = int(cand.argmin())
+    if cand[nxt] >= elim.sentinel:
+        # The soonest "death" is the winner sentinel (or no alive channel) → no
+        # real next elimination from here. Mask the frame out.
+        return -1, alive, -1
+    return nxt, alive, int(cand[nxt] - t)
+
+
 def encode_frame(
     sim: dict[str, np.ndarray],
     meta: dict[str, np.ndarray],
@@ -201,6 +242,7 @@ def encode_frame(
     H: int,
     W: int,
     elim: _ElimCtx | None = None,
+    elim_variant: str | None = None,
 ) -> dict[str, torch.Tensor]:
     """
     One (game, perspective, timestep) → one training sample dict.
@@ -210,9 +252,13 @@ def encode_frame(
     the value-target extraction. DataLoader's default collate stacks the
     result keywise into batched tensors.
 
-    `elim`, when set (the next-elimination head is enabled), adds the per-player
-    `elim_bin_target` / `elim_alive_mask` keys; `None` leaves them off so
-    non-elim runs carry no extra collate/transfer weight.
+    `elim`, when set (an elimination head is enabled), adds that variant's
+    per-frame targets; `None` leaves them off so non-elim runs carry no extra
+    collate/transfer weight. `elim_variant` selects which:
+      - `"time_bin"`: per-player `elim_bin_target` / `elim_alive_mask`.
+      - `"next_death"`: scalar `next_elim_target` (the next-victim channel, or
+        -1 when no future death), `next_elim_alive_mask` (the softmax domain),
+        and `next_elim_dt` (ticks-to-next-death horizon, for offline diagnostics).
 
     Pure-read of `state` + `bfs_cache`. `step_memory` must already have been
     called for this `(t, vis)` — `__iter__` enforces this ordering.
@@ -249,9 +295,16 @@ def encode_frame(
             "value_target": torch.tensor(value_target, dtype=torch.int64),
         }
         if elim is not None:
-            bins, alive = _elim_targets(elim, [perspective_slot, *opp_slots], t)
-            sample["elim_bin_target"] = torch.from_numpy(bins)
-            sample["elim_alive_mask"] = torch.from_numpy(alive)
+            raw_order = [perspective_slot, *opp_slots]
+            if elim_variant == "next_death":
+                nxt, alive, dt = _next_death_target(elim, raw_order, t)
+                sample["next_elim_target"] = torch.tensor(nxt, dtype=torch.int64)
+                sample["next_elim_alive_mask"] = torch.from_numpy(alive)
+                sample["next_elim_dt"] = torch.tensor(dt, dtype=torch.int64)
+            else:  # "time_bin"
+                bins, alive = _elim_targets(elim, raw_order, t)
+                sample["elim_bin_target"] = torch.from_numpy(bins)
+                sample["elim_alive_mask"] = torch.from_numpy(alive)
         return sample
 
 
@@ -301,6 +354,7 @@ class IterableDataset(TorchIterableDataset):
         prof_sink: FileSink | None = None,
         include_frame_info: bool = False,
         elim_bin_edges: tuple[int, ...] | None = None,
+        elim_head_variant: str | None = None,
     ) -> None:
         """
         `samples` is a list of `(sim_path, perspective_k)` pairs. Caller is
@@ -322,10 +376,15 @@ class IterableDataset(TorchIterableDataset):
         the training loop doesn't consume them, and the extra keys would ride
         through collate + device transfer for nothing.
 
-        `elim_bin_edges`, when set, switches on the next-elimination head's
-        per-player targets (`elim_bin_target` / `elim_alive_mask`). Pass the
-        model's `arch.elim_bin_edges` iff `arch.elim_head_enabled`; `None` (the
-        default) leaves the targets off so non-elim runs are unaffected.
+        `elim_bin_edges`, when set, switches on an elimination head's per-frame
+        targets; `elim_head_variant` selects which (`"time_bin"` →
+        `elim_bin_target`/`elim_alive_mask`; `"next_death"` →
+        `next_elim_target`/`next_elim_alive_mask`/`next_elim_dt`). Pass the
+        model's `arch.elim_bin_edges` + `arch.elim_head_variant` iff the elim
+        head is enabled (`arch.elim_head_variant is not None`); the edges are
+        needed by both variants (they size the per-game precompute's winner
+        sentinel). `None` edges leave the targets off, so non-elim runs are
+        unaffected.
         """
         self._groups = _group_by_path(samples)
         self._seed = seed
@@ -339,6 +398,7 @@ class IterableDataset(TorchIterableDataset):
             if elim_bin_edges is not None
             else None
         )
+        self._elim_variant = elim_head_variant
         # Index of each (path, k) pair in the caller's `samples` order, so
         # `sample_idx` survives the group/epoch shuffles and lets offline
         # consumers join frames back to the manifest entry they came from.
@@ -508,6 +568,7 @@ class IterableDataset(TorchIterableDataset):
                             perspective_slot, opp_slots, vis,
                             state, bfs_cache, H, W,
                             elim=elim_ctx,
+                            elim_variant=self._elim_variant,
                         )
                     if self._frame_info:
                         sample["frame_t"] = torch.tensor(t, dtype=torch.int64)

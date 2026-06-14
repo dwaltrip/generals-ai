@@ -80,6 +80,7 @@ def run_val(
     loss_cfg: LossConfig = DEFAULT_LOSS_CFG,
     capture: FrameRecordCapture | None = None,
     elim_bin_edges: tuple[int, ...] | None = None,
+    elim_head_variant: str | None = None,
 ) -> dict:
     """Run one full validation pass and return the summary metrics.
 
@@ -102,10 +103,13 @@ def run_val(
     acc = LossAccumulator(loss_cfg)
     ent_meter = PolicyEntropyMeter()
     dist_meter = ActionDistMeter()
-    # Elim diagnostics ride the same forward; built only when the head is active.
+    # Elim diagnostics ride the same forward; the time_bin head's ElimMeter is
+    # built only for that variant. The next_death head has no in-loop meter yet
+    # (its diagnostics are computed offline from the dump's raw columns); its
+    # `next_elim` loss still rides through the LossAccumulator below.
     elim_meter = (
         ElimMeter(n_bins=len(elim_bin_edges) + 1, target_tau=loss_cfg.elim_target_tau)
-        if elim_bin_edges is not None
+        if elim_bin_edges is not None and elim_head_variant == "time_bin"
         else None
     )
     n_top1_correct = 0
@@ -125,6 +129,7 @@ def run_val(
         obs_cfg=obs_cfg,
         include_frame_info=capture is not None,
         elim_bin_edges=elim_bin_edges,
+        elim_head_variant=elim_head_variant,
         seed=seed,
         amp_dtype=amp_dtype,
         pin_memory=pin_memory,
@@ -225,4 +230,8 @@ def run_val(
         summary["elim_top1"] = elim_meter.top1()
         summary["elim_soft_floor"] = elim_meter.soft_floor()
         summary["elim_pred_entropy"] = elim_meter.pred_entropy()
+    # who-dies-next: only the loss is surfaced in-loop (no meter yet); the
+    # accuracy / ramp / horizon reads are computed offline from the dump.
+    if "next_elim" in s:
+        summary["next_elim"] = s.get("next_elim")
     return summary

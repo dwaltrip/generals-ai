@@ -223,11 +223,14 @@ def train_one_epoch(
             "wall_time_sec": round(time.perf_counter() - run_start, 3),
         }
         # Elim keys appear only when the head is built — keep non-elim rows
-        # byte-identical.
+        # byte-identical. The two variants are mutually exclusive.
         if "elim" in losses:
             record["elim"] = float(losses["elim"].item())
             record["elim_soft"] = float(losses["elim_soft"].item())
             record["n_elim"] = int(losses["n_elim"].item())
+        if "next_elim" in losses:
+            record["next_elim"] = float(losses["next_elim"].item())
+            record["n_next_elim"] = int(losses["n_next_elim"].item())
         logger.log_batch(record)
 
         if (batch_idx + 1) % log_every == 0:
@@ -235,6 +238,8 @@ def train_one_epoch(
             elim_str = (
                 f"elim {losses['elim'].item():6.4f} " if "elim" in losses else ""
             )
+            if "next_elim" in losses:
+                elim_str = f"next_elim {losses['next_elim'].item():6.4f} "
             print(
                 f"[epoch {epoch}] batch {batch_idx + 1} | "
                 f"policy {losses['policy'].item():6.4f} "
@@ -283,8 +288,11 @@ def build_dataloader(
         shuffle_buffer_size=config.shuffle_buffer_size,
         prof_sink=active_sink(),
         elim_bin_edges=(
-            config.arch.elim_bin_edges if config.arch.elim_head_enabled else None
+            config.arch.elim_bin_edges
+            if config.arch.elim_head_variant is not None
+            else None
         ),
+        elim_head_variant=config.arch.elim_head_variant,
     )
     dl_kwargs = dataloader_kwargs(
         num_workers=config.num_workers,
@@ -448,7 +456,12 @@ def print_epoch_summary(epoch: int, summary: dict, val_summary: dict | None) -> 
         f"{summary['samples_per_sec']:.0f} samples/sec"
         f"{mfu_str} ({summary['n_batches']} batches)"
     )
-    elim_mean = f"  elim {summary['elim']:.4f}" if "elim" in summary else ""
+    if "elim" in summary:
+        elim_mean = f"  elim {summary['elim']:.4f}"
+    elif "next_elim" in summary:
+        elim_mean = f"  next_elim {summary['next_elim']:.4f}"
+    else:
+        elim_mean = ""
     print(
         f"[epoch {epoch}] mean: "
         f"policy {summary['policy']:.4f}  "
@@ -490,6 +503,12 @@ def print_epoch_summary(epoch: int, summary: dict, val_summary: dict | None) -> 
                 f"top1 {_fmt_metric(val_summary['elim_top1'])}  "
                 f"H {val_summary['elim_pred_entropy']:.3f}"
             )
+        # who-dies-next: only the loss is surfaced in-loop (accuracy / ramp /
+        # horizon reads are offline from the dump).
+        if val_summary.get("next_elim") is not None:
+            print(
+                f"[epoch {epoch}] val | next_elim CE {val_summary['next_elim']:.4f}"
+            )
     else:
         print(f"[epoch {epoch}] val skipped (--skip-val)")
 
@@ -530,7 +549,7 @@ def write_val_dump(
         # are fp32-forward) — the comparability caveat lives here.
         "forward_dtype": "fp16" if amp_dtype is not None else "fp32",
     }
-    if config.arch.elim_head_enabled:
+    if config.arch.elim_head_variant == "time_bin":
         meta["elim_bin_edges"] = list(config.arch.elim_bin_edges)
     save_dump(records, path, meta)
     dump_value = float(records["value_ce"].mean())
@@ -546,6 +565,15 @@ def write_val_dump(
         alive = records["elim_alive_mask"]
         dump_elim = float(records["elim_ce"][alive].mean())
         msg += f" | mean elim CE {dump_elim:.6g} vs val {val_summary['elim']:.6g}"
+    if "next_elim_ce" in records:
+        # Same check for the who-dies-next column: dump's mean CE over frames with
+        # a defined next victim vs the recorded val `next_elim`.
+        kept = records["next_elim_target"] != -1
+        dump_next = float(records["next_elim_ce"][kept].mean())
+        msg += (
+            f" | mean next-elim CE {dump_next:.6g} "
+            f"vs val {val_summary['next_elim']:.6g}"
+        )
     print(msg)
 
 
@@ -626,8 +654,9 @@ def train_loop(
                     capture=capture,
                     elim_bin_edges=(
                         config.arch.elim_bin_edges
-                        if config.arch.elim_head_enabled else None
+                        if config.arch.elim_head_variant is not None else None
                     ),
+                    elim_head_variant=config.arch.elim_head_variant,
                 )
                 if capture is not None:
                     write_val_dump(
