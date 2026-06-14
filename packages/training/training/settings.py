@@ -23,5 +23,10 @@ SPLITS_DIR = TRAINING_DATA_DIR / "splits"
 PROBES_DIR = TRAINING_DATA_DIR / "probes"
 SWEEPS_DIR = TRAINING_DATA_DIR / "sweeps"
 
+# Frozen-representation probe outputs (the probes/ + probe_runs/ tooling). Under
+# data/analysis/ rather than data/training/: diagnostic output, not a training
+# artifact. Each run writes a TIMESTAMP-task-source dir (summary.json + run.log).
+PROBE_OUTPUT_DIR = TRAINING_DATA_DIR.parent / "analysis" / "probes"
+
 # Pinned deps for the Modal training image (read locally at image-build time).
 TRAINING_REQS = TRAINING_DIR / "modal_requirements.txt"

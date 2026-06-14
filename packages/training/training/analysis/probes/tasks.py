@@ -96,7 +96,7 @@ class ConvMLPPoolHead(nn.Module):
 # ---------------------------------------------------------------------------
 
 
-def _masked_cross_player_ce(
+def masked_cross_player_ce(
     logits: torch.Tensor, target: torch.Tensor, alive_mask: torch.Tensor
 ) -> torch.Tensor:
     """Cross-player CE over the alive field only, `-1` targets ignored — the
@@ -106,7 +106,7 @@ def _masked_cross_player_ce(
     return F.cross_entropy(masked, target, ignore_index=-1, reduction="sum") / n
 
 
-def _masked_top1(
+def masked_top1(
     logits: torch.Tensor, target: torch.Tensor, alive_mask: torch.Tensor
 ) -> float:
     masked = logits.masked_fill(~alive_mask, float("-inf"))
@@ -167,10 +167,10 @@ class LowestArmyTask:
         }
 
     def loss(self, pred: torch.Tensor, target: torch.Tensor, aux: dict) -> torch.Tensor:
-        return _masked_cross_player_ce(pred, target, aux["alive_mask"])
+        return masked_cross_player_ce(pred, target, aux["alive_mask"])
 
     def metrics(self, pred: torch.Tensor, target: torch.Tensor, aux: dict) -> dict[str, float]:
-        return {"top1": _masked_top1(pred, target, aux["alive_mask"])}
+        return {"top1": masked_top1(pred, target, aux["alive_mask"])}
 
 
 TASKS: dict[str, type] = {
