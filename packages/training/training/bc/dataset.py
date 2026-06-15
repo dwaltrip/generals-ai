@@ -230,6 +230,7 @@ def _next_death_target(
     return nxt, alive, int(cand[nxt] - t)
 
 
+# TODO: Create a more robust return type for this.
 def encode_frame(
     sim: dict[str, np.ndarray],
     meta: dict[str, np.ndarray],

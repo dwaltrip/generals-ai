@@ -20,7 +20,7 @@ from torch import Tensor
 
 from training.analysis.probes.cli import build_probe_arg_parser, run_probe_cli
 from training.analysis.probes.cross_player import (
-    army_channel_indices,
+    army_totals_ch_indices,
     cross_player_head_zoo,
     masked_cross_player_ce,
     masked_top1,
@@ -40,7 +40,7 @@ class LowestArmyTask:
     elim_variant: str | None = "next_death"  # for next_elim_alive_mask (the softmax domain)
 
     def __init__(self, dense_history_n: int):
-        self.army_ch = army_channel_indices(dense_history_n)
+        self.army_ch = army_totals_ch_indices(dense_history_n)
 
     def extract_target(self, frame: dict[str, Tensor]) -> dict[str, Tensor]:
         obs = frame["obs"]                          # [C, H, W]

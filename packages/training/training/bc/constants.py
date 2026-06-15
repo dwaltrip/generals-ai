@@ -128,6 +128,16 @@ def obs_channel_names(n: int) -> list[str]:
     return _BASE_OBS_CHANNEL_NAMES + dense_history_channel_names(n)
 
 
+def get_obs_channel_indices(dense_history_n: int, names: list[str]) -> list[int]:
+    """Indices of the named channels in the obs tensor (dense-history depth
+    `dense_history_n`). Raises ValueError naming any channel that doesn't exist."""
+    idx = { name: i for i, name in enumerate(obs_channel_names(dense_history_n)) }
+    missing = [name for name in names if name not in idx]
+    if missing:
+        raise ValueError(f"Invalid obs channel(s): {missing}")
+    return [idx[n] for n in names]
+
+
 def obs_channel_count(n: int) -> int:
     """Total obs-tensor channel count for dense-history depth `n`."""
     return _BASE_OBS_CHANNELS + 2 * n
