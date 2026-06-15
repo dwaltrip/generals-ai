@@ -187,7 +187,7 @@ def run_val(
             elim_meter.update(
                 out["elim_logits"],
                 batch["elim_bin_target"],
-                batch["elim_alive_mask"],
+                batch["alive_mask"],
             )
 
     duration_sec = time.perf_counter() - val_start

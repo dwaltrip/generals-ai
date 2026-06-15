@@ -47,7 +47,7 @@ N_PLAYERS = 8
 def army_totals_ch_indices(dense_history_n: int) -> list[int]:
     """Obs channel indices of the per-player total-army planes, canonical player
     order (0 = self, 1..7 = opponents in `opp_slots` order) — aligned with the
-    elim head's player axis and `next_elim_alive_mask`. These planes are
+    elim head's player axis and the frame's `alive_mask`. These planes are
     broadcast scalars (`army / 1000`), fog-independent, in the fixed base
     channels, so the indices are independent of `dense_history_n`.
     """

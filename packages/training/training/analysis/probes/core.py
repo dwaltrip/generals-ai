@@ -50,6 +50,38 @@ from training.bc.obs_config import ObsConfig
 
 
 # ---------------------------------------------------------------------------
+# Frame needs — what a task declares it needs the dataset to emit
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class FrameNeeds:
+    """What a probe task needs each frame to carry beyond the always-on obs +
+    valid_mask. A declarative contract the framework translates into dataset
+    kwargs via `dataset_args_for`.
+
+    - `elim_variant`: an elimination head's per-frame targets (`next_death` /
+      `time_bin`) — for tasks that predict elimination. Also yields the alive mask.
+    - `alive_mask`: the per-player alive field on its own, no elim targets — for
+      tasks that just need the softmax/regression domain (e.g. lowest-army,
+      army-regression).
+    """
+
+    elim_variant: str | None = None
+    alive_mask: bool = False
+
+
+def dataset_args_for(needs: FrameNeeds) -> dict:
+    """`FrameNeeds` → `IterableDataset` kwargs. A set `elim_variant` already
+    emits the alive mask, so `emit_alive_mask` is only forced on when no variant
+    is covering it — one emitter per frame, no double-write."""
+    return {
+        "elim_head_variant": needs.elim_variant,
+        "emit_alive_mask": needs.alive_mask and needs.elim_variant is None,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Feature sources — what representation the probe head reads
 # ---------------------------------------------------------------------------
 
@@ -102,7 +134,7 @@ class ProbeTask(Protocol):
 
     name: str
     baselines: dict[str, float]
-    elim_variant: str | None  # dataset elim head variant for the targets, or None
+    frame_needs: FrameNeeds  # what the dataset must emit per frame (see FrameNeeds)
 
     def extract_target(self, frame: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]: ...
     def build_heads(self, in_ch: int, H: int, W: int) -> dict[str, nn.Module]: ...
@@ -187,7 +219,7 @@ def cache_probe_features(
     """
     ds = IterableDataset(
         samples=samples, seed=seed, obs_cfg=obs_cfg,
-        elim_head_variant=task.elim_variant,
+        **dataset_args_for(task.frame_needs),
     )
 
     obs_buf: list[torch.Tensor] = []

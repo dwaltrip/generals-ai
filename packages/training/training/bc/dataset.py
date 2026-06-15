@@ -176,10 +176,20 @@ def _precompute_elim(
     return death_by_slot, is_real, sentinel
 
 
+def _alive_mask(elim: _ElimCtx, raw_order: list[int], t: int) -> np.ndarray:
+    """Per-channel alive mask `[8]`: a channel is alive iff its slot is real and
+    not yet eliminated (`death > t` — a player eliminated at `t` counts dead at
+    frame `t`). The cross-player softmax / regression domain; both elim target
+    builders and the alive-only path derive `alive` here.
+    """
+    raw = np.asarray(raw_order, dtype=np.intp)
+    return elim.is_real[raw] & (elim.death_by_slot[raw] > t)
+
+
 def _elim_targets(
     elim: _ElimCtx, raw_order: list[int], t: int
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Per-channel `(elim_bin_target[8], elim_alive_mask[8])` at frame `t`.
+    """Per-channel `(elim_bin_target[8], alive_mask[8])` at frame `t`.
 
     `raw_order` is the canonical channel→raw-slot map (`[perspective_slot,
     *opp_slots]`). A channel is alive iff its slot is real AND not yet
@@ -191,7 +201,7 @@ def _elim_targets(
     assert elim.edges is not None, "time_bin targets require bin edges"
     raw = np.asarray(raw_order, dtype=np.intp)
     death_ch = elim.death_by_slot[raw]
-    alive = elim.is_real[raw] & (death_ch > t)
+    alive = _alive_mask(elim, raw_order, t)
     delta = death_ch - t
     bins = np.where(alive, np.digitize(delta, elim.edges, right=False), 0)
     return bins.astype(np.int64), alive
@@ -219,7 +229,7 @@ def _next_death_target(
     """
     raw = np.asarray(raw_order, dtype=np.intp)
     death_ch = elim.death_by_slot[raw]                       # [8]
-    alive = elim.is_real[raw] & (death_ch > t)               # [8]
+    alive = _alive_mask(elim, raw_order, t)                  # [8]
     # Soonest death among alive channels; non-alive channels can't be the victim.
     cand = np.where(alive, death_ch, np.iinfo(np.int64).max)
     nxt = int(cand.argmin())
@@ -254,13 +264,17 @@ def encode_frame(
     the value-target extraction. DataLoader's default collate stacks the
     result keywise into batched tensors.
 
-    `elim`, when set (an elimination head is enabled), adds that variant's
-    per-frame targets; `None` leaves them off so non-elim runs carry no extra
-    collate/transfer weight. `elim_variant` selects which:
-      - `"time_bin"`: per-player `elim_bin_target` / `elim_alive_mask`.
-      - `"next_death"`: scalar `next_elim_target` (the next-victim channel, or
-        -1 when no future death), `next_elim_alive_mask` (the softmax domain),
-        and `next_elim_dt` (ticks-to-next-death horizon, for offline diagnostics).
+    `elim`, when set (the precompute is built), adds the per-frame elim targets;
+    `None` leaves them off so non-elim runs carry no extra collate/transfer
+    weight. `elim_variant` selects which targets:
+      - `"time_bin"`: per-player `elim_bin_target`.
+      - `"next_death"`: scalar `next_elim_target` (the next-victim channel, or -1
+        when no future death) and `next_elim_dt` (ticks-to-next-death horizon).
+      - `None` (with `elim` set): no variant targets — the alive-only path.
+
+    Whenever `elim` is set, the frame carries the per-player [8] `alive_mask`
+    (the softmax/eval domain), alongside any variant targets — and as the sole
+    output of the `None`-variant path.
 
     Pure-read of `state` + `bfs_cache`. `step_memory` must already have been
     called for this `(t, vis)` — `__iter__` enforces this ordering.
@@ -298,15 +312,18 @@ def encode_frame(
         }
         if elim is not None:
             raw_order = [perspective_slot, *opp_slots]
+            # Aliveness is variant-independent and is the one key every elim
+            # consumer (and the alive-only probe path) needs — emit it once here,
+            # then add whatever variant-specific targets were asked for.
+            sample["alive_mask"] = torch.from_numpy(_alive_mask(elim, raw_order, t))
             if elim_variant == "next_death":
-                nxt, alive, dt = _next_death_target(elim, raw_order, t)
+                nxt, _, dt = _next_death_target(elim, raw_order, t)
                 sample["next_elim_target"] = torch.tensor(nxt, dtype=torch.int64)
-                sample["next_elim_alive_mask"] = torch.from_numpy(alive)
                 sample["next_elim_dt"] = torch.tensor(dt, dtype=torch.int64)
-            else:  # "time_bin"
-                bins, alive = _elim_targets(elim, raw_order, t)
+            elif elim_variant == "time_bin":
+                bins, _ = _elim_targets(elim, raw_order, t)
                 sample["elim_bin_target"] = torch.from_numpy(bins)
-                sample["elim_alive_mask"] = torch.from_numpy(alive)
+            # elim_variant is None → alive-only emission (emit_alive_mask path).
         return sample
 
 
@@ -357,6 +374,7 @@ class IterableDataset(TorchIterableDataset):
         include_frame_info: bool = False,
         elim_bin_edges: tuple[int, ...] | None = None,
         elim_head_variant: str | None = None,
+        emit_alive_mask: bool = False,
     ) -> None:
         """
         `samples` is a list of `(sim_path, perspective_k)` pairs. Caller is
@@ -380,13 +398,19 @@ class IterableDataset(TorchIterableDataset):
 
         `elim_head_variant`, when set, switches on an elimination head's
         per-frame targets and selects which: `"time_bin"` →
-        `elim_bin_target`/`elim_alive_mask` (requires `elim_bin_edges` — they
-        size the bins and the winner sentinel); `"next_death"` →
-        `next_elim_target`/`next_elim_alive_mask`/`next_elim_dt` (no edges — the
-        next-victim target is invariant to them, so the sentinel is just "beyond
-        the last tick"). Pass the model's `arch.elim_head_variant` (+
+        `elim_bin_target` (requires `elim_bin_edges` — they size the bins and the
+        winner sentinel); `"next_death"` → `next_elim_target`/`next_elim_dt` (no
+        edges — the next-victim target is invariant to them, so the sentinel is
+        just "beyond the last tick"). Both also emit the per-player `alive_mask`.
+        Pass the model's `arch.elim_head_variant` (+
         `arch.elim_bin_edges` for time_bin) iff the elim head is enabled. A
         `None` variant leaves the targets off, so non-elim runs are unaffected.
+
+        `emit_alive_mask` requests the per-player `alive_mask` *without* any elim
+        head variant — for consumers (e.g. an army-regression probe) that need
+        the alive field but no elimination targets. It builds the same per-game
+        elim precompute the variants use and emits only `alive_mask`. Redundant
+        when a variant is set (that already emits it).
         """
         if elim_head_variant == "time_bin" and elim_bin_edges is None:
             raise ValueError("time_bin elim head requires elim_bin_edges")
@@ -403,6 +427,9 @@ class IterableDataset(TorchIterableDataset):
             else None
         )
         self._elim_variant = elim_head_variant
+        # The per-game elim precompute backs both the variant targets and the
+        # standalone alive mask, so either request triggers it.
+        self._needs_elim_ctx = elim_head_variant is not None or emit_alive_mask
         # Index of each (path, k) pair in the caller's `samples` order, so
         # `sample_idx` survives the group/epoch shuffles and lets offline
         # consumers join frames back to the manifest entry they came from.
@@ -543,10 +570,11 @@ class IterableDataset(TorchIterableDataset):
                 p_start = int((np.unique(sim["ownership"][0]) >= 0).sum())
 
             # Per-game elim precompute (winner-vs-phantom resolution lives here,
-            # once per game, not per perspective). `None` when the head is off.
+            # once per game, not per perspective). `None` unless a variant or the
+            # standalone alive mask was requested.
             elim_ctx = (
                 _ElimCtx(self._elim_edges, *_precompute_elim(sim, self._elim_edges))
-                if self._elim_variant is not None
+                if self._needs_elim_ctx
                 else None
             )
 

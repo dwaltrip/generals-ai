@@ -44,10 +44,12 @@ from pathlib import Path
 
 import numpy as np
 
+from settings import TRAINING_DATA_DIR
 from training.bc.dataset import _ElimCtx, _next_death_target, _precompute_elim
+from training.bc.eval.dump_compat import read_alive_mask
 from training.bc.obs import canonical_slot_order
 from training.bc.splits import load_manifest, samples_for_split
-from settings import TRAINING_DATA_DIR
+
 
 # Reuse the model's bin edges only to size the winner sentinel in the elim
 # precompute; the next_death target/horizon are invariant to the actual values
@@ -165,7 +167,7 @@ def report_run(
     z = np.load(dump_path)
     tgt = z["next_elim_target"]
     valid = tgt >= 0
-    probs = np.where(z["next_elim_alive_mask"], z["next_elim_probs"].astype(np.float32), -1.0)
+    probs = np.where(read_alive_mask(z), z["next_elim_probs"].astype(np.float32), -1.0)
     head_pred = probs.argmax(1)
     pi, ft = z["persp_val_index"], z["frame_t"]
 

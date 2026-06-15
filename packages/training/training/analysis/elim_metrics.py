@@ -14,6 +14,8 @@ from __future__ import annotations
 
 import numpy as np
 
+from training.bc.eval.dump_compat import read_alive_mask
+
 
 def elim_flat(
     d: dict[str, np.ndarray], sel: np.ndarray
@@ -21,7 +23,7 @@ def elim_flat(
     """Flatten the elim columns to alive (player, frame) pairs within the frame
     selection `sel`. Returns (hard CE, true bin, probs [M, n_bins], channel
     index 0..7) — channel 0 is the perspective (self), 1..7 opponents."""
-    mask = d["elim_alive_mask"][sel]                       # [n, 8] bool
+    mask = read_alive_mask(d)[sel]                         # [n, 8] bool
     ce = d["elim_ce"][sel][mask]                           # [M]
     bins = d["elim_bin_target"][sel][mask]                 # [M]
     probs = d["elim_probs"][sel][mask].astype(np.float32)  # [M, n_bins]

@@ -100,7 +100,7 @@ def _elim_batch(B: int, n_bins: int, seed: int = 0):
         "is_pass": torch.ones(B, dtype=torch.bool),
         "value_target": torch.zeros(B, dtype=torch.int64),
         "elim_bin_target": torch.randint(0, n_bins, (B, 8)),
-        "elim_alive_mask": alive,
+        "alive_mask": alive,
     }
     return model_out, targets
 
@@ -116,7 +116,7 @@ def test_bc_loss_elim_masked_mean_and_total_identity() -> None:
     losses = bc_loss(model_out, targets, cfg)
 
     assert {"elim", "elim_soft", "n_elim"} <= losses.keys()
-    alive = targets["elim_alive_mask"]
+    alive = targets["alive_mask"]
     assert int(losses["n_elim"]) == int(alive.sum())
 
     # Hand-compute the masked per-player mean.

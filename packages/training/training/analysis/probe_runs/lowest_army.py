@@ -15,10 +15,11 @@ something the obs hands it. See 6.14 discussion.
 from __future__ import annotations
 
 import torch
-import torch.nn as nn
 from torch import Tensor
+import torch.nn as nn
 
 from training.analysis.probes.cli import build_probe_arg_parser, run_probe_cli
+from training.analysis.probes.core import FrameNeeds
 from training.analysis.probes.cross_player import (
     army_totals_ch_indices,
     cross_player_head_zoo,
@@ -37,7 +38,7 @@ class LowestArmyTask:
     # The model-free lowest-army rule and uniform-over-alive, on the val split
     # (docs 6.13-15 / 6.14). Drawn as reference lines.
     baselines = {"lowest_army_rule": 0.471, "uniform": 0.284}
-    elim_variant: str | None = "next_death"  # for next_elim_alive_mask (the softmax domain)
+    frame_needs = FrameNeeds(alive_mask=True)  # the softmax domain; target is self-derived
 
     def __init__(self, dense_history_n: int):
         self.army_ch = army_totals_ch_indices(dense_history_n)
@@ -45,7 +46,7 @@ class LowestArmyTask:
     def extract_target(self, frame: dict[str, Tensor]) -> dict[str, Tensor]:
         obs = frame["obs"]                          # [C, H, W]
         valid = frame["valid_mask"]                 # [1, H, W] bool
-        alive = frame["next_elim_alive_mask"]       # [8] bool
+        alive = frame["alive_mask"]                 # [8] bool
         # Recover each player's army scalar: the planes are constant over the
         # real board, so the valid-masked mean is exactly that value.
         planes = obs[self.army_ch].float()          # [8, H, W]

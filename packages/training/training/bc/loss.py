@@ -264,7 +264,7 @@ def bc_loss(
     if "elim_logits" in model_out:
         elim_logits = model_out["elim_logits"]          # [B, 8, n_bins]
         elim_bin_target = targets["elim_bin_target"]    # [B, 8] int64
-        elim_alive_mask = targets["elim_alive_mask"]    # [B, 8] bool
+        alive_mask = targets["alive_mask"]         # [B, 8] bool
         n_bins = elim_logits.shape[2]
         weight = (
             _elim_weight_tensor(cfg.elim_bin_weights, elim_logits.device)
@@ -294,8 +294,8 @@ def bc_loss(
         # Masked mean over alive (player, frame) pairs. Channel 0 (self) is
         # always alive in-trajectory, so the denominator is ≥ B — the
         # clamp(min=1) mirrors the policy-CE safe divide as cheap insurance.
-        mask = elim_alive_mask.to(ce_hard.dtype)                 # [B, 8]
-        n_elim = elim_alive_mask.sum()                           # 0-d, stays on device
+        mask = alive_mask.to(ce_hard.dtype)                 # [B, 8]
+        n_elim = alive_mask.sum()                           # 0-d, stays on device
         denom = n_elim.clamp(min=1)
         elim = (ce_hard * mask).sum() / denom
         elim_soft = (ce_soft * mask).sum() / denom
@@ -314,13 +314,13 @@ def bc_loss(
     if "next_elim_logits" in model_out:
         nd_logits = model_out["next_elim_logits"]       # [B, 8]
         nd_target = targets["next_elim_target"]         # [B] int64, -1 = ignore
-        nd_alive = targets["next_elim_alive_mask"]      # [B, 8] bool
+        alive_mask = targets["alive_mask"]                # [B, 8] bool
         # Cross-player softmax over the alive field only: dead/phantom channels
         # get -inf logits → zero prob, zero gradient. Channel 0 (self) is always
         # alive in-trajectory, so no included row is all-masked. ignore_index=-1
         # drops the winner-tail frames that carry no next death; reduction="sum"
         # over the kept frames / their count mirrors the policy-CE safe divide.
-        masked_logits = nd_logits.masked_fill(~nd_alive, float("-inf"))
+        masked_logits = nd_logits.masked_fill(~alive_mask, float("-inf"))
         n_next_elim = (nd_target != -1).sum()           # 0-d, stays on device
         next_elim = F.cross_entropy(
             masked_logits, nd_target, ignore_index=-1, reduction="sum"

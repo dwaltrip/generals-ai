@@ -33,10 +33,11 @@ overfit.
 from __future__ import annotations
 
 import torch
-import torch.nn as nn
 from torch import Tensor
+import torch.nn as nn
 
 from training.analysis.probes.cli import build_probe_arg_parser, run_probe_cli
+from training.analysis.probes.core import FrameNeeds
 from training.analysis.probes.cross_player import (
     cross_player_head_zoo,
     masked_cross_player_ce,
@@ -57,7 +58,7 @@ class WhoDiesNextTask:
         "oracle": 0.562,
         "uniform": 0.286,
     }
-    elim_variant: str | None = "next_death"
+    frame_needs = FrameNeeds(elim_variant="next_death")
 
     def __init__(self, dt_max: int | None = None):
         self.dt_max = dt_max
@@ -72,7 +73,7 @@ class WhoDiesNextTask:
         return {
             "target": target,
             "valid_mask": frame["valid_mask"],
-            "alive_mask": frame["next_elim_alive_mask"],
+            "alive_mask": frame["alive_mask"],
             "dt": dt,
         }
 

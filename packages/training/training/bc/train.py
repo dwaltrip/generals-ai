@@ -562,7 +562,7 @@ def write_val_dump(
     if "elim_ce" in records:
         # Same correctness check for the elim column: dump's masked-mean hard CE
         # vs the recorded val `elim`. Diverges only if capture and loss disagree.
-        alive = records["elim_alive_mask"]
+        alive = records["alive_mask"]
         dump_elim = float(records["elim_ce"][alive].mean())
         msg += f" | mean elim CE {dump_elim:.6g} vs val {val_summary['elim']:.6g}"
     if "next_elim_ce" in records:

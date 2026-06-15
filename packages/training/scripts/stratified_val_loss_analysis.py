@@ -64,6 +64,7 @@ from training.analysis.run_metrics import (
 )
 from training.bc.checkpoint import load_bc_model
 from training.bc.eval import capture_val_frames, dump_path, save_dump
+from training.bc.eval.dump_compat import read_alive_mask
 from training.shared.device import disable_mps_fallback, pick_device
 from utils.format import format_count, format_loss, format_pct, md_table
 
@@ -153,7 +154,7 @@ def _check_against_epoch_row(
     }
     keys = ["value", "policy", "top1", "n_samples"]
     if "elim_ce" in records:
-        alive = records["elim_alive_mask"]
+        alive = read_alive_mask(records)
         ours["elim"] = float(records["elim_ce"][alive].mean())
         keys.insert(3, "elim")
     label = "exact check" if exact else "approx check (subsampled)"
