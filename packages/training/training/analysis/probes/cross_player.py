@@ -1,16 +1,25 @@
-"""Concrete probe tasks + the head variants they share.
+"""Reusable kit for "pick a player" probes — the cross-player softmax family.
 
-Each task is a `core.ProbeTask`: it defines the per-frame target, a small zoo of
-swap-in heads spanning capacities (linear → deployed-shape → fat), the loss, the
-metrics, and the model-free baselines to draw as reference lines.
+A cross-player probe decodes *which player* (a categorical over the alive field)
+from a frozen representation: who dies next, who has the lowest army, etc. Every
+such probe shares the same readout shape, loss, and metric — they differ only in
+the per-frame target. That shared machinery lives here so a one-off in
+`probe_runs/` is just an `extract_target` plus a thin `main`.
 
-`LowestArmyTask` is the firm read for the who-dies-next post-mortem (docs
-6.13-15 / 6.14): the trained next-death head lands *below* the 47% lowest-army
-rule even though per-player army is a broadcast obs channel, so a linear readout
-of the inputs expresses the rule by construction. Probing whether a *frozen
-trunk's* features still let a linear readout recover lowest-army separates "the
-trunk discarded the signal" from "the head never learned to read a signal that
-is present" — see 6.14 discussion.
+What's reusable across the family:
+
+  - The head zoo (`ConvMeanPoolHead` / `DeployedElimHead` / `ConvMLPPoolHead`) —
+    a fixed linear → deployed-shape → fat spread, so capacity is probed the same
+    way everywhere and results stay comparable across probes.
+  - `masked_cross_player_ce` / `masked_top1` — the alive-masked CE and top-1 that
+    mirror the real next-death head's training loss (`bc/loss.py`). Single-sourced
+    here on purpose: copied into each one-off they would drift out of sync with
+    the loss they are meant to match.
+  - `army_channel_indices` — obs-channel lookup for the per-player army planes.
+
+This kit is family-scoped, not universal: a regression probe (e.g. per-player
+army R²) wants a different head/loss/metric and would build its own, on top of
+the generic `probes/core.py` framework rather than this module.
 """
 
 from __future__ import annotations
@@ -22,6 +31,7 @@ import torch.nn.functional as F
 from training.bc.constants import obs_channel_names
 from training.bc.model.heads.elim_next_death import ElimNextDeathHead
 from training.bc.model.heads.pool import masked_mean_pool
+
 
 N_PLAYERS = 8
 
@@ -51,7 +61,7 @@ def army_channel_indices(dense_history_n: int) -> list[int]:
 class ConvMeanPoolHead(nn.Module):
     """Linear readout: one conv → masked mean pool. Mean pool is exact for a
     broadcast (per-player constant) level signal, so this is the cleanest test
-    of "is lowest-army linearly present"."""
+    of "is the target linearly present"."""
 
     def __init__(self, in_ch: int, n_players: int = N_PLAYERS):
         super().__init__()
@@ -91,6 +101,16 @@ class ConvMLPPoolHead(nn.Module):
         return masked_mean_pool(self.net(x), aux["valid_mask"])
 
 
+def cross_player_head_zoo(in_ch: int) -> dict[str, nn.Module]:
+    """The standard linear / deployed / fat readouts a cross-player probe tries.
+    A `build_heads` is usually just `return cross_player_head_zoo(in_ch)`."""
+    return {
+        "linear_pool": ConvMeanPoolHead(in_ch),
+        "deployed": DeployedElimHead(in_ch),
+        "fat": ConvMLPPoolHead(in_ch),
+    }
+
+
 # ---------------------------------------------------------------------------
 # Shared masked cross-player CE / top-1 (mirrors training/bc/loss.py)
 # ---------------------------------------------------------------------------
@@ -100,7 +120,7 @@ def masked_cross_player_ce(
     logits: torch.Tensor, target: torch.Tensor, alive_mask: torch.Tensor
 ) -> torch.Tensor:
     """Cross-player CE over the alive field only, `-1` targets ignored — the
-    exact form the real next-death head trains under (loss.py:323-327)."""
+    exact form the real next-death head trains under (loss.py:314-327)."""
     masked = logits.masked_fill(~alive_mask, float("-inf"))
     n = (target != -1).sum().clamp(min=1)
     return F.cross_entropy(masked, target, ignore_index=-1, reduction="sum") / n
@@ -114,65 +134,3 @@ def masked_top1(
     if valid.sum() == 0:
         return 0.0
     return (masked.argmax(dim=1)[valid] == target[valid]).float().mean().item()
-
-
-# ---------------------------------------------------------------------------
-# LowestArmyTask
-# ---------------------------------------------------------------------------
-
-
-class LowestArmyTask:
-    """Decode "which alive player has the lowest total army" from the frozen
-    representation. Same shape as the deployed next-death head (a cross-player
-    softmax over the alive field), targeting the lowest-army rule directly. If a
-    linear readout of the trunk reaches ~47% (the model-free rule's accuracy),
-    the trunk preserves army; if not, it mangled a signal the obs hands it.
-    """
-
-    name = "lowest_army"
-    primary_metric = "top1"
-    # The model-free lowest-army rule and uniform-over-alive, on the val split
-    # (docs 6.13-15 / 6.14). Drawn as reference lines.
-    baselines = {"lowest_army_rule": 0.471, "uniform": 0.284}
-    elim_variant = "next_death"  # for next_elim_alive_mask (the softmax domain)
-
-    def __init__(self, dense_history_n: int):
-        self.army_ch = army_channel_indices(dense_history_n)
-
-    def extract_target(self, frame: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
-        obs = frame["obs"]                          # [C, H, W]
-        valid = frame["valid_mask"]                 # [1, H, W] bool
-        alive = frame["next_elim_alive_mask"]       # [8] bool
-        # Recover each player's army scalar: the planes are constant over the
-        # real board, so the valid-masked mean is exactly that value.
-        planes = obs[self.army_ch].float()          # [8, H, W]
-        m = valid.float()
-        army = (planes * m).sum(dim=(-1, -2)) / m.sum().clamp(min=1)  # [8]
-        if bool(alive.any()):
-            big = torch.where(alive, army, torch.full_like(army, float("inf")))
-            target = int(big.argmin())
-        else:
-            target = -1  # no alive field (terminal frame) — ignored in loss
-        return {
-            "target": torch.tensor(target, dtype=torch.int64),
-            "valid_mask": valid,
-            "alive_mask": alive,
-        }
-
-    def build_heads(self, in_ch: int, H: int, W: int) -> dict[str, nn.Module]:
-        return {
-            "linear_pool": ConvMeanPoolHead(in_ch),
-            "deployed": DeployedElimHead(in_ch),
-            "fat": ConvMLPPoolHead(in_ch),
-        }
-
-    def loss(self, pred: torch.Tensor, target: torch.Tensor, aux: dict) -> torch.Tensor:
-        return masked_cross_player_ce(pred, target, aux["alive_mask"])
-
-    def metrics(self, pred: torch.Tensor, target: torch.Tensor, aux: dict) -> dict[str, float]:
-        return {"top1": masked_top1(pred, target, aux["alive_mask"])}
-
-
-TASKS: dict[str, type] = {
-    "lowest_army": LowestArmyTask,
-}

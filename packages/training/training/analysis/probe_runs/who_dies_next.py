@@ -26,10 +26,8 @@ import torch
 import torch.nn as nn
 
 from training.analysis.probes.cli import build_probe_arg_parser, run_probe_cli
-from training.analysis.probes.tasks import (
-    ConvMeanPoolHead,
-    ConvMLPPoolHead,
-    DeployedElimHead,
+from training.analysis.probes.cross_player import (
+    cross_player_head_zoo,
     masked_cross_player_ce,
     masked_top1,
 )
@@ -47,7 +45,7 @@ class WhoDiesNextTask:
     # This task's target IS the victim, so the rule's victim-accuracy is the
     # reference (docs 6.13-15, on the 11k val split). imminent = the dt<10 rule.
     baselines = {"rule_agg": 0.471, "rule_imminent": 0.478, "oracle": 0.562, "uniform": 0.286}
-    elim_variant = "next_death"
+    elim_variant: str | None = "next_death"
 
     def extract_target(self, frame: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
         return {
@@ -58,11 +56,7 @@ class WhoDiesNextTask:
         }
 
     def build_heads(self, in_ch: int, H: int, W: int) -> dict[str, nn.Module]:
-        return {
-            "linear_pool": ConvMeanPoolHead(in_ch),
-            "deployed": DeployedElimHead(in_ch),
-            "fat": ConvMLPPoolHead(in_ch),
-        }
+        return cross_player_head_zoo(in_ch)
 
     def loss(self, pred: torch.Tensor, target: torch.Tensor, aux: dict) -> torch.Tensor:
         return masked_cross_player_ce(pred, target, aux["alive_mask"])
