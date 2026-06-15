@@ -14,12 +14,10 @@ so tasks that need it — e.g. army-channel indices — get it.
 from __future__ import annotations
 
 import argparse
+from collections.abc import Callable
 from datetime import datetime
-import io
 import json
 from pathlib import Path
-import sys
-from typing import Callable
 
 import torch
 
@@ -35,34 +33,7 @@ from training.bc.obs_config import ObsConfig
 from training.bc.splits import load_manifest, samples_for_split
 from training.settings import PROBE_OUTPUT_DIR
 from training.shared.device import disable_mps_fallback, pick_device
-
-
-class _Tee:
-    """Mirror stdout writes to the console and, once attached, a log file. Output
-    before `attach` is buffered so the log captures the run from its first line —
-    the run dir's name needs the task, which isn't known until the model loads."""
-
-    def __init__(self, console):
-        self._console = console
-        self._buffer = io.StringIO()
-        self._file: io.TextIOWrapper | None = None
-
-    def write(self, s: str) -> int:
-        self._console.write(s)
-        (self._file or self._buffer).write(s)
-        return len(s)
-
-    def flush(self) -> None:
-        self._console.flush()
-        (self._file or self._buffer).flush()
-
-    def attach(self, path: Path) -> None:
-        self._file = open(path, "w")
-        self._file.write(self._buffer.getvalue())  # replay the buffered prefix
-
-    def close(self) -> None:
-        if self._file is not None:
-            self._file.close()
+from utils.log import tee_stdio
 
 
 def build_probe_arg_parser(description: str) -> argparse.ArgumentParser:
@@ -103,33 +74,26 @@ def run_probe_cli(
         if not path.exists():
             raise SystemExit(f"not found: {path}")
 
-    # Tee all stdout to the run dir's run.log (created mid-run, once the task name
-    # is known); buffered until then so the log captures the run from line one.
-    tee = _Tee(sys.stdout)
-    sys.stdout = tee
-    try:
-        device = pick_device(args.device)
-        torch.manual_seed(args.seed)
-        print(f"device: {device}")
+    # Everything that names the run dir is resolved before the log opens: the dir
+    # is `…-{task.name}-{source}`, and task.name needs the checkpoint's obs config.
+    # Model load is silent, so nothing worth logging happens before this point.
+    device = pick_device(args.device)
+    torch.manual_seed(args.seed)
+    model = load_frozen_model(args.checkpoint, device)
+    obs_cfg = model.cfg.obs
+    source = TrunkSource(model.trunk) if args.source == "trunk" else RawObsSource()
+    task = task_factory(obs_cfg)
+    manifest = load_manifest(args.manifest)
+    val_samples = samples_for_split(manifest, "val", args.intermediate)
 
-        model = load_frozen_model(args.checkpoint, device)
-        obs_cfg = model.cfg.obs
+    out_dir = args.out_root / f"{datetime.now():%Y%m%d-%H%M%S}-{task.name}-{args.source}"
+    out_dir.mkdir(parents=True, exist_ok=False)
+
+    with tee_stdio(out_dir / "run.log"):  # mirrors stdout+stderr into the log
+        print(f"device: {device}")
         print(f"obs config: dense_history_n={obs_cfg.dense_history_n} "
               f"({obs_cfg.obs_channels} channels)")
-
-        if args.source == "trunk":
-            source = TrunkSource(model.trunk, out_channels=model.cfg.outer_width)
-        else:
-            source = RawObsSource(out_channels=obs_cfg.obs_channels)
-
-        task = task_factory(obs_cfg)
-        manifest = load_manifest(args.manifest)
-        val_samples = samples_for_split(manifest, "val", args.intermediate)
         print(f"manifest: {args.manifest.name}  ({len(val_samples)} val perspectives)")
-
-        out_dir = args.out_root / f"{datetime.now():%Y%m%d-%H%M%S}-{task.name}-{args.source}"
-        out_dir.mkdir(parents=True, exist_ok=False)
-        tee.attach(out_dir / "run.log")
         print(f"out dir: {out_dir}\n")
 
         results = run_probe(
@@ -156,8 +120,7 @@ def run_probe_cli(
 
         summary = {
             "task": task.name, "source": args.source, "checkpoint": str(args.checkpoint),
-            "baselines": task.baselines, "primary_metric": task.primary_metric,
-            "variants": variants,
+            "baselines": task.baselines, "variants": variants,
         }
         with (out_dir / "summary.json").open("w") as fp:
             json.dump({**vars(args), **summary}, fp, indent=2, default=str)
@@ -170,6 +133,3 @@ def run_probe_cli(
         print(f"  baselines: {refs}")
         print(f"\nwrote: {out_dir / 'summary.json'}")
         return results
-    finally:
-        sys.stdout = tee._console
-        tee.close()

@@ -56,9 +56,8 @@ from training.bc.obs_config import ObsConfig
 
 class FeatureSource(Protocol):
     """Maps a batch of obs `[B, C_obs, H, W]` to the feature map the head reads
-    `[B, C, H, W]`. `out_channels` sizes the head's first conv."""
-
-    out_channels: int
+    `[B, C, H, W]`. The head is sized from the cached features' channel count,
+    so the source only has to produce them."""
 
     def __call__(self, obs: torch.Tensor) -> torch.Tensor: ...
 
@@ -67,9 +66,8 @@ class TrunkSource:
     """A frozen trained trunk. Swap the checkpoint to compare representations
     shaped by different training objectives (e.g. elim-ON vs elim-OFF)."""
 
-    def __init__(self, trunk: nn.Module, out_channels: int):
+    def __init__(self, trunk: nn.Module):
         self.trunk = trunk
-        self.out_channels = out_channels
 
     @torch.no_grad()
     def __call__(self, obs: torch.Tensor) -> torch.Tensor:
@@ -79,9 +77,6 @@ class TrunkSource:
 class RawObsSource:
     """Identity — the head reads the obs directly. The control that bounds what
     any readout of the inputs can recover (no trunk in the path)."""
-
-    def __init__(self, out_channels: int):
-        self.out_channels = out_channels
 
     def __call__(self, obs: torch.Tensor) -> torch.Tensor:
         return obs
@@ -106,7 +101,6 @@ class ProbeTask(Protocol):
     """
 
     name: str
-    primary_metric: str
     baselines: dict[str, float]
     elim_variant: str | None  # dataset elim head variant for the targets, or None
 

@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import torch
 import torch.nn as nn
+from torch import Tensor
 
 from training.analysis.probes.cli import build_probe_arg_parser, run_probe_cli
 from training.analysis.probes.cross_player import (
@@ -33,7 +34,6 @@ class LowestArmyTask:
     the trunk preserves army; if not, it mangled a signal the obs hands it."""
 
     name = "lowest_army"
-    primary_metric = "top1"
     # The model-free lowest-army rule and uniform-over-alive, on the val split
     # (docs 6.13-15 / 6.14). Drawn as reference lines.
     baselines = {"lowest_army_rule": 0.471, "uniform": 0.284}
@@ -42,7 +42,7 @@ class LowestArmyTask:
     def __init__(self, dense_history_n: int):
         self.army_ch = army_channel_indices(dense_history_n)
 
-    def extract_target(self, frame: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
+    def extract_target(self, frame: dict[str, Tensor]) -> dict[str, Tensor]:
         obs = frame["obs"]                          # [C, H, W]
         valid = frame["valid_mask"]                 # [1, H, W] bool
         alive = frame["next_elim_alive_mask"]       # [8] bool
@@ -65,10 +65,10 @@ class LowestArmyTask:
     def build_heads(self, in_ch: int, H: int, W: int) -> dict[str, nn.Module]:
         return cross_player_head_zoo(in_ch)
 
-    def loss(self, pred: torch.Tensor, target: torch.Tensor, aux: dict) -> torch.Tensor:
+    def loss(self, pred: Tensor, target: Tensor, aux: dict) -> Tensor:
         return masked_cross_player_ce(pred, target, aux["alive_mask"])
 
-    def metrics(self, pred: torch.Tensor, target: torch.Tensor, aux: dict) -> dict[str, float]:
+    def metrics(self, pred: Tensor, target: Tensor, aux: dict) -> dict[str, float]:
         return {"top1": masked_top1(pred, target, aux["alive_mask"])}
 
 
