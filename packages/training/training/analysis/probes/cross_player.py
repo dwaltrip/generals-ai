@@ -1,12 +1,13 @@
 """Reusable kit for "pick a player" probes — the cross-player softmax family.
 
-PROVISIONAL (2026-06-15) — this is a bit of a grab-bag and the grouping isn't
-settled. Not everything here is "cross-player": `army_totals_ch_indices` is obs
-introspection, `masked_top1` is generic, and the head zoo is really a per-player
-*pooled readout* (the army-regression head is the same shape), not softmax-
-specific. Only `masked_cross_player_ce` is intrinsically cross-player. Likely
-wants a rename or a split (a generic per-player-readout kit vs the softmax
-loss/metric). Don't treat the current home of these as load-bearing.
+PROVISIONAL (2026-06-15) — still a bit of a grab-bag and the grouping isn't
+settled. Not everything here is "cross-player": `masked_top1` is generic, and the
+head zoo is really a per-player *pooled readout* (the army-regression head is the
+same shape), not softmax-specific. Only `masked_cross_player_ce` is intrinsically
+cross-player. Likely wants a rename or a split (a generic per-player-readout kit
+vs the softmax loss/metric). Don't treat the current home of these as
+load-bearing. (The obs-channel introspection that used to live here moved to
+`analysis/obs_utils.py`.)
 
 A cross-player probe decodes *which player* (a categorical over the alive field)
 from a frozen representation: who dies next, who has the lowest army, etc. Every
@@ -23,7 +24,6 @@ What's reusable across the family:
     mirror the real next-death head's training loss (`bc/loss.py`). Single-sourced
     here on purpose: copied into each one-off they would drift out of sync with
     the loss they are meant to match.
-  - `army_totals_ch_indices` — obs-channel lookup for the per-player army planes.
 
 This kit is family-scoped, not universal: a regression probe (e.g. per-player
 army R²) wants a different head/loss/metric and would build its own, on top of
@@ -36,24 +36,9 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from training.bc.constants import get_obs_channel_indices
+from training.analysis.obs_utils import N_PLAYERS
 from training.bc.model.heads.elim_next_death import ElimNextDeathHead
 from training.bc.model.heads.pool import masked_mean_pool
-
-
-N_PLAYERS = 8
-
-
-def army_totals_ch_indices(dense_history_n: int) -> list[int]:
-    """Obs channel indices of the per-player total-army planes, canonical player
-    order (0 = self, 1..7 = opponents in `opp_slots` order) — aligned with the
-    elim head's player axis and the frame's `alive_mask`. These planes are
-    broadcast scalars (`army / 1000`), fog-independent, in the fixed base
-    channels, so the indices are independent of `dense_history_n`.
-    """
-    # TODO: this is a bit brittle
-    wanted = ["self_army_count"] + [f"opp_{i}_army_count" for i in range(1, N_PLAYERS)]
-    return get_obs_channel_indices(dense_history_n, wanted)
 
 
 # ---------------------------------------------------------------------------

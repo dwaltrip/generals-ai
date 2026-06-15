@@ -18,10 +18,10 @@ import torch
 from torch import Tensor
 import torch.nn as nn
 
+from training.analysis.obs_utils import army_totals_ch_indices, per_player_army
 from training.analysis.probes.cli import build_probe_arg_parser, run_probe_cli
 from training.analysis.probes.core import FrameNeeds
 from training.analysis.probes.cross_player import (
-    army_totals_ch_indices,
     cross_player_head_zoo,
     masked_cross_player_ce,
     masked_top1,
@@ -47,11 +47,7 @@ class LowestArmyTask:
         obs = frame["obs"]                          # [C, H, W]
         valid = frame["valid_mask"]                 # [1, H, W] bool
         alive = frame["alive_mask"]                 # [8] bool
-        # Recover each player's army scalar: the planes are constant over the
-        # real board, so the valid-masked mean is exactly that value.
-        planes = obs[self.army_ch].float()          # [8, H, W]
-        m = valid.float()
-        army = (planes * m).sum(dim=(-1, -2)) / m.sum().clamp(min=1)  # [8]
+        army = per_player_army(obs, valid, self.army_ch).float()  # [8]
         if bool(alive.any()):
             big = torch.where(alive, army, torch.full_like(army, float("inf")))
             target = int(big.argmin())
