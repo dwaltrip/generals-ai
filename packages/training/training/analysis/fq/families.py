@@ -15,19 +15,22 @@ from training.analysis.fq.frame_table import FrameSpec, FrameTable
 
 
 def lowest_army_victim(t: FrameTable) -> np.ndarray:
-    """`[N]` channel of the lowest-army alive player — the lowest-army who-dies-next
-    rule, evaluated on the table's exact frames."""
-    masked = np.where(t.cols["alive"], t.cols["army_sim"], np.inf)
-    return masked.argmin(1)
+    """`[N]` per-frame channel of player with smallest total army.
+    This is the "lowest-army" heuristic for the who-dies-next elim-head."""
+    return _masked_army_totals(t, np.inf).argmin(1)
 
 
 def bottom_two_margin(t: FrameTable) -> np.ndarray:
     """`[N]` army gap between the two lowest-army alive players; `-1` when <2 are
     alive. Small margins are where the lowest-army rule (and the head) struggle."""
-    s = np.sort(np.where(t.cols["alive"], t.cols["army_sim"], np.inf), axis=1)
-    m = s[:, 1] - s[:, 0]
-    m[~np.isfinite(m)] = -1.0
-    return m
+    masked_sorted = np.sort(_masked_army_totals(t, np.inf), axis=1)
+    gap = masked_sorted[:, 1] - masked_sorted[:, 0]
+    gap[~np.isfinite(gap)] = -1.0
+    return gap
+
+
+def _masked_army_totals(t: FrameTable, sentinel: float) -> np.ndarray:
+    return np.where(t.cols["alive"], t.cols["army_sim"], sentinel)
 
 
 ELIM_HEAD_DEBUG = FrameSpec(
