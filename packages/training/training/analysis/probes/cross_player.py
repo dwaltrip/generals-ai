@@ -5,9 +5,7 @@ settled. Not everything here is "cross-player": `masked_top1` is generic, and th
 head zoo is really a per-player *pooled readout* (the army-regression head is the
 same shape), not softmax-specific. Only `masked_cross_player_ce` is intrinsically
 cross-player. Likely wants a rename or a split (a generic per-player-readout kit
-vs the softmax loss/metric). Don't treat the current home of these as
-load-bearing. (The obs-channel introspection that used to live here moved to
-`analysis/obs_utils.py`.)
+vs the softmax loss/metric).
 
 A cross-player probe decodes *which player* (a categorical over the alive field)
 from a frozen representation: who dies next, who has the lowest army, etc. Every
