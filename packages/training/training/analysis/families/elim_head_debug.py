@@ -1,8 +1,15 @@
+"""The elim_head_debug family: the table for debugging the who-dies-next elim head.
+
+Pairs the head's next_death targets with sim/obs army and the lowest-army rule as
+derived columns, so head-vs-rule comparisons are matched to the eval frames by
+construction. Join a model dump (`join_dump`) to add the head's predictions.
+"""
+
 from __future__ import annotations
 
 import numpy as np
 
-from training.analysis.families.cols_army_totals import (
+from training.analysis.families.army_derivers import (
     ARMY_OBS,
     ARMY_SIM,
 )

@@ -45,7 +45,7 @@ from pathlib import Path
 import numpy as np
 
 from settings import TRAINING_DATA_DIR
-from training.analysis.families.cols_army_totals import army_totals_per_tick
+from training.analysis.families.army_derivers import army_totals_per_tick
 from training.bc.eval.dump_compat import read_alive_mask
 from training.bc.obs import canonical_slot_order
 from training.bc.splits import load_manifest, samples_for_split
