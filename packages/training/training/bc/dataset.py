@@ -128,15 +128,17 @@ def _shuffle_buffered[T](
 
 
 @dataclass(frozen=True)
-class FrameView:
-    """Raw per-frame context, attached to each yielded sample when the dataset is
-    iterated with `frame_view=True` (an analysis-only seam, default off).
+class SimFrame:
+    """Raw sim-domain context for one frame, attached to each yielded sample when
+    the dataset is iterated with `unsafe_attach_sim_frame=True` (an analysis-only
+    seam, default off).
 
     Holds the per-game `sim`/`meta` dicts (shared by reference across all of that
     game's frames — treat read-only) plus this frame's indexing, so offline
     analysis can read raw sim ground truth alongside the encoded obs in the same
-    pass. Non-collatable (carries numpy dicts), so it is for direct iteration
-    only — never route a `frame_view=True` dataset through a DataLoader.
+    pass. The flag is named to look dangerous on purpose: the attached numpy dicts
+    are non-collatable, so a `unsafe_attach_sim_frame=True` dataset must be
+    iterated directly and never routed through a DataLoader.
     """
 
     sim: dict[str, np.ndarray]
@@ -275,7 +277,7 @@ class IterableDataset(TorchIterableDataset):
         elim_bin_edges: tuple[int, ...] | None = None,
         elim_head_variant: str | None = None,
         emit_alive_mask: bool = False,
-        frame_view: bool = False,
+        unsafe_attach_sim_frame: bool = False,
     ) -> None:
         """
         `samples` is a list of `(sim_path, perspective_k)` pairs. Caller is
@@ -325,7 +327,7 @@ class IterableDataset(TorchIterableDataset):
         # Analysis-only seam: attach the raw sim/meta + frame indexing to each
         # yielded sample (direct iteration only — non-collatable). Off by default
         # so the training path is untouched.
-        self._frame_view = frame_view
+        self._sim_frame = unsafe_attach_sim_frame
         self._elim_edges = (
             np.asarray(elim_bin_edges, dtype=np.int64)
             if elim_bin_edges is not None
@@ -517,8 +519,8 @@ class IterableDataset(TorchIterableDataset):
                         sample["sample_idx"] = torch.tensor(
                             self._sample_index[(sim_path, k)], dtype=torch.int64
                         )
-                    if self._frame_view:
-                        sample["frame_view"] = FrameView(
+                    if self._sim_frame:
+                        sample["sim_frame"] = SimFrame(
                             sim=sim, meta=meta, k=k, t=t,
                             perspective_slot=perspective_slot, opp_slots=opp_slots,
                         )

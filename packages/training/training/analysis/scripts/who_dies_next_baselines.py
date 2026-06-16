@@ -45,6 +45,7 @@ from pathlib import Path
 import numpy as np
 
 from settings import TRAINING_DATA_DIR
+from training.analysis.fq.derivers import army_totals_per_tick
 from training.bc.eval.dump_compat import read_alive_mask
 from training.bc.obs import canonical_slot_order
 from training.bc.splits import load_manifest, samples_for_split
@@ -61,20 +62,6 @@ EDGES = np.array([10, 20, 40, 80, 160, 320, 640], dtype=np.int64)
 DELTA_WINDOWS = (1, 5, 10, 25)
 HORIZON_BUCKETS = ((0, 10), (10, 25), (25, 50), (50, 100), (100, 200), (200, 1 << 30))
 DEFAULT_MANIFEST = TRAINING_DATA_DIR / "splits" / "cloud_24k_sub_5k.json"
-
-
-def _army_totals_per_tick(sim: dict[str, np.ndarray]) -> np.ndarray:
-    """`[T, 8]` total army per slot per tick (sum of armies over owned cells).
-
-    Mirrors the leaderboard's army column: neutral / mountain cells are excluded
-    by the `ownership == slot` mask, owned cities contribute their garrison.
-    """
-    own, arm = sim["ownership"], sim["armies"]  # [T, H, W]
-    T = own.shape[0]
-    tot = np.zeros((T, 8), dtype=np.int64)
-    for s in range(8):
-        tot[:, s] = np.where(own == s, arm, 0).reshape(T, -1).sum(1)
-    return tot
 
 
 def build_baseline_table(manifest_path: Path) -> dict[str, np.ndarray]:
@@ -103,7 +90,7 @@ def build_baseline_table(manifest_path: Path) -> dict[str, np.ndarray]:
         with np.load(path.with_name(path.stem + ".meta.npz")) as z:
             meta = {key: z[key] for key in z.files}
         elim = ElimCtx(EDGES, *precompute_elim(sim, EDGES))
-        army = _army_totals_per_tick(sim)  # [T, 8]
+        army = army_totals_per_tick(sim)  # [T, 8]
         T = sim["ownership"].shape[0]
         for persp_idx, k in persps:
             ps = int(meta["perspective_player_ids"][k])
