@@ -240,6 +240,26 @@ def _next_death_target(
     return nxt, alive, int(cand[nxt] - t)
 
 
+@dataclass(frozen=True)
+class FrameView:
+    """Raw per-frame context, attached to each yielded sample when the dataset is
+    iterated with `frame_view=True` (an analysis-only seam, default off).
+
+    Holds the per-game `sim`/`meta` dicts (shared by reference across all of that
+    game's frames — treat read-only) plus this frame's indexing, so offline
+    analysis can read raw sim ground truth alongside the encoded obs in the same
+    pass. Non-collatable (carries numpy dicts), so it is for direct iteration
+    only — never route a `frame_view=True` dataset through a DataLoader.
+    """
+
+    sim: dict[str, np.ndarray]
+    meta: dict[str, np.ndarray]
+    k: int
+    t: int
+    perspective_slot: int
+    opp_slots: list[int]
+
+
 # TODO: Create a more robust return type for this.
 def encode_frame(
     sim: dict[str, np.ndarray],
@@ -375,6 +395,7 @@ class IterableDataset(TorchIterableDataset):
         elim_bin_edges: tuple[int, ...] | None = None,
         elim_head_variant: str | None = None,
         emit_alive_mask: bool = False,
+        frame_view: bool = False,
     ) -> None:
         """
         `samples` is a list of `(sim_path, perspective_k)` pairs. Caller is
@@ -421,6 +442,10 @@ class IterableDataset(TorchIterableDataset):
         self._epoch = 0
         self._prof_sink = prof_sink
         self._frame_info = include_frame_info
+        # Analysis-only seam: attach the raw sim/meta + frame indexing to each
+        # yielded sample (direct iteration only — non-collatable). Off by default
+        # so the training path is untouched.
+        self._frame_view = frame_view
         self._elim_edges = (
             np.asarray(elim_bin_edges, dtype=np.int64)
             if elim_bin_edges is not None
@@ -611,6 +636,11 @@ class IterableDataset(TorchIterableDataset):
                         sample["p_start"] = torch.tensor(p_start, dtype=torch.int64)
                         sample["sample_idx"] = torch.tensor(
                             self._sample_index[(sim_path, k)], dtype=torch.int64
+                        )
+                    if self._frame_view:
+                        sample["frame_view"] = FrameView(
+                            sim=sim, meta=meta, k=k, t=t,
+                            perspective_slot=perspective_slot, opp_slots=opp_slots,
                         )
                     # Measures per-sample overhead plus (per batch boundary) collate, shm_copy,
                     # and the queue put/block. Then `handoff − collate − shm_copy` should give
