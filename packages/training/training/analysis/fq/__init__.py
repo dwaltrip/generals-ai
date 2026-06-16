@@ -12,23 +12,23 @@ from training.analysis.fq.derivers import (
     Frame,
     per_game,
 )
-from training.analysis.fq.registry import REGISTRY
 from training.analysis.fq.frame_table import (
-    FrameSpec,
     FrameTable,
+    FrameTableSpec,
     build_frame_table,
     cap_by_games,
     check_representative,
     select,
 )
+from training.analysis.fq.registry import TableRegistry
 
 
 __all__ = [
     "Deriver",
     "Frame",
-    "FrameSpec",
+    "FrameTableSpec",
     "FrameTable",
-    "REGISTRY",
+    "TableRegistry",
     "build_frame_table",
     "cap_by_games",
     "check_representative",

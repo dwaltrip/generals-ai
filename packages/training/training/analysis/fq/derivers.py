@@ -1,16 +1,12 @@
 """Canonical single-source derivers for fq.
 
-A `Deriver` owns the *one* way to compute a named per-frame quantity, so every
-analysis reads the same value (the fix for the army-divergence class of bug,
-6.14-1). A deriver maps one `Frame` (the unified per-frame view) to that frame's
-value of its column — `[8]` when `per_player`, scalar otherwise; `build_frame_table`
-stacks the per-frame results into the `[N, 8]` / `[N]` column.
-
-Two scopes:
-  - per-frame (row-local): read straight off the `Frame` (e.g. `army_obs`).
+A `Deriver` owns the one way to compute a named per-frame quantity, so every
+analysis reads the same value. It maps one `Frame` to that frame's value of its
+column (`[8]` when `per_player`, scalar otherwise); `build_frame_table` stacks the
+per-frame results into the `[N, 8]` / `[N]` column. Two scopes:
+  - per-frame (row-local): read straight off the `Frame`.
   - per-game: `per_game(prepare, index)` runs `prepare(sim)` once per game and
-    indexes this frame's slice out — for whole-game quantities (e.g. `army_sim`,
-    and later army-delta over a window).
+    indexes this frame's slice out (whole-game quantities, e.g. army totals).
 """
 
 from __future__ import annotations
@@ -25,13 +21,12 @@ from torch import Tensor
 @dataclass
 class Frame:
     """The deriver-facing view of one (game, perspective, tick): the dataset's
-    encoded outputs (`obs`, `valid_mask`, `alive`) unified with the raw sim it
+    encoded outputs (`obs`, `valid_mask`, `alive`) unified with the raw `sim` it
     attached via the `unsafe_attach_sim_frame` seam (`sim`, `t`, `raw_order`).
 
     `raw_order` is the canonical `[perspective_slot, *opp_slots]` channel→raw-slot
-    map. `game_id` is the walk-local per-game token used as the `per_game` cache
-    key (monotonic over the contiguous walk — collision-free by construction,
-    unlike `id(sim)`).
+    map. `game_id` is a walk-local per-game token (the `per_game` cache key):
+    monotonic over the contiguous walk, collision-free unlike `id(sim)`.
     """
 
     obs: Tensor

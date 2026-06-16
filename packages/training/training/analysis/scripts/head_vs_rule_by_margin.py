@@ -37,7 +37,7 @@ from pathlib import Path
 import numpy as np
 
 from settings import TRAINING_DATA_DIR
-from training.analysis.fq.families import ELIM_HEAD_DEBUG
+from training.analysis.families.elim_head_debug import ELIM_HEAD_DEBUG
 from training.analysis.fq.frame_table import (
     GROUND_TRUTH_OBS_CFG,
     FrameTable,

@@ -10,7 +10,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from training.analysis.fq.families import ELIM_HEAD_DEBUG
+from training.analysis.families.elim_head_debug import ELIM_HEAD_DEBUG
 from training.analysis.fq.frame_table import GROUND_TRUTH_OBS_CFG, build_frame_table, select
 
 

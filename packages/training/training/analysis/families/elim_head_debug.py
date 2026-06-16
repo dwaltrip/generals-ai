@@ -2,12 +2,11 @@ from __future__ import annotations
 
 import numpy as np
 
-
 from training.analysis.families.cols_army_totals import (
     ARMY_OBS,
     ARMY_SIM,
 )
-from training.analysis.fq.frame_table import FrameSpec, FrameTable
+from training.analysis.fq.frame_table import FrameTable, FrameTableSpec
 
 
 def lowest_army_victim(t: FrameTable) -> np.ndarray:
@@ -29,7 +28,7 @@ def _masked_army_totals(t: FrameTable, sentinel: float) -> np.ndarray:
     return np.where(t.cols["alive"], t.cols["army_sim"], sentinel)
 
 
-ELIM_HEAD_DEBUG = FrameSpec(
+ELIM_HEAD_DEBUG = FrameTableSpec(
     name="elim_head_debug",
     dataset_kwargs=dict(
         elim_head_variant="next_death", include_frame_info=True, unsafe_attach_sim_frame=True

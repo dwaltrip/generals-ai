@@ -24,39 +24,35 @@ from training.bc.obs_config import OBS_CONFIG_DEFAULTS, ObsConfig
 
 
 # Obs config for ground-truth fq tables: default channels, fp32. fp32 avoids the
-# fp16 storage quantization on `army_obs` (so the `army_obs == army_sim` parity
-# holds exactly), and the army channels are `dense_history_n`-independent, so the
-# default count is safe. A model-joined table that compares `army_obs` against a
-# specific checkpoint's view should instead pin obs_cfg to that run (design Q5).
+# fp16 storage quantization on `army_obs` (so `army_obs == army_sim` holds exactly),
+# and the army channels are `dense_history_n`-independent so the default count is
+# safe. A table comparing `army_obs` against a specific checkpoint should instead
+# pin obs_cfg to that run.
 GROUND_TRUTH_OBS_CFG = ObsConfig(
     dense_history_n=OBS_CONFIG_DEFAULTS.dense_history_n, obs_dtype="fp32"
 )
 
 
 @dataclass
-class FrameSpec:
-    """A family: what the dataset must emit and which columns to build.
+class FrameTableSpec:
+    """A table spec: what the dataset must emit and which columns to build.
 
     `emit_cols` copies dataset-emitted fields straight into columns (quantities
     the encode path already computes — alive/victim/dt); `derivers` are computed
     from the `Frame`; `derived_cols` are plain-numpy functions applied to the
-    *built* table (the lowest-army rule lives here, matched to the eval frames by
-    construction). `dataset_kwargs` is inlined for the MVP (Q9: -> FrameNeeds).
+    *built* table. `dataset_kwargs` is inlined as raw `IterableDataset` kwargs.
 
-    NOTE: `derived_cols` MUST be row-local — each output row a function of that
-    same input row only. `build_frame_table` computes them once on the full table,
-    and `select` then masks the result like any other column. For a row-local
-    column, mask-then-compute == compute-then-mask, so this is correct. A
-    cross-row reduction (a per-table rank, a normalization over all rows) would be
-    WRONG: it must be recomputed after each `select`, not masked. Such a column
-    does not belong in `derived_cols` — compute it explicitly in the consumer,
-    after slicing. (The current set — `bottom_two_margin`, `lowest_army_victim` —
-    are per-frame, so they qualify.)
+    `derived_cols` MUST be row-local — each output row a function of that same
+    input row only. `build_frame_table` computes them once on the full table and
+    `select` then masks the result, so for a row-local column mask-then-compute ==
+    compute-then-mask. A cross-row reduction (a per-table rank, a normalization)
+    would be wrong here — it must be recomputed after each `select`; compute it in
+    the consumer instead.
 
-    `truth_map` declares this family's shared ground-truth columns for `join_dump`:
+    `truth_map` declares the spec's shared ground-truth columns for `join_dump`:
     `{table_col: dump_col}` pairs that must agree on the join overlap (e.g.
-    `victim -> next_elim_target`). Family-owned so `join_dump` stays generic —
-    it asserts whatever the family declares rather than hardcoding column names.
+    `victim -> next_elim_target`). Spec-owned, so `join_dump` asserts whatever the
+    spec declares rather than hardcoding column names.
     """
 
     name: str
@@ -74,11 +70,11 @@ class FrameTable:
     `t.cols["army_sim"][t.cols["alive"]]` flattens to the long 1-D of alive values.
 
     `persp_val_index` is the full val-split position — the stable join key against
-    model dumps (`join_dump`, design Appendix A). It equals the dataset's emitted
-    `sample_idx` when the walk covers the full val list, and is remapped back to
-    full-split position when `build_frame_table` caps by games (see there).
-    `game_id` is a walk-local monotonic counter (representativeness only; correct
-    only at `shuffle_buffer_size=0`).
+    model dumps (see `join_dump`). It equals the dataset's emitted `sample_idx`
+    when the walk covers the full val list, and `build_frame_table` remaps it back
+    to full-split position when it caps by games. `game_id` is a walk-local
+    monotonic counter (representativeness only; correct only at
+    `shuffle_buffer_size=0`).
     """
 
     cols: dict[str, np.ndarray]
@@ -107,17 +103,15 @@ def join_dump(
 ) -> FrameTable:
     """Inner-join a model dump onto the table on `(persp_val_index, frame_t)`.
 
-    Returns a new table holding only the rows that matched a dump frame, with the
-    dump's columns attached. The table is expected to be a subset of the dump's
-    frames (same val split, possibly capped by games), so a match rate below 1.0
-    means the keys are misaligned — prints a warning rather than failing, since
-    a partial overlap is occasionally legitimate.
+    Returns a new table of only the rows that matched a dump frame, with the dump's
+    columns attached. The table should be a subset of the dump's frames (same val
+    split, possibly capped by games), so a match rate below 1.0 means misaligned
+    keys — warns rather than fails, since partial overlap is occasionally legitimate.
 
-    `truth_map` (`{table_col: dump_col}`, from the family) names the shared
-    ground-truth columns; this asserts they agree on every matched row. That cross-
-    check is the point: it validates fq's `persp_val_index` against the dump's
-    independently-produced one. A self round-trip can't — it keys both sides on
-    fq's own index (design Appendix A).
+    `truth_map` (`{table_col: dump_col}`) names shared ground-truth columns and this
+    asserts they agree on every matched row — cross-checking fq's `persp_val_index`
+    against the dump's independently-produced one (a self round-trip cannot, keying
+    both sides on fq's own index).
     """
     d = dict(np.load(dump)) if not isinstance(dump, dict) else dump
     for key in ("persp_val_index", "frame_t"):
@@ -173,7 +167,7 @@ def cap_by_games(samples: list[tuple[Path, int]], max_games: int) -> list[tuple[
 
 
 def build_frame_table(
-    spec: FrameSpec,
+    spec: FrameTableSpec,
     samples: list[tuple[Path, int]],
     obs_cfg: ObsConfig,
     max_games: int | None = None,
@@ -181,22 +175,19 @@ def build_frame_table(
     """Walk the samples once with the spec's emit, run each deriver per frame, and
     stack into a `FrameTable`.
 
-    `samples` MUST be the complete, canonical val (or train) split — the order
-    `samples_for_split` returns — because that order *defines* full-split position,
-    which is the `persp_val_index` join key against model dumps. The cap-by-games
-    subset still gets correct full-split indices: positions are recorded from the
-    full list *before* capping, then the dataset's subset `sample_idx` is remapped
-    back through them. Hand this a pre-subset list and `persp_val_index` is silently
-    wrong — the real-dump validation (Appendix A) is what catches that.
+    `samples` MUST be the complete, canonical val (or train) split (the order
+    `samples_for_split` returns) — that order defines full-split position, the
+    `persp_val_index` join key against model dumps. A by-games cap still gets
+    correct indices: full-split positions are recorded before capping, then the
+    dataset's subset `sample_idx` is remapped back through them. Hand this a
+    pre-subset list and `persp_val_index` is silently wrong.
 
     Runs at `shuffle_buffer_size=0`: `game_id`, `n_games`, and the `per_game` cache
     are correct only on the contiguous, tick-ordered walk — a reservoir shuffle
-    would interleave games and silently corrupt all three.
+    would interleave games and corrupt all three.
     """
-    # Full-split position is the index in the full `samples` list, captured before
-    # any cap. The dataset numbers its emitted `sample_idx` over whatever list it
-    # walks, so after a cap that index is subset-relative; `subset_to_full` maps it
-    # back. Identity when uncapped. Mirrors the dump harness's `persp_index_map`.
+    # Record full-split positions before any cap; the dataset numbers `sample_idx`
+    # over whatever (possibly capped) list it walks, so `subset_to_full` maps it back.
     full_pos = {pair: i for i, pair in enumerate(samples)}
     if max_games is not None:
         samples = cap_by_games(samples, max_games)
@@ -242,20 +233,18 @@ def build_frame_table(
     t = FrameTable(
         out, np.array(persp_val_index), np.array(frame_t), np.array(game_id), gid + 1
     )
-    # A built family table arrives complete: attach the derived columns (the
-    # lowest-army rule included) so no consumer has to re-run them. They must be
-    # row-local — see the FrameSpec.derived_cols NOTE.
+    # Attach derived columns so a built table arrives complete; they must be
+    # row-local (see FrameTableSpec.derived_cols).
     for name, fn in spec.derived_cols.items():
         t.cols[name] = fn(t)
     return t
 
 
 def check_representative(t: FrameTable, per_player_target: np.ndarray) -> None:
-    """The 6.15-2 guard (opt-in helper): a per-group metric needs each group to
-    hold enough GAMES (not just frames) and enough target spread, or a
-    variance-normalized metric inverts. Reports per player slot. Call it before
-    computing per-group metrics — the dumb container can't know your grouping, so
-    it won't auto-run this."""
+    """Opt-in guard: a per-group metric needs each group to hold enough GAMES (not
+    just frames) and enough target spread, or a variance-normalized metric inverts.
+    Reports per player slot. Call it before computing per-group metrics — the dumb
+    container can't know your grouping, so it won't auto-run this."""
     print(f"  n_games={t.n_games}  n_frames={t.frame_t.size}")
     for p in range(8):
         sel = t.cols["alive"][:, p]
