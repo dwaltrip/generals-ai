@@ -23,7 +23,7 @@ import sys
 import numpy as np
 
 from settings import TRAINING_DATA_DIR
-from training.analysis.fq.families import REGISTRY
+from training.analysis.fq.registry import REGISTRY
 from training.analysis.fq.frame_table import (
     GROUND_TRUTH_OBS_CFG,
     build_frame_table,

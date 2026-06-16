@@ -2,7 +2,11 @@ from __future__ import annotations
 
 import numpy as np
 
-from training.analysis.fq.derivers import ARMY_OBS, ARMY_SIM
+
+from training.analysis.families.cols_army_totals import (
+    ARMY_OBS,
+    ARMY_SIM,
+)
 from training.analysis.fq.frame_table import FrameSpec, FrameTable
 
 
