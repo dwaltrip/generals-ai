@@ -20,7 +20,17 @@ import numpy as np
 
 from training.analysis.fq.derivers import Deriver, Frame
 from training.bc.dataset import IterableDataset, SimFrame
-from training.bc.obs_config import ObsConfig
+from training.bc.obs_config import OBS_CONFIG_DEFAULTS, ObsConfig
+
+
+# Obs config for ground-truth fq tables: default channels, fp32. fp32 avoids the
+# fp16 storage quantization on `army_obs` (so the `army_obs == army_sim` parity
+# holds exactly), and the army channels are `dense_history_n`-independent, so the
+# default count is safe. A model-joined table that compares `army_obs` against a
+# specific checkpoint's view should instead pin obs_cfg to that run (design Q5).
+GROUND_TRUTH_OBS_CFG = ObsConfig(
+    dense_history_n=OBS_CONFIG_DEFAULTS.dense_history_n, obs_dtype="fp32"
+)
 
 
 @dataclass

@@ -11,17 +11,15 @@ import numpy as np
 import pytest
 
 from training.analysis.fq.families import ELIM_HEAD_DEBUG
-from training.analysis.fq.frame_table import build_frame_table, select
-from training.bc.obs_config import OBS_CONFIG_DEFAULTS, ObsConfig
+from training.analysis.fq.frame_table import GROUND_TRUTH_OBS_CFG, build_frame_table, select
 
 
 def test_fq_build_parity_and_rule(samples: list[tuple[Path, int]]) -> None:
     if not samples:
         pytest.skip("no eligible samples in fixture corpus")
 
-    # fp32 obs so the parity assert isn't masked by fp16 storage quantization.
-    obs_cfg = ObsConfig(dense_history_n=OBS_CONFIG_DEFAULTS.dense_history_n, obs_dtype="fp32")
-    t = build_frame_table(ELIM_HEAD_DEBUG, samples, obs_cfg, max_games=3)
+    # GROUND_TRUTH_OBS_CFG is fp32, so the parity assert isn't masked by fp16 noise.
+    t = build_frame_table(ELIM_HEAD_DEBUG, samples, GROUND_TRUTH_OBS_CFG, max_games=3)
 
     assert t.n_games >= 1
     assert {"alive", "victim", "dt", "army_obs", "army_sim"} <= set(t.cols)

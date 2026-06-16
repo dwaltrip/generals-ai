@@ -38,8 +38,13 @@ import numpy as np
 
 from settings import TRAINING_DATA_DIR
 from training.analysis.fq.families import ELIM_HEAD_DEBUG
-from training.analysis.fq.frame_table import FrameTable, build_frame_table, join_dump, select
-from training.bc.obs_config import OBS_CONFIG_DEFAULTS, ObsConfig
+from training.analysis.fq.frame_table import (
+    GROUND_TRUTH_OBS_CFG,
+    FrameTable,
+    build_frame_table,
+    join_dump,
+    select,
+)
 from training.bc.splits import load_manifest, samples_for_split
 
 
@@ -53,11 +58,7 @@ def build_imminent(dump: Path, manifest: Path, max_games: int | None, dt_max: in
     a real next victim."""
     man = load_manifest(manifest)
     samples = samples_for_split(man, "val", Path(man["intermediate_root"]))
-    # Config-only fp32 obs: this is a ground-truth analysis (rule/margin come from
-    # army_sim), so fp16 storage noise on army_obs would only muddy the parity check.
-    obs_cfg = ObsConfig(dense_history_n=OBS_CONFIG_DEFAULTS.dense_history_n, obs_dtype="fp32")
-
-    t = build_frame_table(ELIM_HEAD_DEBUG, samples, obs_cfg, max_games)
+    t = build_frame_table(ELIM_HEAD_DEBUG, samples, GROUND_TRUTH_OBS_CFG, max_games)
     j = join_dump(t, dump, ELIM_HEAD_DEBUG.truth_map)
 
     imm = select(j, (j.cols["dt"] >= 0) & (j.cols["dt"] < dt_max))

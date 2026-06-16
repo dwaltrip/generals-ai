@@ -25,12 +25,12 @@ import numpy as np
 from settings import TRAINING_DATA_DIR
 from training.analysis.fq.families import REGISTRY
 from training.analysis.fq.frame_table import (
+    GROUND_TRUTH_OBS_CFG,
     build_frame_table,
     check_representative,
     join_dump,
     select,
 )
-from training.bc.obs_config import OBS_CONFIG_DEFAULTS, ObsConfig
 from training.bc.splits import load_manifest, samples_for_split
 
 
@@ -51,10 +51,7 @@ def main() -> None:
     spec = REGISTRY[args.table]
     man = load_manifest(args.manifest)
     samples = samples_for_split(man, args.split, Path(man["intermediate_root"]))
-    # Config-only obs (ground-truth tables): fp32 to avoid fp16 storage noise.
-    obs_cfg = ObsConfig(dense_history_n=OBS_CONFIG_DEFAULTS.dense_history_n, obs_dtype="fp32")
-
-    t = build_frame_table(spec, samples, obs_cfg, args.max_games)
+    t = build_frame_table(spec, samples, GROUND_TRUTH_OBS_CFG, args.max_games)
     print(
         f"built '{spec.name}' [{args.split}]: {t.frame_t.size} frames / {t.n_games} games  "
         f"cols={list(t.cols)}",
