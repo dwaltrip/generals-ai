@@ -34,7 +34,7 @@ import torch
 from torch.utils.data import DataLoader, default_collate
 from torch.utils.data import IterableDataset as TorchIterableDataset
 
-from training.bc import actions, bfs
+from training.bc import bfs
 from training.bc.constants import H_PADDED, W_PADDED
 from training.bc.mask import build_mask
 from training.bc.obs import (
@@ -45,6 +45,14 @@ from training.bc.obs import (
     step_memory,
 )
 from training.bc.obs_config import ObsConfig
+from training.bc.targets.core_targets import policy_pass_target, value_target
+from training.bc.targets.elim_targets import (
+    ElimCtx,
+    alive_mask,
+    next_death_target,
+    precompute_elim,
+    time_bin_targets,
+)
 from training.bc.visibility import compute_visibility
 from training.shared.timing import timer
 
@@ -120,127 +128,6 @@ def _shuffle_buffered[T](
 
 
 @dataclass(frozen=True)
-class _ElimCtx:
-    """Per-game precompute backing the elimination heads' targets.
-
-    `edges` is the dataset-constant bin-edge array (time_bin head only);
-    `death_by_slot` and `is_real` are per-game [8]-arrays indexed by *raw* slot
-    id; `sentinel` is the winner's stand-in death tick. Built once per game in
-    `_walk` (when an elim head is enabled) and threaded into every `encode_frame`
-    call for that game. Both elim variants read off this one precompute.
-    """
-
-    edges: np.ndarray | None   # [n_bins - 1] strictly-increasing bin edges; None for next_death
-    death_by_slot: np.ndarray  # [8] int64 — elim timestep; winner sentinel; -1 = phantom
-    is_real: np.ndarray        # [8] bool — slot actually played this game
-    sentinel: int              # winner's stand-in death tick (> any real death)
-
-
-def _precompute_elim(
-    sim: dict[str, np.ndarray], edges: np.ndarray | None
-) -> tuple[np.ndarray, np.ndarray, int]:
-    """Per-game `(death_by_slot, is_real, sentinel)` for the elim targets.
-
-    `death_by_slot[s]` is slot `s`'s elimination timestep, the large finite
-    winner `sentinel` (integer-typed, not `np.inf`) for the one real slot absent
-    from `death_events`, or `-1` for a phantom slot that never played.
-    `is_real[s]` marks the slots present at t=0. The winner-vs-phantom split is
-    what `real_slots` resolves: the winner is real-and-absent-from-deaths, a
-    phantom is not-real — and only the latter must be masked out.
-
-    The sentinel only has to exceed every real death tick (real deaths are ≤
-    T−1) so the winner never wins the soonest-death argmin unless it is the lone
-    survivor. For the time_bin head it is additionally sized as `T + max_edge`
-    so the winner's `Δ = sentinel − t` lands in the top "never" bin; next_death
-    passes no edges and uses `T + 1`.
-
-    The obs encoder always runs at P=8 and `opp_slots` always yields 7 ids from
-    `range(8)`, but FFA games can start with <8 players (~7% of the corpus, see
-    `6.13-6`). Without `is_real`, those phantom channels would inherit the winner
-    sentinel and train as "alive, never dies" on every frame.
-    """
-    own0 = sim["ownership"][0]
-    real = np.unique(own0)
-    real = real[real >= 0].astype(np.intp)
-    T = sim["ownership"].shape[0]
-    sentinel = T + (int(edges[-1]) if edges is not None else 1)
-
-    death_by_slot = np.full(8, -1, dtype=np.int64)
-    death_by_slot[real] = sentinel  # winner default; dead slots overwritten below
-    deaths = sim["death_events"]
-    if deaths.size:
-        death_by_slot[deaths[:, 1].astype(np.intp)] = deaths[:, 0]
-
-    is_real = np.zeros(8, dtype=np.bool_)
-    is_real[real] = True
-    return death_by_slot, is_real, sentinel
-
-
-def _alive_mask(elim: _ElimCtx, raw_order: list[int], t: int) -> np.ndarray:
-    """Per-channel alive mask `[8]`: a channel is alive iff its slot is real and
-    not yet eliminated (`death > t` — a player eliminated at `t` counts dead at
-    frame `t`). The cross-player softmax / regression domain; both elim target
-    builders and the alive-only path derive `alive` here.
-    """
-    raw = np.asarray(raw_order, dtype=np.intp)
-    return elim.is_real[raw] & (elim.death_by_slot[raw] > t)
-
-
-def _elim_targets(
-    elim: _ElimCtx, raw_order: list[int], t: int
-) -> tuple[np.ndarray, np.ndarray]:
-    """Per-channel `(elim_bin_target[8], alive_mask[8])` at frame `t`.
-
-    `raw_order` is the canonical channel→raw-slot map (`[perspective_slot,
-    *opp_slots]`). A channel is alive iff its slot is real AND not yet
-    eliminated (`death > t` matches the existing aliveness convention — a player
-    eliminated at `t` counts dead at frame `t`). Live `Δ = death − t` digitizes
-    into a bin; the winner's large sentinel Δ lands in the top bin (merged with
-    "never"). Dead and phantom channels get bin 0, masked out by `alive`.
-    """
-    assert elim.edges is not None, "time_bin targets require bin edges"
-    raw = np.asarray(raw_order, dtype=np.intp)
-    death_ch = elim.death_by_slot[raw]
-    alive = _alive_mask(elim, raw_order, t)
-    delta = death_ch - t
-    bins = np.where(alive, np.digitize(delta, elim.edges, right=False), 0)
-    return bins.astype(np.int64), alive
-
-
-def _next_death_target(
-    elim: _ElimCtx, raw_order: list[int], t: int
-) -> tuple[int, np.ndarray, int]:
-    """Per-frame `(next_victim_channel, alive_mask[8], dt)` for who-dies-next.
-
-    `raw_order` is the canonical channel→raw-slot map (`[perspective_slot,
-    *opp_slots]`). A channel is alive iff its slot is real AND not yet eliminated
-    (`death > t`) — the same convention as the time_bin head; this is the domain
-    of the cross-player softmax. The next victim is the alive channel with the
-    soonest death tick; the winner's `sentinel` death is larger than any real
-    death, so it only wins this argmin when it is the lone survivor.
-
-    Returns the next-victim channel index, the alive mask, and `dt = death − t`
-    (ticks until that death — the horizon, dumped for offline confidence-ramp /
-    horizon-stratified reads). Frames with no real future death — the winner's
-    tail, where only the winner remains alive — get `target = -1` (a CE
-    `ignore_index` sentinel, masked from the loss) and `dt = -1`. Ties (two
-    deaths at the same tick) resolve to the lowest canonical channel index via
-    `argmin`'s first-min rule — a fixed, deterministic convention.
-    """
-    raw = np.asarray(raw_order, dtype=np.intp)
-    death_ch = elim.death_by_slot[raw]                       # [8]
-    alive = _alive_mask(elim, raw_order, t)                  # [8]
-    # Soonest death among alive channels; non-alive channels can't be the victim.
-    cand = np.where(alive, death_ch, np.iinfo(np.int64).max)
-    nxt = int(cand.argmin())
-    if cand[nxt] >= elim.sentinel:
-        # The soonest "death" is the winner sentinel (or no alive channel) → no
-        # real next elimination from here. Mask the frame out.
-        return -1, alive, -1
-    return nxt, alive, int(cand[nxt] - t)
-
-
-@dataclass(frozen=True)
 class FrameView:
     """Raw per-frame context, attached to each yielded sample when the dataset is
     iterated with `frame_view=True` (an analysis-only seam, default off).
@@ -273,7 +160,7 @@ def encode_frame(
     bfs_cache: bfs.BFSCache,
     H: int,
     W: int,
-    elim: _ElimCtx | None = None,
+    elim: ElimCtx | None = None,
     elim_variant: str | None = None,
 ) -> dict[str, torch.Tensor]:
     """
@@ -313,14 +200,7 @@ def encode_frame(
         valid_mask_np = np.zeros((1, H_PADDED, W_PADDED), dtype=np.bool_)
         valid_mask_np[0, :H, :W] = True
 
-        src = int(sim["actions_source"][perspective_slot, t])
-        dst = int(sim["actions_dest"][perspective_slot, t])
-        is50 = int(sim["actions_is50"][perspective_slot, t])
-        is_pass, flat_idx = actions.encode(src, dst, is50, W, W_PADDED)
-
-        # Value target: placement is 1..P (1st through Pth); shift to a 0-indexed
-        # class label for F.cross_entropy.
-        value_target = int(meta["placement"][k]) - 1
+        is_pass, flat_idx = policy_pass_target(sim, perspective_slot, t, W, W_PADDED)
 
         sample = {
             "obs": torch.from_numpy(obs_np),
@@ -328,20 +208,20 @@ def encode_frame(
             "valid_mask": torch.from_numpy(valid_mask_np),
             "action_target": torch.tensor(flat_idx, dtype=torch.int64),
             "is_pass": torch.tensor(is_pass, dtype=torch.bool),
-            "value_target": torch.tensor(value_target, dtype=torch.int64),
+            "value_target": torch.tensor(value_target(meta, k), dtype=torch.int64),
         }
         if elim is not None:
             raw_order = [perspective_slot, *opp_slots]
             # Aliveness is variant-independent and is the one key every elim
             # consumer (and the alive-only probe path) needs — emit it once here,
             # then add whatever variant-specific targets were asked for.
-            sample["alive_mask"] = torch.from_numpy(_alive_mask(elim, raw_order, t))
+            sample["alive_mask"] = torch.from_numpy(alive_mask(elim, raw_order, t))
             if elim_variant == "next_death":
-                nxt, _, dt = _next_death_target(elim, raw_order, t)
+                nxt, _, dt = next_death_target(elim, raw_order, t)
                 sample["next_elim_target"] = torch.tensor(nxt, dtype=torch.int64)
                 sample["next_elim_dt"] = torch.tensor(dt, dtype=torch.int64)
             elif elim_variant == "time_bin":
-                bins, _ = _elim_targets(elim, raw_order, t)
+                bins, _ = time_bin_targets(elim, raw_order, t)
                 sample["elim_bin_target"] = torch.from_numpy(bins)
             # elim_variant is None → alive-only emission (emit_alive_mask path).
         return sample
@@ -598,7 +478,7 @@ class IterableDataset(TorchIterableDataset):
             # once per game, not per perspective). `None` unless a variant or the
             # standalone alive mask was requested.
             elim_ctx = (
-                _ElimCtx(self._elim_edges, *_precompute_elim(sim, self._elim_edges))
+                ElimCtx(self._elim_edges, *precompute_elim(sim, self._elim_edges))
                 if self._needs_elim_ctx
                 else None
             )

@@ -12,14 +12,16 @@ import pytest
 from training.bc.constants import ELIGIBLE_PLAYER_COUNT, MAX_BOARD_SIDE
 from training.bc.dataset import (
     IterableDataset,
-    _elim_targets,
-    _ElimCtx,
-    _next_death_target,
-    _precompute_elim,
     _shuffle_buffered,
 )
 from training.bc.filters import is_eligible
 from training.bc.obs_config import OBS_CONFIG_DEFAULTS
+from training.bc.targets.elim_targets import (
+    ElimCtx,
+    next_death_target,
+    precompute_elim,
+    time_bin_targets,
+)
 
 
 class _IdentityDataset(IterableDataset):
@@ -152,12 +154,12 @@ def _synthetic_sim(real_slots: list[int], deaths: list[tuple[int, int]], T: int)
 
 
 def test_elim_precompute_winner_vs_phantom() -> None:
-    """`_precompute_elim` distinguishes the three slot kinds: dead-real slots get
+    """`precompute_elim` distinguishes the three slot kinds: dead-real slots get
     their elim timestep, the winner (real, absent from deaths) the large finite
     sentinel, phantom slots (never played) the -1 marker."""
     # 4-player game: slots 0..3 real, 4..7 phantom. Slot 0 wins; 1/2/3 die.
     sim = _synthetic_sim([0, 1, 2, 3], [(10, 1), (20, 2), (30, 3)], T=40)
-    death_by_slot, is_real, sentinel = _precompute_elim(sim, _ELIM_EDGES)
+    death_by_slot, is_real, sentinel = precompute_elim(sim, _ELIM_EDGES)
 
     assert sentinel == 40 + 640
     assert list(death_by_slot) == [sentinel, 10, 20, 30, -1, -1, -1, -1]
@@ -170,18 +172,18 @@ def test_elim_targets_masks_phantom_and_dead_channels() -> None:
     eliminated channel is masked too — only currently-alive real players carry a
     target."""
     sim = _synthetic_sim([0, 1, 2, 3], [(10, 1), (20, 2), (30, 3)], T=40)
-    elim = _ElimCtx(_ELIM_EDGES, *_precompute_elim(sim, _ELIM_EDGES))
+    elim = ElimCtx(_ELIM_EDGES, *precompute_elim(sim, _ELIM_EDGES))
     # Perspective = slot 0 → canonical channel order [0,1,2,3,4,5,6,7].
     raw_order = [0, 1, 2, 3, 4, 5, 6, 7]
 
-    bins, alive = _elim_targets(elim, raw_order, t=5)
+    bins, alive = time_bin_targets(elim, raw_order, t=5)
     # Phantom channels 4..7 masked out — the whole point of the real_slots mask.
     assert list(alive) == [True, True, True, True, False, False, False, False]
     # ch0 winner → top bin (Δ=675 ≥ 640); ch1/2/3 → bins by Δ = 5/15/25.
     assert list(bins) == [7, 0, 1, 2, 0, 0, 0, 0]
 
     # After slot 1's elimination at t=10: its channel is real but dead → masked.
-    bins2, alive2 = _elim_targets(elim, raw_order, t=15)
+    bins2, alive2 = time_bin_targets(elim, raw_order, t=15)
     assert not alive2[1]            # death (10) > 15 is False → dead
     assert alive2[0] and alive2[2] and alive2[3]
     assert not alive2[4:].any()    # phantoms still masked
@@ -193,22 +195,22 @@ def test_next_death_target_picks_soonest_and_masks_winner_tail() -> None:
     the winner left) return target/-dt = -1 so the loss ignores them."""
     # Slots 0..3 real; 0 wins; deaths at 10/20/30 for slots 1/2/3.
     sim = _synthetic_sim([0, 1, 2, 3], [(10, 1), (20, 2), (30, 3)], T=40)
-    elim = _ElimCtx(_ELIM_EDGES, *_precompute_elim(sim, _ELIM_EDGES))
+    elim = ElimCtx(_ELIM_EDGES, *precompute_elim(sim, _ELIM_EDGES))
     raw_order = [0, 1, 2, 3, 4, 5, 6, 7]
 
     # At t=5: all four real players alive; soonest death is slot 1 at t=10.
-    nxt, alive, dt = _next_death_target(elim, raw_order, t=5)
+    nxt, alive, dt = next_death_target(elim, raw_order, t=5)
     assert nxt == 1 and dt == 5
     assert list(alive) == [True, True, True, True, False, False, False, False]
 
     # At t=15 (slot 1 dead): next victim is slot 2 (death 20), dt=5.
-    nxt2, alive2, dt2 = _next_death_target(elim, raw_order, t=15)
+    nxt2, alive2, dt2 = next_death_target(elim, raw_order, t=15)
     assert nxt2 == 2 and dt2 == 5
     assert not alive2[1]
 
     # At t=35 (all opponents dead, only the winner left): no real next death →
     # masked frame.
-    nxt3, alive3, dt3 = _next_death_target(elim, raw_order, t=35)
+    nxt3, alive3, dt3 = next_death_target(elim, raw_order, t=35)
     assert nxt3 == -1 and dt3 == -1
     assert list(alive3) == [True, False, False, False, False, False, False, False]
 
@@ -218,9 +220,9 @@ def test_next_death_target_ties_resolve_to_lowest_channel() -> None:
     (argmin's first-min rule) — the fixed tie convention."""
     # Slots 2 and 3 both die at t=20.
     sim = _synthetic_sim([0, 1, 2, 3], [(10, 1), (20, 2), (20, 3)], T=40)
-    elim = _ElimCtx(_ELIM_EDGES, *_precompute_elim(sim, _ELIM_EDGES))
+    elim = ElimCtx(_ELIM_EDGES, *precompute_elim(sim, _ELIM_EDGES))
     raw_order = [0, 1, 2, 3, 4, 5, 6, 7]
-    nxt, _alive, dt = _next_death_target(elim, raw_order, t=15)
+    nxt, _alive, dt = next_death_target(elim, raw_order, t=15)
     assert nxt == 2 and dt == 5   # channel 2 over channel 3
 
 

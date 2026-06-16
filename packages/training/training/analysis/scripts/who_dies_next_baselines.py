@@ -17,7 +17,7 @@ This script does both halves:
        - most-negative army delta — the "attacked hardest" rate signal over a
          smoothing window K (baseline #2; per-tick delta is noisy)
      The true next-victim / alive-mask / horizon come from the exact target
-     logic the head trains against (`_next_death_target`), so the labels are
+     logic the head trains against (`next_death_target`), so the labels are
      identical to the dump's by construction (asserted at join time). The table
      is cached to `<sweep>/runs/baselines_stage0.npz` (run-independent: it's a
      function of the manifest + val split only).
@@ -45,10 +45,10 @@ from pathlib import Path
 import numpy as np
 
 from settings import TRAINING_DATA_DIR
-from training.bc.dataset import _ElimCtx, _next_death_target, _precompute_elim
 from training.bc.eval.dump_compat import read_alive_mask
 from training.bc.obs import canonical_slot_order
 from training.bc.splits import load_manifest, samples_for_split
+from training.bc.targets.elim_targets import ElimCtx, next_death_target, precompute_elim
 
 
 # Reuse the model's bin edges only to size the winner sentinel in the elim
@@ -102,7 +102,7 @@ def build_baseline_table(manifest_path: Path) -> dict[str, np.ndarray]:
             sim = {key: z[key] for key in z.files}
         with np.load(path.with_name(path.stem + ".meta.npz")) as z:
             meta = {key: z[key] for key in z.files}
-        elim = _ElimCtx(EDGES, *_precompute_elim(sim, EDGES))
+        elim = ElimCtx(EDGES, *precompute_elim(sim, EDGES))
         army = _army_totals_per_tick(sim)  # [T, 8]
         T = sim["ownership"].shape[0]
         for persp_idx, k in persps:
@@ -111,7 +111,7 @@ def build_baseline_table(manifest_path: Path) -> dict[str, np.ndarray]:
             elim_t = int(meta["elim_timestep"][k])
             end_t = T - 1 if elim_t == -1 else min(T - 1, elim_t)
             for t in range(end_t):
-                victim, alive, dt = _next_death_target(elim, list(raw), t)
+                victim, alive, dt = next_death_target(elim, list(raw), t)
                 if victim < 0:  # winner tail: no future death, masked from loss
                     continue
                 a = army[t, raw]  # army per canonical channel
