@@ -55,8 +55,6 @@ def main() -> None:
     obs_cfg = ObsConfig(dense_history_n=OBS_CONFIG_DEFAULTS.dense_history_n, obs_dtype="fp32")
 
     t = build_frame_table(spec, samples, obs_cfg, args.max_games)
-    for name, fn in spec.derived_cols.items():
-        t.cols[name] = fn(t)
     print(
         f"built '{spec.name}' [{args.split}]: {t.frame_t.size} frames / {t.n_games} games  "
         f"cols={list(t.cols)}",

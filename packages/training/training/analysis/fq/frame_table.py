@@ -33,6 +33,16 @@ class FrameSpec:
     *built* table (the lowest-army rule lives here, matched to the eval frames by
     construction). `dataset_kwargs` is inlined for the MVP (Q9: -> FrameNeeds).
 
+    NOTE: `derived_cols` MUST be row-local — each output row a function of that
+    same input row only. `build_frame_table` computes them once on the full table,
+    and `select` then masks the result like any other column. For a row-local
+    column, mask-then-compute == compute-then-mask, so this is correct. A
+    cross-row reduction (a per-table rank, a normalization over all rows) would be
+    WRONG: it must be recomputed after each `select`, not masked. Such a column
+    does not belong in `derived_cols` — compute it explicitly in the consumer,
+    after slicing. (The current set — `bottom_two_margin`, `lowest_army_victim` —
+    are per-frame, so they qualify.)
+
     `truth_map` declares this family's shared ground-truth columns for `join_dump`:
     `{table_col: dump_col}` pairs that must agree on the join overlap (e.g.
     `victim -> next_elim_target`). Family-owned so `join_dump` stays generic —
@@ -219,9 +229,15 @@ def build_frame_table(
     n = len(frame_t)
     for k, v in out.items():                 # axis-0 invariant (catches shape bugs)
         assert v.shape[0] == n, f"col {k} axis0 {v.shape[0]} != N {n}"
-    return FrameTable(
+    t = FrameTable(
         out, np.array(persp_val_index), np.array(frame_t), np.array(game_id), gid + 1
     )
+    # A built family table arrives complete: attach the derived columns (the
+    # lowest-army rule included) so no consumer has to re-run them. They must be
+    # row-local — see the FrameSpec.derived_cols NOTE.
+    for name, fn in spec.derived_cols.items():
+        t.cols[name] = fn(t)
+    return t
 
 
 def check_representative(t: FrameTable, per_player_target: np.ndarray) -> None:

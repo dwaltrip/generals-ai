@@ -10,7 +10,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from training.analysis.fq.families import ELIM_HEAD_DEBUG, bottom_two_margin, lowest_army_victim
+from training.analysis.fq.families import ELIM_HEAD_DEBUG
 from training.analysis.fq.frame_table import build_frame_table, select
 from training.bc.obs_config import OBS_CONFIG_DEFAULTS, ObsConfig
 
@@ -34,9 +34,9 @@ def test_fq_build_parity_and_rule(samples: list[tuple[Path, int]]) -> None:
     parity = float(np.abs(t.cols["army_obs"] - t.cols["army_sim"])[alive].max())
     assert parity < 2.0, f"army_obs vs army_sim diverge by {parity}"
 
-    # Rule-as-column computes on the table's exact frames and yields valid victims.
-    t.cols["margin"] = bottom_two_margin(t)
-    t.cols["low_army_victim"] = lowest_army_victim(t)
+    # build_frame_table attaches the family's derived columns, so the rule-as-column
+    # (computed on the table's exact frames) is present without the consumer re-running it.
+    assert {"margin", "low_army_victim"} <= set(t.cols)
     assert t.cols["low_army_victim"].shape == (n,)
     assert np.all((t.cols["low_army_victim"] >= 0) & (t.cols["low_army_victim"] < 8))
 
