@@ -38,6 +38,13 @@ ELIM_HEAD_DEBUG = FrameSpec(
     emit_cols={"alive_mask": "alive", "next_elim_target": "victim", "next_elim_dt": "dt"},
     derivers=[ARMY_OBS, ARMY_SIM],
     derived_cols={"margin": bottom_two_margin, "low_army_victim": lowest_army_victim},
+    # Shared ground truth for join_dump: these table cols must equal the dump's
+    # next_elim_* cols on the join overlap (the persp_val_index cross-check).
+    truth_map={
+        "victim": "next_elim_target",
+        "dt": "next_elim_dt",
+        "alive": "next_elim_alive_mask",
+    },
 )
 
 # name -> FrameSpec, for the CLI's `--table` selection (a small registry of

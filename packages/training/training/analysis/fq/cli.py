@@ -9,8 +9,9 @@
     PY
 
 `-e` prints its expression's value; a stdin snippet self-prints. The snippet runs
-with `t` (the built table, derived columns attached), `np`, `select`,
-`check_representative`, and the family's derived-column helpers in scope.
+with `t` (the built table, derived columns attached), `np`, `select`, `join_dump`,
+`truth_map` (the family's shared-truth map for `join_dump`), `check_representative`,
+and the family's derived-column helpers in scope.
 """
 
 from __future__ import annotations
@@ -23,7 +24,12 @@ import numpy as np
 
 from settings import TRAINING_DATA_DIR
 from training.analysis.fq.families import REGISTRY
-from training.analysis.fq.frame_table import build_frame_table, check_representative, select
+from training.analysis.fq.frame_table import (
+    build_frame_table,
+    check_representative,
+    join_dump,
+    select,
+)
 from training.bc.obs_config import OBS_CONFIG_DEFAULTS, ObsConfig
 from training.bc.splits import load_manifest, samples_for_split
 
@@ -61,6 +67,8 @@ def main() -> None:
         "t": t,
         "np": np,
         "select": select,
+        "join_dump": join_dump,
+        "truth_map": spec.truth_map,
         "check_representative": check_representative,
         **{fn.__name__: fn for fn in spec.derived_cols.values()},
     }
