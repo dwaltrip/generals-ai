@@ -36,6 +36,13 @@ report covers every cell in `run_ids.txt`. Point `--manifest` at the split JSON
 the run trained on (default: the repo's `cloud_24k_sub_5k.json`).
 """
 
+# -----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------
+# TODO: Rewrite this using `fq` (should simplify the code dramatically).
+# Or remove it if we don't need it anymore.
+# -----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------
+
 from __future__ import annotations
 
 import argparse
