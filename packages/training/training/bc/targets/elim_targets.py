@@ -73,6 +73,15 @@ def precompute_elim(
     return death_by_slot, is_real, sentinel
 
 
+# ============================================================================
+# TODO(obs-alive-tick-seam): event-time. `death > t` reads a player who dies at
+# tick t as DEAD at frame t. But the obs army channel (bc/obs.py, scoreboard_row
+# / init_memory) reads the PRE-RESOLUTION board snapshot ownership[t], which
+# still shows that player's army (it zeroes at t+1). So at a capture-while-alive
+# tick the target says dead while obs shows on-board with army -> a 1-frame
+# obs/target inconsistency (~1% of frames). Paired site: the obs army channel.
+# Deferred to the obs/head rework. See docs/2026-06/6.18-6-obs-alive-tick-seam.md.
+# ============================================================================
 def alive_mask(elim: ElimCtx, raw_order: list[int], t: int) -> np.ndarray:
     """Per-channel alive mask `[8]`: a channel is alive iff its slot is real and
     not yet eliminated (`death > t` — a player eliminated at `t` counts dead at

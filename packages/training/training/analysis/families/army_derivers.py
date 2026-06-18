@@ -71,3 +71,39 @@ LAND_SIM = per_game(
     prepare=land_totals_per_tick,                             # sim -> [T, 8]
     index=lambda totals, f: totals[f.t, f.raw_order].astype(float),
 )
+
+
+def captured_per_tick(sim: dict[str, np.ndarray]) -> np.ndarray:
+    """`[T, 8]` bool: slot s has been captured by another player at/before tick t.
+
+    The sim's `capture_events` is `[K, 3]` rows of `(tick, captor, victim)`; a
+    capture is permanent (tiles transfer, the player is out), so the flag latches
+    True from the capture tick onward. This is the *capture*-based status prod's
+    `opp_N_captured_by` channel exposes — by construction blind to surrender, which
+    fires a `DeathEvent` but no `CaptureEvent` and leaves army on the board. So a
+    surrendered-present slot (`~alive & army>0`) stays False here, which is the
+    whole point: `captured ⟹ army==0` (capture zeroes the total), so the channel
+    cannot flag a player who left with army still standing.
+
+    Latches at `tick + 1`, not `tick`: the board snapshot transfers the captured
+    tiles one tick after the capture event (the obs/alive tick seam, 6.18-6), so
+    army zeroes at `tick + 1`. Aligning the flag there keeps `captured ⟹ army==0`
+    exact and matches the snapshot the obs army channel reads.
+    """
+    ev = sim["capture_events"]              # [K, 3] = (tick, captor, victim)
+    T = sim["ownership"].shape[0]
+    out = np.zeros((T, 8), dtype=bool)
+    for tick, _captor, victim in ev:
+        out[tick + 1 :, victim] = True
+    return out
+
+
+# capture-based status from raw sim — GROUND TRUTH. Prod's `opp_N_captured_by`
+# channel collapsed to a binary flag (captor identity dropped; §6). Blind to
+# surrender by construction — see `captured_per_tick`.
+CAPTURED = per_game(
+    "captured",
+    per_player=True,
+    prepare=captured_per_tick,                               # sim -> [T, 8] bool
+    index=lambda flags, f: flags[f.t, f.raw_order],
+)

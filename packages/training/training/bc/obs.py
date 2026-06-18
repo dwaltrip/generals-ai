@@ -344,6 +344,16 @@ def init_memory_common(
     return state
 
 
+# ============================================================================
+# TODO(obs-alive-tick-seam): board-snapshot-time. This army channel reads
+# ownership[t] — the PRE-RESOLUTION board. At a capture-while-alive tick the
+# victim's tiles haven't transferred yet (they zero at t+1), so obs shows them
+# on-board with army, while alive_mask (bc/targets/elim_targets.py) uses
+# death>t (event-time) and reads them DEAD at the same frame t. The pair
+# describes opposite ends of the tick -> a 1-frame obs/target inconsistency
+# (~1% of frames). Paired site: alive_mask. Deferred to the obs/head rework.
+# See docs/2026-06/6.18-6-obs-alive-tick-seam.md.
+# ============================================================================
 def scoreboard_row(ownership_row: np.ndarray, armies_row: np.ndarray, P: int):
     """Compute (land_counts, army_counts) for a single tick."""
     land = np.zeros(P, dtype=np.int32)
@@ -376,6 +386,8 @@ def init_memory(
     for p in range(P):
         owned_mask = (ownership == p)  # [T, HW]
         land_buf[:, p] = owned_mask.sum(axis=1)
+        # TODO(obs-alive-tick-seam): board-snapshot-time army (see scoreboard_row
+        # banner / docs/2026-06/6.18-6-obs-alive-tick-seam.md).
         army_buf[:, p] = (armies * owned_mask).sum(axis=1)
     state.land_count_history = [land_buf[t] for t in range(T)]
     state.army_count_history = [army_buf[t] for t in range(T)]
