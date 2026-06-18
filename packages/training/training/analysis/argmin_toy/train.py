@@ -60,6 +60,10 @@ class HParams:
     patience: int = 30
     min_delta: float = 1e-3
     min_epochs: int = 20
+    # Console print cadence only — curves are recorded every epoch regardless (the
+    # artifact and early-stop read them); this just thins the per-epoch log. `init`,
+    # every `log_every`-th epoch, the final epoch, and the early-stop epoch print.
+    log_every: int = 10
 
 
 @dataclass(frozen=True)
@@ -107,7 +111,9 @@ def train_argmin_model(
     rng = torch.Generator(device="cpu").manual_seed(seed)
     curves: dict[str, list[float]] = defaultdict(list)
 
-    def record(label: str) -> None:
+    def record(label: str) -> str:
+        """Append this step's losses/metrics to the curves; return the formatted log
+        line (the caller decides whether to print it)."""
         tr_scores = _forward_view(model, train_view, roles, hp.batch_size, device)
         va_scores = _forward_view(model, val_view, roles, hp.batch_size, device)
         tr_loss = F.cross_entropy(tr_scores, train_view[roles.target]).item()
@@ -119,12 +125,12 @@ def train_argmin_model(
         for k, v in metrics.items():
             curves[f"val_{k}"].append(v)
         metric_str = "  ".join(f"{k} {v:.3f}" for k, v in metrics.items())
-        print(f"  {label:>8}  train {tr_loss:.4f}  val {va_loss:.4f}  {metric_str}")
+        return f"  {label:>8}  train {tr_loss:.4f}  val {va_loss:.4f}  {metric_str}"
 
     n_train = train_view[roles.target].shape[0]
     target = train_view[roles.target]
     print(f"  {'epoch':>8}  {'train':>10}  {'val':>10}  metrics")
-    record("init")
+    print(record("init"))
     best_loss, stale, stopped = curves["val_loss"][0], 0, 0
     for epoch in range(1, hp.epochs + 1):
         model.train()
@@ -136,14 +142,19 @@ def train_argmin_model(
             loss = F.cross_entropy(model(*inputs), target[idx].to(device))
             loss.backward()
             optim.step()
-        record(f"ep {epoch}")
+        line = record(f"ep {epoch}")
         stopped = epoch
+        shown = epoch % hp.log_every == 0 or epoch == hp.epochs
+        if shown:
+            print(line)
 
         if curves["val_loss"][-1] < best_loss - hp.min_delta:
             best_loss, stale = curves["val_loss"][-1], 0
         else:
             stale += 1
         if hp.patience > 0 and epoch >= hp.min_epochs and stale >= hp.patience:
+            if not shown:
+                print(line)
             print(f"  early stop at ep {epoch} (val_loss flat for {stale})")
             break
 

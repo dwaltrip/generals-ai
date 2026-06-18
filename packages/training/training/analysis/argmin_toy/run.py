@@ -280,6 +280,8 @@ def main() -> None:
                     help="early-stop after N epochs of flat val_loss (<=0 disables)")
     ap.add_argument("--min-delta", type=float, default=HParams.min_delta)
     ap.add_argument("--min-epochs", type=int, default=HParams.min_epochs)
+    ap.add_argument("--log-every", type=int, default=HParams.log_every,
+                    help="console print cadence in epochs (curves still recorded every epoch)")
     ap.add_argument("--val-frac", type=float, default=0.2)
     ap.add_argument("--eps", type=float, default=0.0, help="strict-margin threshold (raw army)")
     ap.add_argument("--device", default="cpu")
@@ -289,7 +291,7 @@ def main() -> None:
     stamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
     out_dir = args.out_dir / f"{stamp}-{args.slice}"
     out_dir.mkdir(parents=True, exist_ok=True)
-    log_f = (out_dir / "run.log").open("w")
+    log_f = (out_dir / "run.log").open("w", buffering=1)  # line-buffered → tail -f streams live
     orig_stdout = sys.stdout
     sys.stdout = _Tee(orig_stdout, log_f)  # type: ignore[assignment]
 
@@ -297,28 +299,35 @@ def main() -> None:
         device = torch.device(args.device)
         hp = HParams(lr=args.lr, batch_size=args.batch_size, epochs=args.epochs,
                      patience=args.patience, min_delta=args.min_delta,
-                     min_epochs=args.min_epochs)
+                     min_epochs=args.min_epochs, log_every=args.log_every)
         roles = Roles()
         exp = EXPERIMENTS[args.slice]
+
+        run_cfg = {
+            "slice": args.slice, "manifest": args.manifest.name, "split": args.split,
+            "max_games": args.max_games, "epochs": hp.epochs, "lr": hp.lr,
+            "batch_size": hp.batch_size, "val_frac": args.val_frac, "eps": args.eps,
+            "patience": hp.patience, "min_delta": hp.min_delta, "min_epochs": hp.min_epochs,
+            "log_every": hp.log_every, "device": args.device,
+        }
+        print(f"experiment '{exp.name}': {len(exp.cells)} cells, "
+              f"{sum(len(c.seeds) for c in exp.cells)} runs")
+        print("config:")
+        for k, v in run_cfg.items():
+            print(f"  {k:<12} {v}")
 
         man = load_manifest(args.manifest)
         samples = samples_for_split(man, args.split, Path(man["intermediate_root"]))
         print(f"building argmin_toy table [{args.split}] from {args.manifest.name} ...")
         table = build_frame_table(REGISTRY["argmin_toy"], samples, GROUND_TRUTH_OBS_CFG,
                                   args.max_games)
-        print(f"experiment '{exp.name}': {len(exp.cells)} cells, "
-              f"{sum(len(c.seeds) for c in exp.cells)} runs")
 
         results, eff_table = run_experiments(exp, table, hp, roles, args.eps,
                                              args.val_frac, device)
 
         artifact = {
             "config": {
-                "slice": args.slice, "manifest": args.manifest.name, "split": args.split,
-                "max_games": args.max_games, "epochs": hp.epochs, "lr": hp.lr,
-                "batch_size": hp.batch_size, "val_frac": args.val_frac, "eps": args.eps,
-                "patience": hp.patience, "min_delta": hp.min_delta,
-                "min_epochs": hp.min_epochs,
+                **run_cfg,
                 "n_frames": int(eff_table.frame_t.size), "n_games": eff_table.n_games,
             },
             "cells": results,
