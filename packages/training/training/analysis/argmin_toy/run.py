@@ -46,6 +46,7 @@ from training.analysis.argmin_toy.metrics import (
     weight_report,
 )
 from training.analysis.argmin_toy.models import A1, B1, D1, E1, ArgminModel
+from training.analysis.argmin_toy.report import build_report
 from training.analysis.argmin_toy.train import HParams, Roles, train_argmin_model
 from training.analysis.families import REGISTRY  # imports families first → registers ARGMIN_TOY
 from training.analysis.fq.frame_table import (
@@ -140,9 +141,10 @@ def run_cell(
               f"(C={cell.encoder_cfg.n_channels}, "
               f"{train_view['label'].shape[0]} train / {val_view['label'].shape[0]} val) ===")
         model = build_model(cell.model, cell.encoder_cfg, seed)
-        curves = train_argmin_model(
+        res = train_argmin_model(
             model, train_view, val_view, roles, metrics_fn, hp, seed=seed, device=device
         )
+        curves = res.curves
         scores = _val_scores(model, val_view, roles, device)  # for the diagnostics
         aux = {k: val_view[k] for k in roles.aux}
         records.append({
@@ -155,7 +157,10 @@ def run_cell(
             "n_val": int(val_view["label"].shape[0]),
             "n_params": sum(p.numel() for p in model.parameters()),
             "curves": curves,
-            "final": {k: v[-1] for k, v in curves.items()},
+            "final": {k: v[-1] for k, v in curves.items()},          # last (stopped) epoch
+            "best": {k: v[res.best_epoch] for k, v in curves.items()},  # lowest-val_loss epoch
+            "best_epoch": res.best_epoch,
+            "stopped_epoch": res.stopped_epoch,
             "weights": weight_report(model.inspect()),
             "error_vs_margin": error_vs_margin(scores, val_view[roles.target], aux),
             "tie_stats": tie_stats(aux),
@@ -200,6 +205,10 @@ def main() -> None:
     ap.add_argument("--epochs", type=int, default=HParams.epochs)
     ap.add_argument("--lr", type=float, default=HParams.lr)
     ap.add_argument("--batch-size", type=int, default=HParams.batch_size)
+    ap.add_argument("--patience", type=int, default=HParams.patience,
+                    help="early-stop after N epochs of flat val_loss (<=0 disables)")
+    ap.add_argument("--min-delta", type=float, default=HParams.min_delta)
+    ap.add_argument("--min-epochs", type=int, default=HParams.min_epochs)
     ap.add_argument("--val-frac", type=float, default=0.2)
     ap.add_argument("--eps", type=float, default=0.0, help="strict-margin threshold (raw army)")
     ap.add_argument("--device", default="cpu")
@@ -215,7 +224,9 @@ def main() -> None:
 
     try:
         device = torch.device(args.device)
-        hp = HParams(lr=args.lr, batch_size=args.batch_size, epochs=args.epochs)
+        hp = HParams(lr=args.lr, batch_size=args.batch_size, epochs=args.epochs,
+                     patience=args.patience, min_delta=args.min_delta,
+                     min_epochs=args.min_epochs)
         roles = Roles()
 
         man = load_manifest(args.manifest)
@@ -242,11 +253,14 @@ def main() -> None:
                 "slice": args.slice, "manifest": args.manifest.name, "split": args.split,
                 "max_games": args.max_games, "epochs": hp.epochs, "lr": hp.lr,
                 "batch_size": hp.batch_size, "val_frac": args.val_frac, "eps": args.eps,
+                "patience": hp.patience, "min_delta": hp.min_delta,
+                "min_epochs": hp.min_epochs,
                 "n_frames_post_filter": int(table.frame_t.size), "n_games": table.n_games,
             },
             "cells": results,
         }
         (out_dir / "results.json").write_text(json.dumps(artifact, indent=2))
+        (out_dir / "report.md").write_text(build_report(artifact))
 
         print(f"\n{'='*70}\nsummary  (out_dir: {out_dir})")
         print(f"  {'cell':<46} {'acc_strict':>10} {'acc_inset':>10}")

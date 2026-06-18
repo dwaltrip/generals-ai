@@ -50,6 +50,28 @@ class HParams:
     weight_decay: float = 1e-4
     batch_size: int = 256
     epochs: int = 200
+    # Early stop: halt once val_loss hasn't improved by > `min_delta` for `patience`
+    # epochs (but never before `min_epochs`). The converged cells (E1_mlp ~ep 7,
+    # equivariant ~ep 1) and the stuck cells (linear on the notch, flat at the floor)
+    # both plateau, so this trims wasted epochs from both. `patience <= 0` disables
+    # it (runs the full `epochs`). We keep — not restore — the final weights and
+    # report best + last from the curves, so a late val-loss divergence stays visible.
+    patience: int = 30
+    min_delta: float = 1e-3
+    min_epochs: int = 20
+
+
+@dataclass(frozen=True)
+class TrainResult:
+    """One run's output: the full per-epoch `curves` (entry 0 = pre-train baseline),
+    plus pointers — `best_epoch` is the curve index with the lowest val_loss, and
+    `stopped_epoch` is the last epoch actually run (`== epochs` unless early-stopped).
+    The model is left at its `stopped_epoch` (last) state; `best_epoch` lets the
+    driver report best + last without restoring weights."""
+
+    curves: dict[str, list[float]]
+    best_epoch: int
+    stopped_epoch: int
 
 
 @torch.no_grad()
@@ -76,9 +98,10 @@ def train_argmin_model(
     *,
     seed: int,
     device: torch.device,
-) -> dict[str, list[float]]:
-    """Train `model` on `train_view`, eval on `val_view` each epoch. Returns
-    per-epoch curves (entry 0 = pre-training baseline)."""
+) -> TrainResult:
+    """Train `model` on `train_view`, eval on `val_view` each epoch. Returns the
+    per-epoch curves (entry 0 = pre-training baseline) plus the best/last epoch
+    pointers, early-stopping once val_loss plateaus (HParams.patience)."""
     optim = torch.optim.AdamW(model.parameters(), lr=hp.lr, weight_decay=hp.weight_decay)
     rng = torch.Generator(device="cpu").manual_seed(seed)
     curves: dict[str, list[float]] = defaultdict(list)
@@ -101,6 +124,7 @@ def train_argmin_model(
     target = train_view[roles.target]
     print(f"  {'epoch':>8}  {'train':>10}  {'val':>10}  metrics")
     record("init")
+    best_loss, stale, stopped = curves["val_loss"][0], 0, 0
     for epoch in range(1, hp.epochs + 1):
         model.train()
         perm = torch.randperm(n_train, generator=rng)
@@ -112,5 +136,16 @@ def train_argmin_model(
             loss.backward()
             optim.step()
         record(f"ep {epoch}")
+        stopped = epoch
 
-    return dict(curves)
+        if curves["val_loss"][-1] < best_loss - hp.min_delta:
+            best_loss, stale = curves["val_loss"][-1], 0
+        else:
+            stale += 1
+        if hp.patience > 0 and epoch >= hp.min_epochs and stale >= hp.patience:
+            print(f"  early stop at ep {epoch} (val_loss flat for {stale})")
+            break
+
+    val = curves["val_loss"]
+    best_epoch = min(range(len(val)), key=val.__getitem__)  # lowest-val_loss curve index
+    return TrainResult(curves=dict(curves), best_epoch=best_epoch, stopped_epoch=stopped)
