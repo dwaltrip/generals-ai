@@ -2,6 +2,7 @@
 analysis/probes
 
 # Manifests at `data/training/splits/` stay tracked
+training/argmin_toy
 training/bench
 training/probes
 # Per-run training artifacts (logs, provenance, checkpoints, etc).

@@ -1,6 +1,6 @@
-"""Army derivers: per-player total army from the raw sim (ground truth) and from
-the encoded obs (what the model sees). Both read the same quantity, so analyses
-built on either agree.
+"""Per-player ground-truth derivers off the raw sim: total army (from the sim and,
+for parity, from the encoded obs the model sees) and total owned land (tile count).
+All read the same quantities the leaderboard does, so analyses built on any agree.
 """
 
 from __future__ import annotations
@@ -46,5 +46,28 @@ ARMY_SIM = per_game(
     "army_sim",
     per_player=True,
     prepare=army_totals_per_tick,                              # sim -> [T, 8]
+    index=lambda totals, f: totals[f.t, f.raw_order].astype(float),
+)
+
+
+def land_totals_per_tick(sim: dict[str, np.ndarray]) -> np.ndarray:
+    """`[T, 8]` total owned tiles per slot per tick (count of owned cells).
+
+    The land counterpart of `army_totals_per_tick` — the leaderboard land column.
+    Same `ownership == slot` mask, but counts cells rather than summing army.
+    """
+    own = sim["ownership"]  # [T, H, W]
+    T = own.shape[0]
+    tot = np.zeros((T, 8), dtype=np.int64)
+    for s in range(8):
+        tot[:, s] = (own == s).reshape(T, -1).sum(1)
+    return tot
+
+
+# land from raw sim — GROUND TRUTH. Whole-game totals, indexed per frame.
+LAND_SIM = per_game(
+    "land_sim",
+    per_player=True,
+    prepare=land_totals_per_tick,                             # sim -> [T, 8]
     index=lambda totals, f: totals[f.t, f.raw_order].astype(float),
 )
