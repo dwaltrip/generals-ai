@@ -34,17 +34,18 @@ View = dict[str, torch.Tensor]
 class Roles:
     """How the loop reads a table view: `inputs` are passed positionally to
     `model(*inputs)`, `target` feeds the CE, `aux` columns are handed to the
-    metric fn (margin / argmin_set / alive for the tie-aware measures)."""
+    metric fn (margin / argmin_set for the tie-aware measures; n_alive / surr_frame
+    for the surrender-status slices)."""
 
-    inputs: tuple[str, ...] = ("army", "land", "alive")
+    inputs: tuple[str, ...] = ("army", "land", "alive", "captured")
     target: str = "label"
-    aux: tuple[str, ...] = ("alive", "margin", "argmin_set")
+    aux: tuple[str, ...] = ("alive", "margin", "argmin_set", "n_alive", "surr_frame")
 
 
 @dataclass(frozen=True)
 class HParams:
-    """Loop hyperparameters. A starting point, not a finding — `zero_overload` may
-    need more epochs to resolve represent-vs-optimize (6.18-1 Risk #3)."""
+    """Loop hyperparameters. A starting point, not a finding — the notch encodings
+    may need more epochs to resolve represent-vs-optimize (6.18-1 Risk #3)."""
 
     lr: float = 1e-2
     weight_decay: float = 1e-4

@@ -1,29 +1,44 @@
-"""Tie-aware accuracy, the error-vs-margin curve, and weight inspection.
+"""Tie-aware accuracy (sliced by surrender status), the none-ceiling reference, the
+error-vs-margin curve, and weight inspection.
 
-All metrics are **unmasked** — the decision is `argmax` over all 8 logits (lowest-
+All accuracies are **unmasked** — the decision is `argmax` over all 8 logits (lowest-
 index tiebreak, matching the `label` rule), and picking a dead player counts as
 wrong. That's the honest read of whether the encoding taught exclusion; masking
 would hide exactly the failure the toy studies (6.18-1 §6, Appendix A).
 
-Three accuracies, because ~12.7% of frames have an exact army tie (6.18-1 §6):
-  - `acc_full`   — `argmax == label` (canonical lowest-index). Folds in tiebreak luck.
-  - `acc_strict` — `acc_full` over frames with `margin > ε` (raw-army units). The
-    honest comparator measure: the gap the model must actually resolve.
-  - `acc_inset`  — `argmax ∈ argmin_set` (credits identifying *a* true minimum).
-`acc_inset` and `acc_strict` are the load-bearing measures; `acc_full` running
-~10% below `acc_inset` is the expected tie gap, not a representational failure.
+The headline blends two difficulties (6.18-4 §8 #1), so every accuracy is reported
+over three slices:
+  - `` (all)            — the whole eval set.
+  - `_nonsurr_mixed`    — `n_alive < 8 & ~surr_frame`: the **notch** alone (exclude
+                          the `army==0` eliminated). A capacity question.
+  - `_surr`             — the surrender subpopulation: the **information ceiling**
+                          (`none`/`capture_status` can't exclude `army>0` surrendered
+                          players under the `alive` target). Read against `none_ceilings`.
+
+Two accuracy flavors (~12.7% of frames have an exact army tie, 6.18-1 §6):
+  - `acc_full`  — `argmax == label` (canonical lowest-index). Folds in tiebreak luck.
+  - `acc_inset` — `argmax ∈ argmin_set` (credits identifying *a* true minimum).
+`acc_strict` (over `margin > ε`) is reported on the all slice only.
 """
 
 from __future__ import annotations
 
+import numpy as np
 import torch
 
 from training.analysis.argmin_toy.train import MetricsFn
+from training.analysis.fq.frame_table import FrameTable
 
 
 # Default error-vs-margin bin edges, in raw-army units (margin is the gap between
-# the two lowest alive armies). Errors should concentrate in the small-margin bins.
+# the two lowest in-set armies). Errors should concentrate in the small-margin bins.
 DEFAULT_MARGIN_BINS = [0.0, 1.0, 2.0, 5.0, 10.0, 25.0, 100.0, float("inf")]
+
+
+def _frac(t: torch.Tensor) -> float:
+    """Mean of a 1-D bool/float tensor; NaN on an empty slice (so a slice with no
+    frames reads as missing, not 0)."""
+    return float(t.float().mean().item()) if t.numel() else float("nan")
 
 
 def make_metrics_fn(eps: float = 0.0) -> MetricsFn:
@@ -33,26 +48,63 @@ def make_metrics_fn(eps: float = 0.0) -> MetricsFn:
 
     def fn(scores: torch.Tensor, target: torch.Tensor, aux: dict) -> dict[str, float]:
         pred = scores.argmax(dim=1)
-        argmin_set = aux["argmin_set"]  # [N, 8] bool
-        margin = aux["margin"]          # [N] raw-army gap; -1 when <2 alive
+        argmin_set = aux["argmin_set"]      # [N, 8] bool
+        margin = aux["margin"]              # [N] raw-army gap; -1 when <2 in-set
+        n_alive = aux["n_alive"]            # [N]
+        surr = aux["surr_frame"].bool()     # [N]
         n = pred.shape[0]
 
-        full = (pred == target).float().mean().item()
-        in_set = argmin_set[torch.arange(n), pred].float().mean().item()
+        correct = pred == target
+        inset = argmin_set[torch.arange(n), pred]
+        slices = {
+            "": torch.ones(n, dtype=torch.bool),
+            "_surr": surr,
+            "_nonsurr_mixed": (n_alive < 8) & ~surr,
+        }
+        out: dict[str, float] = {}
+        for sfx, m in slices.items():
+            out[f"acc_full{sfx}"] = _frac(correct[m])
+            out[f"acc_inset{sfx}"] = _frac(inset[m])
+
         strict_sel = margin > eps
-        strict = (
-            (pred[strict_sel] == target[strict_sel]).float().mean().item()
-            if bool(strict_sel.any())
-            else float("nan")
-        )
-        return {"acc_full": full, "acc_strict": strict, "acc_inset": in_set}
+        out["acc_strict"] = _frac(correct[strict_sel])
+        return out
 
     return fn
 
 
+def none_ceilings(val_t: FrameTable, target: str) -> dict[str, float]:
+    """Per-slice accuracy ceiling for an army-only (`none`) model on `val_t`.
+
+    The best `none` can do is carve the army-zero notch and then pick the smallest
+    `army>0` — `argmin-over-(army>0)`. Its ceiling per slice is that pick's agreement
+    with the target `label`. Under `target='army_pos'` the label *is*
+    `argmin-over-(army>0)`, so the ceiling is ~100%; under `'alive'` the `_surr`
+    slice ceilings well below 100% (the §5 ~57.6% split-specific figure) because the
+    surrendered `army>0` player is sometimes the smallest-positive and can't be
+    excluded. Drawn as the reference line so a floored cell reads as "at ceiling,"
+    not "broken" (6.18-4 §8 #5)."""
+    army = val_t.cols["army_sim"].astype(np.int64)
+    label = val_t.cols["label"]
+    n_alive = val_t.cols["n_alive"]
+    surr = val_t.cols["surr_frame"].astype(bool)
+
+    armypos_argmin = np.where(army > 0, army, np.iinfo(np.int64).max).argmin(1)
+    agree = armypos_argmin == label
+    slices = {
+        "all": np.ones(label.shape[0], dtype=bool),
+        "surr": surr,
+        "nonsurr_mixed": (n_alive < 8) & ~surr,
+    }
+    return {
+        name: float(agree[m].mean()) if m.any() else float("nan")
+        for name, m in slices.items()
+    }
+
+
 def tie_stats(aux: dict) -> dict[str, float]:
-    """Exact-tie fraction over frames with ≥2 alive (`margin >= 0`). A data property,
-    constant across epochs — reported once per cell, not per epoch."""
+    """Exact-tie fraction over frames with ≥2 in-set members (`margin >= 0`). A data
+    property, constant across epochs — reported once per cell, not per epoch."""
     margin = aux["margin"]
     ge2 = margin >= 0
     tie_frac = (margin[ge2] == 0).float().mean().item() if bool(ge2.any()) else float("nan")
@@ -64,7 +116,7 @@ def error_vs_margin(
 ) -> list[dict]:
     """Error rate binned by `margin`. Errors concentrating at small margins is the
     sharpness of the learned comparator (6.18-1 §6). Frames with `margin < 0`
-    (<2 alive) fall out by construction."""
+    (<2 in-set) fall out by construction."""
     edges = DEFAULT_MARGIN_BINS if bins is None else bins
     pred = scores.argmax(dim=1)
     margin = aux["margin"]

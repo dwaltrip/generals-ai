@@ -124,9 +124,9 @@ class E1(nn.Module):
 
 
 class ArgminModel(nn.Module):
-    """An `EncoderCfg` + a scorer. `forward(army, land, alive)` encodes then scores
-    to `[B, 8]` logits; `land` is threaded through from the start (unused under
-    `army_only`, wired for the `+land` rider). `.inspect()` delegates to the scorer."""
+    """An `EncoderCfg` + a scorer. `forward(army, land, alive, captured)` encodes then
+    scores to `[B, 8]` logits; `land`/`captured` are threaded through from the start
+    (used only by the encodings that read them). `.inspect()` delegates to the scorer."""
 
     def __init__(self, encoder_cfg: EncoderCfg, scorer: nn.Module):
         super().__init__()
@@ -134,9 +134,13 @@ class ArgminModel(nn.Module):
         self.scorer = scorer
 
     def forward(
-        self, army: torch.Tensor, land: torch.Tensor, alive: torch.Tensor
+        self,
+        army: torch.Tensor,
+        land: torch.Tensor,
+        alive: torch.Tensor,
+        captured: torch.Tensor,
     ) -> torch.Tensor:
-        return self.scorer(encode(army, land, alive, self.encoder_cfg))
+        return self.scorer(encode(army, land, alive, captured, self.encoder_cfg))
 
     def inspect(self) -> dict:
         return self.scorer.inspect()  # type: ignore[attr-defined]

@@ -1,22 +1,37 @@
-"""The input encoder — the 6.18-1 §3 sweep surface, and the experiment's pivot.
+"""The input encoder — the status-sufficiency ladder, and the experiment's pivot.
 
-`encode(army, land, alive, cfg)` maps one frame's raw per-player quantities to the
-`[B, 8, C]` tensor a scorer reads (batch × player × per-player feature). It owns the
-single `/1000` normalization, so the table stays in raw units (and `margin`'s ε is
-raw-army). Encoder correctness *is* the experiment: a silent bug yields a clean-
-looking wrong headline, since the result is a comparison *across* these encodings
-(6.18-1 Risk #2) — hence the load-bearing test in `tests/test_encode.py`.
+`encode(army, land, alive, captured, cfg)` maps one frame's raw per-player
+quantities to the `[B, 8, C]` tensor a scorer reads (batch × player × per-player
+feature). It owns the single `/1000` normalization, so the table stays in raw units
+(and `margin`'s ε is raw-army). Encoder correctness *is* the experiment: a silent
+bug yields a clean-looking wrong headline, since the result is a comparison *across*
+these encodings (6.18-1 Risk #2) — hence the load-bearing test in `tests/test_encode.py`.
 
-The three encodings, on the filtered binary population (every dead player at army 0):
+The encodings, on the full (unfiltered) population — three player statuses now
+exist: alive, surrendered-present (`~alive & army>0`), eliminated (`army==0`). The
+axis is **status sufficiency**: does the encoding carry what's needed to exclude the
+right players (6.18-4 §4)?
 
-  - `explicit_mask` → `[army_norm, alive]`: dead can be pushed *high* by a learned
-    `+BIG·alive` term, so the argmin is **linear in the augmented input**.
-  - `zero_overload` → `army_norm` as-is: dead sit at exactly 0, the value plain
-    `−army` most prefers but must never pick → a **non-monotonic notch** a linear
-    model can't draw. `gap_scale` rescales the army channel (the rescaled-gap
-    control; default 1.0 is a no-op).
-  - `neg1_sentinel` → dead army overwritten to −1: still a notch, but dead is now
-    linearly separable from all live (≥0).
+  - `none` → `army_norm` as-is: no status channel. Eliminated players sit at exactly
+    0 — the value plain `−army` most prefers but must never pick → a **notch** a
+    linear model can't draw. Surrendered players (`army>0`) are indistinguishable
+    from live, so `none` ceilings on the surrender subpopulation under the `alive`
+    target (6.18-4 §5).
+  - `capture_status` → `[army_norm, captured]`: prod's capture-based channel (§6),
+    collapsed to a binary captured flag. Captured players are already at `army==0`,
+    so the flag adds nothing over the army-zero notch; neutralized players (also 0)
+    aren't flagged → still a notch; surrendered players aren't flagged → same ceiling
+    as `none`. The provable `none ≡ capture_status` identity (6.18-4 §4).
+  - `boolean` → `[army_norm, alive]`: the true alive mask as a channel. Dead can be
+    pushed *high* by a learned `+BIG·alive` term, so the argmin is **linear in the
+    augmented input** — no notch, and surrendered players excluded.
+  - `categorical` → `[army_norm, alive, surrendered, eliminated]`: 3-way one-hot
+    status (derivable from `(alive, army>0)`). Linearly solvable like `boolean`; the
+    extra surrendered/eliminated split is a confirmatory negative for the `alive`
+    target (alive-vs-rest already suffices).
+  - `neg1_sentinel` → dead army overwritten to −1 (the MVP control, kept re-runnable
+    via the `mvp` experiment): dead is linearly separable from live (≥0), but the
+    argmin still needs a notch at −1.
 
 `channels` appends a `land_norm` distractor (the `+land` rider). `layout=vector` is
 the MVP; `broadcast` (a synthesized spatial dim) is a deferred branch.
@@ -32,52 +47,66 @@ import torch
 
 NORM = 1000.0  # the single normalization constant: raw army/land → normalized units
 
-Encoding = Literal["explicit_mask", "zero_overload", "neg1_sentinel"]
+Encoding = Literal["none", "capture_status", "boolean", "categorical", "neg1_sentinel"]
 Channels = Literal["army_only", "army_land"]
 Layout = Literal["vector", "broadcast"]
+
+# Per-encoding count of appended status channels (beyond the army channel).
+_STATUS_CHANNELS = {
+    "none": 0,
+    "neg1_sentinel": 0,
+    "capture_status": 1,  # the captured flag
+    "boolean": 1,         # the alive mask
+    "categorical": 3,     # alive / surrendered / eliminated one-hot
+}
 
 
 @dataclass(frozen=True)
 class EncoderCfg:
-    encoding: Encoding = "zero_overload"
+    encoding: Encoding = "none"
     channels: Channels = "army_only"
     layout: Layout = "vector"
-    gap_scale: float = 1.0  # zero_overload only; rescales the army channel
 
     @property
     def n_channels(self) -> int:
         """Per-player feature width `C` the scorer must size to."""
         c = 2 if self.channels == "army_land" else 1
-        if self.encoding == "explicit_mask":
-            c += 1  # the alive channel
-        return c
+        return c + _STATUS_CHANNELS[self.encoding]
 
 
 def encode(
-    army: torch.Tensor, land: torch.Tensor, alive: torch.Tensor, cfg: EncoderCfg
+    army: torch.Tensor,
+    land: torch.Tensor,
+    alive: torch.Tensor,
+    captured: torch.Tensor,
+    cfg: EncoderCfg,
 ) -> torch.Tensor:
-    """`[B, 8]` raw army/land + `[B, 8]` alive → `[B, 8, C]` per-player features.
+    """`[B, 8]` raw army/land + `[B, 8]` alive/captured masks → `[B, 8, C]` features.
 
-    `alive` is the binary mask (bool or 0/1). Army/land arrive in raw units; this
-    is the one place `/NORM` happens.
+    `alive`/`captured` are binary masks (bool or 0/1). Army/land arrive in raw units;
+    this is the one place `/NORM` happens.
     """
-    alive_f = alive.to(army.dtype)
+    alive_b = alive.bool()
     army_norm = army / NORM
 
-    if cfg.encoding == "zero_overload":
-        army_ch = army_norm * cfg.gap_scale  # dead already at 0 (post-filter)
-    elif cfg.encoding == "neg1_sentinel":
-        army_ch = torch.where(alive.bool(), army_norm, army_norm.new_full((), -1.0))
-    elif cfg.encoding == "explicit_mask":
-        army_ch = army_norm  # dead at 0; exclusion comes from the alive channel
-    else:  # pragma: no cover — exhaustive
-        raise ValueError(f"unknown encoding {cfg.encoding!r}")
+    if cfg.encoding == "neg1_sentinel":
+        army_ch = torch.where(alive_b, army_norm, army_norm.new_full((), -1.0))
+    else:  # none / capture_status / boolean / categorical all carry raw army
+        army_ch = army_norm
 
     chans = [army_ch]
     if cfg.channels == "army_land":
         chans.append(land / NORM)
-    if cfg.encoding == "explicit_mask":
-        chans.append(alive_f)
+
+    if cfg.encoding == "boolean":
+        chans.append(alive_b.to(army.dtype))
+    elif cfg.encoding == "capture_status":
+        chans.append(captured.to(army.dtype))
+    elif cfg.encoding == "categorical":
+        army_pos = army > 0
+        chans.append(alive_b.to(army.dtype))                       # alive
+        chans.append(((~alive_b) & army_pos).to(army.dtype))       # surrendered-present
+        chans.append(((~alive_b) & ~army_pos).to(army.dtype))      # eliminated
 
     x = torch.stack(chans, dim=-1)  # [B, 8, C]
 
