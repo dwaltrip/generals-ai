@@ -22,8 +22,9 @@ Both masks use `tick >= t` (alive/present through `snapshot[e]`, gone from
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Any, Protocol
 
 import numpy as np
 
@@ -60,7 +61,7 @@ class _HasDeathFields(Protocol):
 
 
 def precompute_player_status(
-    sim: dict[str, np.ndarray], sentinel: int | None = None
+    sim: Mapping[str, Any], sentinel: int | None = None
 ) -> PlayerStatusCtx:
     """Per-game `PlayerStatusCtx` from the sim's event lists.
 
@@ -69,7 +70,9 @@ def precompute_player_status(
     time_bin head) pass a larger value so the winner lands in the top bin.
     """
     ownership = sim["ownership"]
-    T = ownership.shape[0]
+    # `len` (not `.shape[0]`) so the live inference path can pass a growing list
+    # of per-tick rows; `sentinel` only has to exceed the current tick.
+    T = len(ownership)
     sentinel = int(T + 1) if sentinel is None else int(sentinel)
 
     real = np.unique(ownership[0])

@@ -20,9 +20,36 @@ channel-count formula).
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, fields
 
-from training.bc.constants import obs_channel_count
+from training.bc.constants import obs_channel_names
+
+
+# Per-opponent player-status channels (a gated group). 1-indexed `opp_N` per the
+# obs per-opp convention, block-major (all `is_present`, then all `is_alive`).
+_PLAYER_STATUS_CHANNEL_NAMES = [
+    f"opp_{i}_{field}"
+    for field in ("is_present", "is_alive")
+    for i in range(1, 8)
+]
+
+
+@dataclass(frozen=True)
+class ChannelGroup:
+    """A gated obs channel group, appended after the frozen base + dense-history.
+
+    The single source of truth for an optional group: `enabled` reads the config,
+    `names` yields its channel names (width = `len(names(cfg))`). The matching
+    tensor builder lives in `bc.obs.channels._GATED_GROUP_BUILDERS`, keyed by the
+    same `key`; a contract test asserts the two stay aligned. Adding a future
+    group is one entry here + one builder + one config field — count/names/build
+    all fold over `GATED_CHANNEL_GROUPS`, so they can't drift.
+    """
+
+    key: str
+    enabled: Callable[[ObsConfig], bool]
+    names: Callable[[ObsConfig], list[str]]
 
 
 @dataclass(frozen=True)
@@ -43,10 +70,28 @@ class ObsConfig:
     # keep this module torch-free.
     obs_dtype: str
 
+    # Whether to append the per-opponent player-status group (`is_present` /
+    # `is_alive`, 14 channels) — surrender disambiguation. A gated group, so it
+    # rides the `GATED_CHANNEL_GROUPS` spec; off for pre-status checkpoints (the
+    # `LEGACY_OBS_CFG` pin) so they reconstruct the original obs unchanged.
+    player_status_channels: bool
+
+    @property
+    def channel_names(self) -> list[str]:
+        """The obs tensor's channel names for this config: the frozen base +
+        dense-history tail + each enabled gated group's names, appended in spec
+        order. The single source of truth for layout and for `obs_channels`."""
+        names = obs_channel_names(self.dense_history_n)
+        for group in GATED_CHANNEL_GROUPS:
+            if group.enabled(self):
+                names = names + group.names(self)
+        return names
+
     @property
     def obs_channels(self) -> int:
-        """Total obs-tensor channel count implied by this config."""
-        return obs_channel_count(self.dense_history_n)
+        """Total obs-tensor channel count implied by this config — derived from
+        `channel_names` (one source, so count and names can't drift)."""
+        return len(self.channel_names)
 
     @classmethod
     def validate_partial(cls, d: dict) -> list[str]:
@@ -64,11 +109,24 @@ class ObsConfig:
             )
 
 
+# The gated channel groups, in append order (after the frozen base + dense
+# history). One entry per optional group; count/names/build all fold over this
+# list. Builders are registered by `key` in `bc.obs.channels`.
+GATED_CHANNEL_GROUPS: list[ChannelGroup] = [
+    ChannelGroup(
+        key="player_status",
+        enabled=lambda cfg: cfg.player_status_channels,
+        names=lambda cfg: _PLAYER_STATUS_CHANNEL_NAMES,
+    ),
+]
+
+
 # Live default policy — the single home for the current default `n`. Referenced
 # by `ModelConfig.obs`'s default and by every "I want the defaults" call site.
 OBS_CONFIG_DEFAULTS = ObsConfig(
     dense_history_n=5,
     obs_dtype="fp16",
+    player_status_channels=True,
 )
 
 # Default obs channel count (n=5 → 96). Convenience alias for code that builds a

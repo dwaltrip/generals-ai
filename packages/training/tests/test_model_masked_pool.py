@@ -84,8 +84,9 @@ def test_value_head_variant_direct_is_default_and_baseline() -> None:
     assert m.value_head.variant == "direct"
     # The 'direct' variant's pre-projection stage is an Identity (no params).
     assert sum(p.numel() for p in m.value_head.pre.parameters()) == 0
-    # Param count matches the post-mask-fix baseline from `flops_probe.py`.
-    assert sum(p.numel() for p in m.parameters()) == 4_185_442
+    # Param count = the post-mask-fix baseline (4_185_442 at 96 obs channels)
+    # plus the player-status channels' first-conv expansion (128*14*9 = 16_128).
+    assert sum(p.numel() for p in m.parameters()) == 4_201_570
 
 
 def test_value_head_variant_pyramid_adds_expected_capacity() -> None:

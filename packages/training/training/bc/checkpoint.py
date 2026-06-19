@@ -30,9 +30,14 @@ from training.bc.obs_config import ObsConfig
 # (always fp32 before that field existed). It backs LEGACY_ARCH.obs (pre-`arch`
 # checkpoints), the `_arch_for_load` whole-`obs` fill (arch-bearing-but-pre-`obs`
 # checkpoints), and the per-sub-key back-fill (checkpoints with `obs` but missing
-# newer keys like `obs_dtype`). `obs_dtype="fp32"` here is the first field where
-# this diverges from the live default — recording history, not editing a value.
-LEGACY_OBS_CFG = ObsConfig(dense_history_n=5, obs_dtype="fp32")
+# newer keys like `obs_dtype`). `obs_dtype="fp32"` and `player_status_channels=
+# False` here diverge from the live defaults — recording history (pre-status
+# checkpoints had neither the fp16 obs nor the status channels), not editing a
+# value. The back-fill gives an old checkpoint these legacy values, so it
+# reconstructs the original obs (no status channels) and loads unchanged.
+LEGACY_OBS_CFG = ObsConfig(
+    dense_history_n=5, obs_dtype="fp32", player_status_channels=False
+)
 LEGACY_ARCH = ModelConfig(
     outer_width=128, middle_width=128, inner_width=160,
     n_outer=2, m_middle=2, m_inner=2,

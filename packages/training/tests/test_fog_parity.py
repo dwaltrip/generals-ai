@@ -147,8 +147,10 @@ def sim() -> dict[str, np.ndarray]:
     )
     cities_present_at = np.array([0, 0, 7], dtype=np.int32)
 
-    # Capture event: timestamp = action step. (6, captor=0, captured=1).
+    # Capture event: timestamp = action step. (6, captor=0, captured=1). A
+    # capture-while-alive also fires a DeathEvent at the same tick (no neutralize).
     capture_events = np.array([[6, PERSPECTIVE, OPP]], dtype=np.int32)
+    death_events = np.array([[6, OPP]], dtype=np.int32)
 
     return {
         "ownership": ownership,
@@ -159,6 +161,8 @@ def sim() -> dict[str, np.ndarray]:
         "cities": cities,
         "cities_present_at": cities_present_at,
         "capture_events": capture_events,
+        "death_events": death_events,
+        "neutralize_events": np.zeros((0, 2), dtype=np.int32),
         "map_width": np.asarray(W, dtype=np.int32),
         "map_height": np.asarray(H, dtype=np.int32),
     }
@@ -437,6 +441,8 @@ def sim_fog() -> dict[str, np.ndarray]:
         "cities": np.array([], dtype=np.int32),
         "cities_present_at": np.array([], dtype=np.int32),
         "capture_events": np.zeros((0, 3), dtype=np.int32),
+        "death_events": np.zeros((0, 2), dtype=np.int32),
+        "neutralize_events": np.zeros((0, 2), dtype=np.int32),
         "map_width": np.asarray(W2, dtype=np.int32),
         "map_height": np.asarray(H2, dtype=np.int32),
     }

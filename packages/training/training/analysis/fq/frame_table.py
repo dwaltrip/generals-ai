@@ -23,13 +23,17 @@ from training.bc.dataset import IterableDataset, SimFrame
 from training.bc.obs_config import OBS_CONFIG_DEFAULTS, ObsConfig
 
 
-# Obs config for ground-truth fq tables: default channels, fp32. fp32 avoids the
-# fp16 storage quantization on `army_obs` (so `army_obs == army_sim` holds exactly),
-# and the army channels are `dense_history_n`-independent so the default count is
-# safe. A table comparing `army_obs` against a specific checkpoint should instead
-# pin obs_cfg to that run.
+# Obs config for ground-truth fq tables: default `n`, fp32, no player-status
+# channels (these tables compare `army_obs`, which lives in the base channels —
+# unaffected by the gated status group). fp32 avoids the fp16 storage
+# quantization on `army_obs` (so `army_obs == army_sim` holds exactly), and the
+# army channels are `dense_history_n`-independent so the default count is safe. A
+# table comparing `army_obs` against a specific checkpoint should instead pin
+# obs_cfg to that run.
 GROUND_TRUTH_OBS_CFG = ObsConfig(
-    dense_history_n=OBS_CONFIG_DEFAULTS.dense_history_n, obs_dtype="fp32"
+    dense_history_n=OBS_CONFIG_DEFAULTS.dense_history_n,
+    obs_dtype="fp32",
+    player_status_channels=False,
 )
 
 

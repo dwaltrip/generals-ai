@@ -12,8 +12,10 @@ from __future__ import annotations
 import numpy as np
 
 from training.bc import bfs
-from training.bc.constants import H_PADDED, W_PADDED, obs_channel_count
+from training.bc.constants import H_PADDED, W_PADDED
 from training.bc.obs.channels import (
+    _GATED_GROUP_BUILDERS,
+    GroupBuildCtx,
     _cat_bfs,
     _cat_contact_capture,
     _cat_dense_history,
@@ -26,6 +28,7 @@ from training.bc.obs.channels import (
     _cat_visible_state,
 )
 from training.bc.obs.memory import MemoryState
+from training.bc.obs_config import GATED_CHANNEL_GROUPS
 from training.shared.timing import timer
 
 
@@ -93,10 +96,17 @@ def build_obs(
             *_cat_dense_history(state, H, W),
         ]
 
-    n_channels = obs_channel_count(state.obs_cfg.dense_history_n)
+        # Gated channel groups, appended after the frozen base + dense history,
+        # in spec order. Each enabled group's builder is keyed by `group.key`.
+        gctx = GroupBuildCtx(state, t, perspective_slot, opp_slots, H, W)
+        for group in GATED_CHANNEL_GROUPS:
+            if group.enabled(state.obs_cfg):
+                channels += _GATED_GROUP_BUILDERS[group.key](gctx)
+
+    n_channels = state.obs_cfg.obs_channels
     assert len(channels) == n_channels, (
         f"channel count mismatch: built {len(channels)}, "
-        f"expected {n_channels} for dense_history_n={state.obs_cfg.dense_history_n}"
+        f"expected {n_channels} for obs_cfg={state.obs_cfg}"
     )
 
     # Write each channel straight into its slot of one preallocated padded

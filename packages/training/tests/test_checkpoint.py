@@ -24,7 +24,10 @@ from training.bc.obs_config import OBS_CONFIG_DEFAULTS
 def test_load_bc_model_bare_state_dict(tmp_path):
     """A legacy bare state_dict (no `arch` key) reconstructs via LEGACY_ARCH."""
     device = torch.device("cpu")
-    src = BCModel()
+    # Build the source at the legacy architecture — the live default has since
+    # diverged (fp16 obs, player-status channels), so the bare state_dict has to
+    # be legacy-shaped to round-trip through the LEGACY_ARCH fallback.
+    src = BCModel(LEGACY_ARCH)
     ckpt = tmp_path / "epoch_001.pt"
     torch.save(src.state_dict(), ckpt)
 
@@ -44,7 +47,7 @@ def test_load_legacy_honors_value_head_variant_arg(tmp_path):
     matches — strict load is the backstop. This is the unit-level twin of the
     parity fingerprint (which loads a real pyramid legacy checkpoint)."""
     device = torch.device("cpu")
-    src = BCModel(build_model_cfg(value_head_variant="pyramid"))
+    src = BCModel(replace(LEGACY_ARCH, value_head_variant="pyramid"))
     ckpt = tmp_path / "epoch_001.pt"
     torch.save(src.state_dict(), ckpt)  # bare state_dict — legacy
 

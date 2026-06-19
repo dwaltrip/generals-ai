@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import torch
 
+from training.bc.checkpoint import LEGACY_ARCH
 from training.bc.constants import H_PADDED, W_PADDED
 from training.bc.model import BCModel
 from training.bc.obs_config import OBS_CHANNELS
@@ -76,7 +77,8 @@ def test_from_checkpoint_legacy_uses_fallback_epoch(tmp_path):
     device = torch.device("cpu")
     config = _config(tmp_path)
     ckpt = tmp_path / "epoch_007.pt"
-    torch.save(BCModel().state_dict(), ckpt)
+    # Legacy-shaped bare state_dict (the LEGACY_ARCH fallback reconstructs it).
+    torch.save(BCModel(LEGACY_ARCH).state_dict(), ckpt)
 
     restored = TrainingState.from_checkpoint(ckpt, config, device, fallback_epoch=7)
     assert restored.epoch == 7      # from the filename, not the 0 default

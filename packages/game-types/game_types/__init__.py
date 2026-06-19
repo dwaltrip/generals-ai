@@ -71,6 +71,12 @@ class PlayerView:
     cities: np.ndarray              # int32 flat cell indices (dynamic; grows mid-game)
     cities_present_at: np.ndarray   # int32 first tick each city existed
     capture_events: np.ndarray      # int32 [N, 3]; shape (0, 3) when empty
+    # Death (surrender / capture-while-alive) and neutralize events — board-wide
+    # announcements a live player sees, fog or not (like captures). Drive the
+    # obs player-status channels. Both `[N, 2]` rows of (timestep, player);
+    # shape (0, 2) when empty.
+    death_events: np.ndarray        # int32 [N, 2]
+    neutralize_events: np.ndarray   # int32 [N, 2]
 
 
 @dataclass(frozen=True, eq=False)

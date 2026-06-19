@@ -40,6 +40,7 @@ from training.bc.constants import H_PADDED, W_PADDED
 from training.bc.model import BCModel, flatten_policy_logits
 from training.bc.obs import pad_initial_generals
 from training.bc.obs_config import ObsConfig
+from training.bc.player_status import precompute_player_status
 
 
 # Fixed slot count the model + obs encoder were trained on (8-player FFA).
@@ -296,6 +297,8 @@ class BCPerspective:
             "cities": np.asarray(view.cities, dtype=np.int32),
             "cities_present_at": np.asarray(view.cities_present_at, dtype=np.int32),
             "capture_events": np.asarray(view.capture_events, dtype=np.int32),
+            "death_events": np.asarray(view.death_events, dtype=np.int32),
+            "neutralize_events": np.asarray(view.neutralize_events, dtype=np.int32),
         }
         self._memory = bc_obs.init_memory_common(
             self._sim, self.perspective_slot, H, W, self.obs_cfg, P,
@@ -344,15 +347,23 @@ class BCPerspective:
         self._ownership.append(own_t)
         self._armies.append(arm_t)
 
-        # 2. Refresh dynamic sim fields (cities + captures grow mid-game).
+        # 2. Refresh dynamic sim fields (cities + events grow mid-game).
         self._sim["cities"] = np.asarray(view.cities, dtype=np.int32)
         self._sim["cities_present_at"] = np.asarray(view.cities_present_at, dtype=np.int32)
         self._sim["capture_events"] = np.asarray(view.capture_events, dtype=np.int32)
+        self._sim["death_events"] = np.asarray(view.death_events, dtype=np.int32)
+        self._sim["neutralize_events"] = np.asarray(view.neutralize_events, dtype=np.int32)
 
         # 3. Append scoreboard row for tick t.
         land, army = bc_obs.scoreboard_row(own_t, arm_t, P)
         self._memory.land_count_history.append(land)
         self._memory.army_count_history.append(army)
+
+        # Refresh player-status from the cumulative events (the live counterpart
+        # to init_memory's one-shot precompute). Future events don't change the
+        # current tick's masks, so this stays in lockstep with the training path.
+        if self.obs_cfg.player_status_channels:
+            self._memory.player_status = precompute_player_status(self._sim)
 
         # 4. Visibility for this perspective.
         vis = visibility.compute_visibility(own_t, self.perspective_slot, H, W)

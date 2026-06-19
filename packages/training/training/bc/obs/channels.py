@@ -32,10 +32,13 @@ grouping that *includes* self) is always the perspective player.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import numpy as np
 
 from training.bc import bfs
 from training.bc.obs.memory import MemoryState, compute_known_passable
+from training.bc.player_status import alive_mask, present_mask
 
 
 # Hand-picked broadcast-scalar normalization divisors. These are rough
@@ -271,3 +274,46 @@ def _cat_dense_history(
         for k in range(1, n + 1)
     ]
     return [*own_transitions, *army_deltas]
+
+
+# ---------------------------------------------------------------------------
+# Gated channel groups — builders keyed to the `GATED_CHANNEL_GROUPS` spec in
+# `bc.obs_config`. Each builder takes a `GroupBuildCtx` and returns its channels
+# in stack order; `build_obs` folds the enabled groups on after the base + dense
+# history. A contract test asserts every spec key has a builder (and vice versa)
+# and that built width matches the declared names.
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class GroupBuildCtx:
+    """The build-time context a gated-group builder reads — a uniform signature
+    shared by all current and future group builders."""
+
+    state: MemoryState
+    t: int
+    perspective_slot: int
+    opp_slots: list[int]
+    H: int
+    W: int
+
+
+def _cat_player_status(ctx: GroupBuildCtx) -> list[np.ndarray]:
+    # Player-status group (14 channels): per-opponent is_present then is_alive,
+    # broadcast over the board. is_present (still on the board) and is_alive
+    # (still playing) differ only during a surrender countdown. Derived from the
+    # event-based PlayerStatusCtx, built in init_memory / refreshed live.
+    sc = ctx.state.player_status
+    assert sc is not None, (
+        "player_status channels enabled but MemoryState.player_status is None — "
+        "init_memory (training) or the live encode path must build it"
+    )
+    present = present_mask(sc, ctx.opp_slots, ctx.t)
+    alive = alive_mask(sc, ctx.opp_slots, ctx.t)
+    plane = lambda v: np.full((ctx.H, ctx.W), float(v), dtype=np.float32)
+    return [*[plane(v) for v in present], *[plane(v) for v in alive]]
+
+
+_GATED_GROUP_BUILDERS = {
+    "player_status": _cat_player_status,
+}

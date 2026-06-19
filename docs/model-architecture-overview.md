@@ -18,7 +18,7 @@ Compact view — per-level ResBlock runs collapsed:
 
 | field                                                 | value           |
 |:------------------------------------------------------|:----------------|
-| obs channels (`in_ch`)                                | 96              |
+| obs channels (`in_ch`)                                | 110             |
 | board (H × W)                                         | 32 × 32         |
 | trunk widths (outer / middle / inner)                 | 128 / 128 / 160 |
 | trunk depths (N / M / M)                              | 2 / 2 / 2       |
@@ -29,8 +29,8 @@ Compact view — per-level ResBlock runs collapsed:
 
 | component     |        params |    share |
 |:--------------|--------------:|---------:|
-| `trunk`       |     3,039,888 |    72.6% |
-| `policy_head` |     1,136,072 |    27.1% |
+| `trunk`       |     3,056,016 |    72.7% |
+| `policy_head` |     1,136,072 |    27.0% |
 | `value_head`  |         9,353 |     0.2% |
 | `pass_head`   |           129 |     0.0% |
-| **total**     | **4,185,442** | **100%** |
+| **total**     | **4,201,570** | **100%** |

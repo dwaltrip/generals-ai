@@ -27,6 +27,7 @@ from training.bc.obs.geometry import (
     make_perspective_view,
 )
 from training.bc.obs_config import OBS_CONFIG_DEFAULTS, ObsConfig
+from training.bc.player_status import PlayerStatusCtx, precompute_player_status
 from training.shared.timing import timer
 
 
@@ -130,6 +131,12 @@ class MemoryState:
     # Per design, capture events are global (everyone sees them) regardless
     # of fog.
     opp_captured_by: np.ndarray
+
+    # ---- Per-game player status (only when the status group is enabled) ----
+    # Drives the `_cat_player_status` channels (is_present / is_alive). Built
+    # once in `init_memory` from the full sim (training); the live inference path
+    # refreshes it per tick as events arrive. None when the group is disabled.
+    player_status: PlayerStatusCtx | None = None
 
     # ---- Dense-history caches (advanced by step_memory) ----
     # Previous tick's perspective-filtered snapshot. Held so `step_memory`
@@ -256,6 +263,12 @@ def init_memory(
         army_buf[:, p] = (armies * owned_mask).sum(axis=1)
     state.land_count_history = [land_buf[t] for t in range(T)]
     state.army_count_history = [army_buf[t] for t in range(T)]
+
+    # Player-status precompute (once per game) for the is_present / is_alive
+    # channels. The full training sim carries every death/capture/neutralize
+    # event, so a single precompute is correct for every frame.
+    if obs_cfg.player_status_channels:
+        state.player_status = precompute_player_status(sim)
 
     return state
 

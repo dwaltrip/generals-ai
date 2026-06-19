@@ -148,3 +148,35 @@ def test_obs_fp16_matches_fp32_downcast(samples: list[tuple[Path, int]]) -> None
         assert torch.equal(o16, o32.half()), "fp16-built obs != fp32 build cast to fp16"
         checked += o32.shape[0]
     assert checked > 0, "no frames compared — corpus walk produced nothing"
+
+
+def test_player_status_channels_are_append_only(samples: list[tuple[Path, int]]) -> None:
+    """The player-status group appends 14 channels and leaves the base obs
+    byte-identical — the guarantee that a pre-status checkpoint (status off)
+    reconstructs the original obs and runs unchanged. Frame-aligned via the
+    deterministic `shuffle_buffer_size=0` walk; fp32 so the compare is exact.
+    """
+    off_cfg = replace(OBS_CONFIG_DEFAULTS, obs_dtype="fp32", player_status_channels=False)
+    on_cfg = replace(OBS_CONFIG_DEFAULTS, obs_dtype="fp32", player_status_channels=True)
+    n_base = off_cfg.obs_channels  # 96 — no status channels
+    assert on_cfg.obs_channels == n_base + 14
+
+    loader_off = DataLoader(
+        IterableDataset(samples=samples, seed=0, shuffle_buffer_size=0, obs_cfg=off_cfg),
+        batch_size=BATCH_SIZE,
+    )
+    loader_on = DataLoader(
+        IterableDataset(samples=samples, seed=0, shuffle_buffer_size=0, obs_cfg=on_cfg),
+        batch_size=BATCH_SIZE,
+    )
+
+    checked = 0
+    for b_off, b_on in islice(zip(loader_off, loader_on, strict=False), 10):
+        o_off, o_on = b_off["obs"], b_on["obs"]
+        assert o_off.shape[1] == n_base and o_on.shape[1] == n_base + 14
+        assert torch.equal(o_on[:, :n_base], o_off), "base channels changed when status appended"
+        # The appended status channels are broadcast 0/1 masks (padding stays 0).
+        status = o_on[:, n_base:]
+        assert torch.isin(status, torch.tensor([0.0, 1.0])).all()
+        checked += o_off.shape[0]
+    assert checked > 0, "no frames compared — corpus walk produced nothing"

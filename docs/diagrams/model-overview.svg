@@ -129,7 +129,7 @@
 <g class="node io">
 <rect x="0.0" y="99.0" width="200" height="49" />
 <text x="100.0" y="116.0" font-size="14" class="bt">obs</text>
-<text x="100.0" y="132.0" font-size="12" class="bs">[B, 96, 32, 32]</text>
+<text x="100.0" y="132.0" font-size="12" class="bs">[B, 110, 32, 32]</text>
 </g>
 <g class="node aux">
 <rect x="260.0" y="91.0" width="200" height="65" />

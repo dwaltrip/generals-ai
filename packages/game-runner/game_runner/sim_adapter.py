@@ -35,6 +35,8 @@ def state_to_view(state: sim_core.State, map_data: StaticMap, slot: int) -> Play
         cities=np.asarray(state.cities, dtype=np.int32),
         cities_present_at=np.asarray(state.cities_present_at, dtype=np.int32),
         capture_events=capture_events_to_array(state.capture_events),
+        death_events=player_events_to_array(state.death_events),
+        neutralize_events=player_events_to_array(state.neutralize_events),
     )
 
 
@@ -51,3 +53,12 @@ def capture_events_to_array(events) -> np.ndarray:
         [[e.timestep, e.captor, e.captured] for e in events],
         dtype=np.int32,
     )
+
+
+def player_events_to_array(events) -> np.ndarray:
+    """Pack death / neutralize events into `[N, 2] int32` rows of (timestep,
+    player) — the shape `precompute_player_status` reads. Returns `(0, 2)` for
+    empty lists."""
+    if not events:
+        return np.zeros((0, 2), dtype=np.int32)
+    return np.array([[e.timestep, e.player] for e in events], dtype=np.int32)
