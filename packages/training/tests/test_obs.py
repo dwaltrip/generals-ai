@@ -10,11 +10,8 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from training.bc.obs import (
-    _encode_army_delta,
-    _encode_ownership_transition,
-    canonical_slot_order,
-)
+from training.bc.obs import canonical_slot_order
+from training.bc.obs.memory import _encode_army_delta, _encode_ownership_transition
 
 
 @pytest.mark.parametrize(

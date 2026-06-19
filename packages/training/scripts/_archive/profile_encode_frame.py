@@ -31,6 +31,11 @@ from training.bc.constants import H_PADDED, W_PADDED, obs_channel_count
 from training.bc.mask import build_mask
 from training.bc.obs import (
     MemoryState,
+    canonical_slot_order,
+    init_memory,
+    step_memory,
+)
+from training.bc.obs.channels import (
     _cat_bfs,
     _cat_contact_capture,
     _cat_dense_history,
@@ -41,9 +46,6 @@ from training.bc.obs import (
     _cat_self_broadcast,
     _cat_visibility,
     _cat_visible_state,
-    canonical_slot_order,
-    init_memory,
-    step_memory,
 )
 from training.bc.obs_config import OBS_CONFIG_DEFAULTS
 from training.bc.visibility import compute_visibility
