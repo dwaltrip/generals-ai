@@ -84,7 +84,14 @@ def split_by_game(
     t: FrameTable, val_frac: float, seed: int
 ) -> tuple[FrameTable, FrameTable]:
     """Partition rows into (train, val) by `game_id` — no game in both. Returns two
-    `FrameTable`s; `val_frac` is the fraction of *games* held out."""
+    `FrameTable`s; `val_frac` is the fraction of *games* held out.
+
+    The holdout is a shuffle of the *present* unique games, so it depends on which
+    games the input contains: filtering the table before splitting (e.g. to `mixed`)
+    can drop games entirely, change the unique-game count, and — because the shuffle
+    is length-sensitive — produce a nearly disjoint holdout from splitting the full
+    table. So an external ceiling/metric estimate only matches a run if it splits the
+    *same* pre-filtered population (the 57.6%-vs-63.2% reconciliation, 6.18-7 §5)."""
     games = np.unique(t.game_id)
     rng = random.Random(seed)
     shuffled = list(games)
