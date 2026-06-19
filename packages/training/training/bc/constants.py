@@ -38,7 +38,7 @@ W_PADDED = 32
 ELIGIBLE_PLAYER_COUNT = 8
 MAX_BOARD_SIDE = 32  # inclusive; drop games where max(w, h) > MAX_BOARD_SIDE
 
-# BFS city-passability knob (obs.py cat 5). A non-own city is treated as passable
+# BFS city-passability knob (obs cat 5). A non-own city is treated as passable
 # iff `perspective_total_army > city_army * CITY_TRAVERSABILITY_FACTOR`. Crude
 # v1 model of "do I have enough army that capturing this city is feasible" —
 # scales naturally with both my strength and the defender's. Replace with
@@ -111,7 +111,7 @@ def dense_history_channel_names(n: int) -> list[str]:
     """The `2 * n` dense-history channel names for a window depth of `n`.
 
     `ownership_transition[t-k]` then `army_delta[t-k]` for k = 1..n — matching
-    the stack order `bc.obs._cat_dense_history` produces.
+    the stack order `bc.obs.channels._cat_dense_history` produces.
     """
     return (
         [f"ownership_transition_t-{k}" for k in range(1, n + 1)]

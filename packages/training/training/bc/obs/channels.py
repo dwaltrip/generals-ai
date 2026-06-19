@@ -49,6 +49,10 @@ _LAND_DIVISOR = 100.0
 _LAND_DELTA_DIVISOR = 50.0
 _LAND_DELTA_WINDOW = 10  # ticks over which opp_N_land_delta is measured
 
+# -----------------------------------------------------------------------------
+# TODO: Rename all of these to remove the leading underscore
+# They are now imported by other files. (`obs.py` -> `obs/*.py` refactor)
+# -----------------------------------------------------------------------------
 
 def _cat_visibility(vis: np.ndarray) -> list[np.ndarray]:
     # Cat 1: Visibility (1 channel)
