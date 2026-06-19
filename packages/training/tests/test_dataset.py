@@ -145,12 +145,20 @@ _ELIM_EDGES = np.array([10, 20, 40, 80, 160, 320, 640], dtype=np.int64)
 
 
 def _synthetic_sim(real_slots: list[int], deaths: list[tuple[int, int]], T: int):
-    """Minimal sim dict for the elim precompute: only `ownership[0]` (to recover
-    the starting slots) and `death_events` (timestep, slot) are read."""
+    """Minimal sim dict for the elim precompute: `ownership[0]` (to recover the
+    starting slots) and `death_events` (timestep, slot). Empty capture/neutralize
+    event lists are included to match the real sim dict shape — the shared
+    `precompute_player_status` reads them for `removal_by_slot` (unused by the
+    elim targets, which key only on deaths)."""
     own = np.full((T, 1, 8), -1, dtype=np.int64)
     own[0, 0, : len(real_slots)] = real_slots
     de = np.array(deaths, dtype=np.int32).reshape(-1, 2)
-    return {"ownership": own, "death_events": de}
+    return {
+        "ownership": own,
+        "death_events": de,
+        "capture_events": np.zeros((0, 3), dtype=np.int32),
+        "neutralize_events": np.zeros((0, 2), dtype=np.int32),
+    }
 
 
 def test_elim_precompute_winner_vs_phantom() -> None:

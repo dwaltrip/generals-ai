@@ -15,6 +15,20 @@ from dataclasses import dataclass
 
 import numpy as np
 
+# `alive_mask` is single-sourced in `bc.player_status` (shared with the obs
+# encoder); re-exported here so `elim_targets` callers keep their import path.
+# `ElimCtx` carries the `is_real`/`death_by_slot` fields it reads, so it satisfies
+# the mask's structural type without an import cycle.
+from training.bc.player_status import alive_mask, precompute_player_status
+
+__all__ = [
+    "ElimCtx",
+    "alive_mask",
+    "next_death_target",
+    "precompute_elim",
+    "time_bin_targets",
+]
+
 
 @dataclass(frozen=True)
 class ElimCtx:
@@ -55,41 +69,16 @@ def precompute_elim(
     `range(8)`, but FFA games can start with <8 players (~7% of the corpus, see
     `6.13-6`). Without `is_real`, those phantom channels would inherit the winner
     sentinel and train as "alive, never dies" on every frame.
+
+    The `(death_by_slot, is_real)` computation is single-sourced in
+    `bc.player_status.precompute_player_status` (shared with the obs encoder);
+    this wrapper sizes the elim-specific `sentinel` and returns the tuple the
+    `ElimCtx(edges, *precompute_elim(...))` construction expects.
     """
-    own0 = sim["ownership"][0]
-    real = np.unique(own0)
-    real = real[real >= 0].astype(np.intp)
     T = sim["ownership"].shape[0]
     sentinel = T + (int(edges[-1]) if edges is not None else 1)
-
-    death_by_slot = np.full(8, -1, dtype=np.int64)
-    death_by_slot[real] = sentinel  # winner default; dead slots overwritten below
-    deaths = sim["death_events"]
-    if deaths.size:
-        death_by_slot[deaths[:, 1].astype(np.intp)] = deaths[:, 0]
-
-    is_real = np.zeros(8, dtype=np.bool_)
-    is_real[real] = True
-    return death_by_slot, is_real, sentinel
-
-
-# ============================================================================
-# TODO(obs-alive-tick-seam): event-time. `death > t` reads a player who dies at
-# tick t as DEAD at frame t. But the obs army channel (bc/obs.py, scoreboard_row
-# / init_memory) reads the PRE-RESOLUTION board snapshot ownership[t], which
-# still shows that player's army (it zeroes at t+1). So at a capture-while-alive
-# tick the target says dead while obs shows on-board with army -> a 1-frame
-# obs/target inconsistency (~1% of frames). Paired site: the obs army channel.
-# Deferred to the obs/head rework. See docs/2026-06/6.18-6-obs-alive-tick-seam.md.
-# ============================================================================
-def alive_mask(elim: ElimCtx, raw_order: list[int], t: int) -> np.ndarray:
-    """Per-channel alive mask `[8]`: a channel is alive iff its slot is real and
-    not yet eliminated (`death > t` — a player eliminated at `t` counts dead at
-    frame `t`). The cross-player softmax / regression domain; both elim target
-    builders and the alive-only path derive `alive` here.
-    """
-    raw = np.asarray(raw_order, dtype=np.intp)
-    return elim.is_real[raw] & (elim.death_by_slot[raw] > t)
+    status = precompute_player_status(sim, sentinel=sentinel)
+    return status.death_by_slot, status.is_real, status.sentinel
 
 
 def time_bin_targets(
@@ -99,10 +88,11 @@ def time_bin_targets(
 
     `raw_order` is the canonical channel→raw-slot map (`[perspective_slot,
     *opp_slots]`). A channel is alive iff its slot is real AND not yet
-    eliminated (`death > t` matches the existing aliveness convention — a player
-    eliminated at `t` counts dead at frame `t`). Live `Δ = death − t` digitizes
-    into a bin; the winner's large sentinel Δ lands in the top bin (merged with
-    "never"). Dead and phantom channels get bin 0, masked out by `alive`.
+    eliminated (`death >= t` — a player eliminated at `t` reads alive at frame
+    `t`, matching the obs's pre-event board snapshot; see `bc.player_status`).
+    Live `Δ = death − t` digitizes into a bin; the winner's large sentinel Δ
+    lands in the top bin (merged with "never"). Dead and phantom channels get
+    bin 0, masked out by `alive`.
     """
     assert elim.edges is not None, "time_bin targets require bin edges"
     raw = np.asarray(raw_order, dtype=np.intp)
@@ -120,14 +110,15 @@ def next_death_target(
 
     `raw_order` is the canonical channel→raw-slot map (`[perspective_slot,
     *opp_slots]`). A channel is alive iff its slot is real AND not yet eliminated
-    (`death > t`) — the same convention as the time_bin head; this is the domain
+    (`death >= t`) — the same convention as the time_bin head; this is the domain
     of the cross-player softmax. The next victim is the alive channel with the
     soonest death tick; the winner's `sentinel` death is larger than any real
     death, so it only wins this argmin when it is the lone survivor.
 
     Returns the next-victim channel index, the alive mask, and `dt = death − t`
     (ticks until that death — the horizon, dumped for offline confidence-ramp /
-    horizon-stratified reads). Frames with no real future death — the winner's
+    horizon-stratified reads). The death frame itself reads `dt = 0` (the dying
+    player is alive-and-the-victim at frame `death`). Frames with no real future death — the winner's
     tail, where only the winner remains alive — get `target = -1` (a CE
     `ignore_index` sentinel, masked from the loss) and `dt = -1`. Ties (two
     deaths at the same tick) resolve to the lowest canonical channel index via
