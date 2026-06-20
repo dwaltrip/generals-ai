@@ -11,7 +11,50 @@ import numpy as np
 import pytest
 
 from training.analysis.families.elim_head_debug import ELIM_HEAD_DEBUG
+from training.analysis.fq.derivers import Frame, windowed_per_game
 from training.analysis.fq.frame_table import GROUND_TRUTH_OBS_CFG, build_frame_table, select
+
+
+def _frame(sim: dict, t: int) -> Frame:
+    """A minimal Frame for exercising a per-game deriver's fn directly: only
+    `sim`, `t`, `raw_order`, `game_id` are read (identity raw_order keeps channels
+    == slots). The obs/valid/alive fields are unused by these derivers."""
+    return Frame(
+        obs=None,  # type: ignore[arg-type]
+        valid_mask=None,  # type: ignore[arg-type]
+        alive=np.ones(8, dtype=bool),
+        sim=sim,
+        t=t,
+        raw_order=list(range(8)),
+        game_id=0,
+    )
+
+
+def test_windowed_per_game_nan_padding_and_reduction() -> None:
+    # A toy [T, 8] signal: slot s = s + 10 * tick, so trailing windows are easy to
+    # reason about. `series` ignores `sim`'s contents and just returns this array.
+    T, K = 5, 3
+    S = (np.arange(8)[None, :] + 10 * np.arange(T)[:, None]).astype(np.float64)
+    sim = {"ownership": np.zeros((T, 1), dtype=np.int64)}  # only T (shape[0]) matters
+
+    der = windowed_per_game(
+        "wmin", per_player=True, series=lambda _sim: S, reduce=lambda W: np.nanmin(W, axis=1), K=K
+    )
+
+    # t=0: window is only tick 0 (two NaN pads dropped by nanmin) -> the t=0 row.
+    np.testing.assert_array_equal(der.fn(_frame(sim, 0)), S[0])
+    # t=1: window {tick0, tick1}, one pad -> min is tick0 (smaller).
+    np.testing.assert_array_equal(der.fn(_frame(sim, 1)), S[0])
+    # t=4: full K-window {tick2,3,4} -> min is tick2.
+    np.testing.assert_array_equal(der.fn(_frame(sim, 4)), S[2])
+
+    # A different NaN-aware reduce (mean) over a known full window: ticks 1,2,3.
+    der_mean = windowed_per_game(
+        "wmean", per_player=True, series=lambda _sim: S, reduce=lambda W: np.nanmean(W, axis=1), K=K
+    )
+    np.testing.assert_allclose(der_mean.fn(_frame(sim, 3)), S[1:4].mean(0))
+    # Early tick t=1 reduces over only its real rows (ticks 0,1), not the pad.
+    np.testing.assert_allclose(der_mean.fn(_frame(sim, 1)), S[0:2].mean(0))
 
 
 def test_fq_build_parity_and_rule(samples: list[tuple[Path, int]]) -> None:

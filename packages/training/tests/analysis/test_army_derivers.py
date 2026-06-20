@@ -15,12 +15,46 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from training.analysis.families.army_derivers import ARMY_SIM, CAPTURED, captured_per_tick
+from training.analysis.families.army_derivers import (
+    ARMY_SIM,
+    CAPTURED,
+    captured_per_tick,
+    kth_lowest_alive,
+)
 from training.analysis.fq.frame_table import (
     GROUND_TRUTH_OBS_CFG,
     FrameTableSpec,
     build_frame_table,
 )
+
+
+def test_kth_lowest_alive_order_and_guard() -> None:
+    # Two frames, 8 channels. Dead channels (alive=False) must never be picked,
+    # even when they hold the smallest value.
+    values = np.array(
+        [
+            [50, 10, 30, 20, 40, 99, 99, 99],   # alive 0..4; ranks: ch1<ch3<ch2<ch4<ch0
+            [5, 7, 99, 99, 99, 99, 99, 99],     # only ch0, ch1 alive
+        ],
+        dtype=np.float64,
+    )
+    alive = np.array(
+        [
+            [True, True, True, True, True, False, False, False],
+            [True, True, False, False, False, False, False, False],
+        ],
+        dtype=bool,
+    )
+    # k=0 lowest, k=1 2nd, k=2 3rd.
+    np.testing.assert_array_equal(kth_lowest_alive(values, alive, 0), [1, 0])
+    np.testing.assert_array_equal(kth_lowest_alive(values, alive, 1), [3, 1])
+    # Frame 1 has only 2 alive -> 3rd-lowest is undefined -> sentinel -1.
+    np.testing.assert_array_equal(kth_lowest_alive(values, alive, 2), [2, -1])
+
+    # A dead channel holding the global min is never picked.
+    v2 = np.array([[0.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0]])
+    a2 = np.array([[False, True, True, True, True, True, True, True]])
+    assert kth_lowest_alive(v2, a2, 0)[0] == 1
 
 
 def test_captured_per_tick_order_and_latch() -> None:

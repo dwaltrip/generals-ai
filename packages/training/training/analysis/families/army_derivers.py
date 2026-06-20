@@ -18,6 +18,25 @@ from training.bc.obs_config import OBS_CONFIG_DEFAULTS
 ARMY_CH = army_totals_ch_indices(OBS_CONFIG_DEFAULTS.dense_history_n)
 
 
+def kth_lowest_alive(values: np.ndarray, alive: np.ndarray, k: int) -> np.ndarray:
+    """`[N]` channel index of the k-th smallest *alive* value per frame.
+
+    `values`/`alive` are `[N, 8]` (values, bool alive mask); `k=0` is the lowest,
+    `k=1` the 2nd-lowest, `k=2` the 3rd. Dead channels are pushed to `+inf` so they
+    sort last and never win. Single-sources the `level` / `2nd_lowest` / `3rd_lowest`
+    order-statistic baselines for the who-dies-next heuristics.
+
+    Frames with `< k+1` alive channels can't have a real k-th-lowest; those rows get
+    the sentinel `-1` (a value that never equals a real victim channel 0..7), so a
+    caller comparing the pick against the true victim treats them as a miss.
+    """
+    masked = np.where(alive, values, np.inf)
+    order = np.argsort(masked, axis=1, kind="stable")    # ascending; dead slots last
+    pick = order[:, k]
+    n_alive = alive.sum(axis=1)
+    return np.where(n_alive >= k + 1, pick, -1)
+
+
 def army_totals_per_tick(sim: dict[str, np.ndarray]) -> np.ndarray:
     """`[T, 8]` total army per slot per tick (sum of armies over owned cells).
 

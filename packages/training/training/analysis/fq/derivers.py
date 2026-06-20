@@ -11,6 +11,7 @@ per-frame results into the `[N, 8]` / `[N]` column. Two scopes:
 
 from __future__ import annotations
 
+import warnings
 from collections.abc import Callable
 from dataclasses import dataclass
 
@@ -64,3 +65,51 @@ def per_game(
         return index(cache["state"], f)
 
     return Deriver(name, per_player, fn)
+
+
+def windowed_per_game(
+    name: str,
+    per_player: bool,
+    series: Callable[[dict], np.ndarray],
+    reduce: Callable[[np.ndarray], np.ndarray],
+    K: int,
+) -> Deriver:
+    """A per-game deriver that reduces each tick's trailing-K window to one value.
+
+    `series(sim) -> [T, 8]` is the per-tick signal (e.g. army deltas). For each tick
+    `t` we form the window of the `K` ticks ending at `t` and apply `reduce` to it,
+    yielding one `[T, 8]` column of reduced values (computed once per game, then
+    indexed per frame like `per_game`).
+
+    The trailing-window tensor handed to `reduce` is `[T, K, 8]`: row `t` holds the
+    `K` rows `series[t-K+1 .. t]`. Early ticks have fewer than `K` real values, so
+    the window is **NaN-padded at the front** — `W[t, :K-1-t]` is NaN for `t < K-1`.
+
+    CONTRACT: `reduce` must be NaN-aware (`np.nanmin`, `np.nanpercentile`,
+    `np.nanmean`, ...), so a short start-of-game window reduces over only its real
+    values rather than over the padding. A non-NaN-aware reduce would propagate the
+    pad and corrupt every early tick.
+
+    Like `per_game`, this is a deriver constructor — the heavy work runs once per
+    game in `prepare`, not as a groupby/agg over a built `FrameTable`.
+    """
+
+    def prepare(sim: dict) -> np.ndarray:
+        S = series(sim)                                  # [T, 8]
+        T, P = S.shape
+        # W[t] = the K rows ending at t, NaN-padded where t - K + 1 < 0.
+        W = np.full((T, K, P), np.nan, dtype=np.float64)
+        for j in range(K):                               # j = offset back from t
+            lag = K - 1 - j                              # how many ticks before t
+            W[lag:, j, :] = S[: T - lag if lag else T]
+        # An all-NaN window is in-contract (a fully-padded early row when the series
+        # itself starts with NaN); the nan-reduce returns NaN for it, so silence the
+        # benign "All-NaN slice" / "empty slice" warnings the reduce raises there.
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", r"(All-NaN|Mean of empty) slice", RuntimeWarning)
+            return reduce(W)                             # [T, 8]
+
+    def index(state: np.ndarray, f: Frame) -> np.ndarray:
+        return state[f.t, f.raw_order]
+
+    return per_game(name, per_player, prepare, index)
