@@ -36,7 +36,7 @@ Usage:
 `SWEEP_DIR` is the sweep root (holds `runs/` and `run_ids.txt`); the report covers
 every cell in `run_ids.txt`, skipping any whose dumps carry no `next_elim_*` columns
 (an elim-off control run). Point `--manifest` at the split the runs trained on
-(default `cloud_24k_sub_5k.json`, the canonical 47.2% reference); a mismatch
+(default `cloud_24k_sub_5k.json`, the canonical reference split); a mismatch
 misaligns the join key (asserted by `join_dump`).
 """
 
@@ -352,7 +352,7 @@ def report_soft(t: FrameTable, menu: list[Heuristic]) -> None:
     """Soft 'among next-k to die' for a few representative heuristics."""
     want = ["level", "2nd_lowest", "abs_endpoint_25", "rel_endpoint_25", "abs_pct90_25", "rel_pct90_25"]
     by_name = {h.name: h for h in menu}
-    print(f"\n# Soft 'pick among next-k to die'  (next-1 == hard top-1)")
+    print("\n# Soft 'pick among next-k to die'  (next-1 == hard top-1)")
     print(f"  {'heuristic':>16}  {'next-1':>7} {'next-2':>7} {'next-3':>7}")
     for name in want:
         if name not in by_name:
