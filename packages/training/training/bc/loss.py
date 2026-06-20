@@ -83,6 +83,16 @@ class LossConfig:
     lambda_elim: float = 0.0
     elim_target_tau: float = 0.0
     elim_bin_weights: tuple[float, ...] | None = None
+    # next_death (who-is-removed-next) soft target. τ>0 replaces the one-hot
+    # next-victim label with a distribution over the *present* players decaying
+    # with how much later each is removed than the next victim:
+    # `p_i ∝ exp(-(removal_dt_i - removal_dt_min)/τ)`, τ in ticks. Unlike the
+    # ordinal `elim_target_tau` (time_bin bins), this is a per-frame data-dependent
+    # distribution over nominal player channels, built in the loss from the
+    # per-channel `next_elim_removal_dt`. τ=0 keeps the hard label (current
+    # behavior). The near-tie relief auto-adapts to game phase (crowded boards
+    # have tight removal gaps → softer; sparse late boards → near one-hot).
+    next_elim_target_tau: float = 0.0
 
     def __post_init__(self) -> None:
         if self.lambda_value < 0:
@@ -98,6 +108,10 @@ class LossConfig:
         if self.elim_target_tau < 0:
             raise ValueError(
                 f"elim_target_tau must be >= 0; got {self.elim_target_tau}"
+            )
+        if self.next_elim_target_tau < 0:
+            raise ValueError(
+                f"next_elim_target_tau must be >= 0; got {self.next_elim_target_tau}"
             )
         if self.elim_bin_weights is not None:
             weights = tuple(float(w) for w in self.elim_bin_weights)
@@ -186,11 +200,15 @@ def bc_loss(
                        (the accumulator weight for the elim means)
 
     When `model_out` carries `next_elim_logits` (the next_death elim head is
-    built — mutually exclusive with `elim_logits`), two keys appear instead:
-        - `next_elim`:   hard who-dies-next CE, mean over frames with a defined
-                         next victim (winner-tail frames excluded via -1)
-        - `n_next_elim`: 0-d int tensor, count of those frames (the accumulator
-                         weight for the `next_elim` mean)
+    built — mutually exclusive with `elim_logits`), three keys appear instead:
+        - `next_elim`:      hard who-is-removed-next CE against the one-hot next
+                            victim, mean over frames with a defined next removal
+                            (winner-tail frames excluded via -1) — the reporting
+                            metric
+        - `next_elim_soft`: soft-target CE, the trained objective (same tensor as
+                            `next_elim` at τ=0)
+        - `n_next_elim`:    0-d int tensor, count of those frames (the accumulator
+                            weight for the next_elim means)
     """
     policy_logits = model_out["policy_logits"]  # [B, 8, H, W]
     pass_logit = model_out["pass_logit"]        # [B]
@@ -307,26 +325,53 @@ def bc_loss(
 
     # --- Who-dies-next CE (only when the next_death head emits its logits) ---
     # The `next_death` elim variant: a single cross-player softmax per frame over
-    # "which alive player is eliminated next". Shares `lambda_elim` with the
-    # time_bin head — only one variant is built per model, so they never both
-    # contribute. Hard CE only (no soft-ordinal smoothing): the target is a
-    # nominal player index, not an ordinal bin.
+    # "which present player is removed from the board next". Shares `lambda_elim`
+    # with the time_bin head — only one variant is built per model, so they never
+    # both contribute. The cross-player softmax is over the *present* domain (the
+    # board-removal event's domain), not the alive domain the time_bin head uses.
     if "next_elim_logits" in model_out:
         nd_logits = model_out["next_elim_logits"]       # [B, 8]
         nd_target = targets["next_elim_target"]         # [B] int64, -1 = ignore
-        alive_mask = targets["alive_mask"]                # [B, 8] bool
-        # Cross-player softmax over the alive field only: dead/phantom channels
-        # get -inf logits → zero prob, zero gradient. Channel 0 (self) is always
-        # alive in-trajectory, so no included row is all-masked. ignore_index=-1
-        # drops the winner-tail frames that carry no next death; reduction="sum"
-        # over the kept frames / their count mirrors the policy-CE safe divide.
-        masked_logits = nd_logits.masked_fill(~alive_mask, float("-inf"))
-        n_next_elim = (nd_target != -1).sum()           # 0-d, stays on device
+        present_mask = targets["present_mask"]          # [B, 8] bool
+        # Cross-player softmax over the present field only: removed/phantom
+        # channels get -inf logits → zero prob, zero gradient. Channel 0 (self) is
+        # always present in-trajectory, so no included row is all-masked.
+        # ignore_index=-1 drops the winner-tail frames that carry no next removal;
+        # reduction="sum" over the kept frames / their count mirrors the policy-CE
+        # safe divide.
+        masked_logits = nd_logits.masked_fill(~present_mask, float("-inf"))
+        valid = nd_target != -1                         # [B] frames with a real next removal
+        n_next_elim = valid.sum()                       # 0-d, stays on device
+        denom = n_next_elim.clamp(min=1)
+        # Hard CE against the one-hot next victim — always the cross-run-comparable
+        # reporting metric (the top-1 the heuristics baseline against).
         next_elim = F.cross_entropy(
             masked_logits, nd_target, ignore_index=-1, reduction="sum"
-        ) / n_next_elim.clamp(min=1)
-        total = total + cfg.lambda_elim * next_elim
+        ) / denom
+        if cfg.next_elim_target_tau > 0:
+            # Soft objective: a per-frame distribution over present players,
+            # `p_i ∝ exp(-(removal_dt_i - removal_dt_min)/τ)`. softmax subtracts the
+            # row-max (the `-removal_dt_min` term) for free, and the winner's huge
+            # `removal_dt` underflows to ~0 mass — no explicit min/winner handling.
+            removal_dt = targets["next_elim_removal_dt"].to(torch.float32)   # [B, 8]
+            neg = torch.where(
+                present_mask, -removal_dt / cfg.next_elim_target_tau, float("-inf")
+            )
+            soft_target = F.softmax(neg, dim=1)                             # [B, 8]
+            # CE against prob targets has no ignore_index, so mask by hand. Zero
+            # log-prob on absent channels first: soft_target is 0 there, but the
+            # logits are -inf → log_softmax -inf, and 0·(-inf)=nan would poison it.
+            logp = F.log_softmax(masked_logits, dim=1)
+            logp = torch.where(present_mask, logp, torch.zeros_like(logp))
+            ce = -(soft_target * logp).sum(dim=1)                          # [B]
+            next_elim_soft = torch.where(
+                valid, ce, torch.zeros_like(ce)
+            ).sum() / denom
+        else:
+            next_elim_soft = next_elim
+        total = total + cfg.lambda_elim * next_elim_soft
         out["next_elim"] = next_elim
+        out["next_elim_soft"] = next_elim_soft
         out["n_next_elim"] = n_next_elim
 
     out["total"] = total
@@ -376,7 +421,8 @@ class LossAccumulator:
     # with a defined next victim. Zero for non-next_death runs (the keys are
     # absent from `bc_loss`'s return), so the term drops out of total.
     n_next_elim: int = 0
-    sum_next_elim: float = 0.0   # weighted by n_next_elim per batch
+    sum_next_elim: float = 0.0       # weighted by n_next_elim per batch
+    sum_next_elim_soft: float = 0.0  # weighted by n_next_elim per batch
 
     def update(
         self,
@@ -403,6 +449,7 @@ class LossAccumulator:
             n_nx = int(losses["n_next_elim"].item())
             self.n_next_elim += n_nx
             self.sum_next_elim += losses["next_elim"].item() * n_nx
+            self.sum_next_elim_soft += losses["next_elim_soft"].item() * n_nx
 
     def summary(self) -> dict[str, float | int]:
         """
@@ -419,21 +466,25 @@ class LossAccumulator:
         # Elim means weight by the running alive-pair count, NOT n_samples.
         elim = self.sum_elim / self.n_elim if self.n_elim > 0 else 0.0
         elim_soft = self.sum_elim_soft / self.n_elim if self.n_elim > 0 else 0.0
-        # who-dies-next mean weights by the running defined-next-victim count.
+        # who-dies-next means weight by the running defined-next-victim count.
         next_elim = (
             self.sum_next_elim / self.n_next_elim if self.n_next_elim > 0 else 0.0
         )
+        next_elim_soft = (
+            self.sum_next_elim_soft / self.n_next_elim if self.n_next_elim > 0 else 0.0
+        )
         # Hardcoded total identity — must carry the elim terms or the component
         # sum silently breaks for elim runs. Inert for non-elim runs: lambda_elim
-        # defaults to 0, and elim_soft / next_elim are 0 when no such batches were
-        # folded. The two elim variants are mutually exclusive, so at most one of
-        # elim_soft / next_elim is nonzero.
+        # defaults to 0, and elim_soft / next_elim_soft are 0 when no such batches
+        # were folded. The two elim variants are mutually exclusive, so at most one
+        # of elim_soft / next_elim_soft is nonzero. The *soft* terms are the trained
+        # objective (== hard at τ=0), matching `bc_loss`'s `total`.
         total = (
             policy
             + self.cfg.lambda_value * value_soft
             + self.cfg.mu_pass * pass_
             + self.cfg.lambda_elim * elim_soft
-            + self.cfg.lambda_elim * next_elim
+            + self.cfg.lambda_elim * next_elim_soft
         )
         summary: dict[str, float | int] = {
             "policy": policy,
@@ -452,5 +503,6 @@ class LossAccumulator:
             summary["n_elim"] = self.n_elim
         if self.n_next_elim > 0:
             summary["next_elim"] = next_elim
+            summary["next_elim_soft"] = next_elim_soft
             summary["n_next_elim"] = self.n_next_elim
         return summary

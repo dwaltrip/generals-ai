@@ -31,7 +31,8 @@ class TrainConfig:
         checkpoint's `arch` key so a checkpoint self-describes its model.
       - recipe (`lr`, `batch_size`, `epochs`, `lambda_value`,
         `value_target_tau`, `lambda_elim`, `elim_target_tau`,
-        `elim_bin_weights`, `seed`, `precision`, `shuffle_buffer_size`,
+        `next_elim_target_tau`, `elim_bin_weights`, `seed`, `precision`,
+        `shuffle_buffer_size`,
         `gpu`, `dump_val_frames`, `manifest`, `intermediate`) — from the
         `--config` file; the run's reproducible identity, not in the
         checkpoint.
@@ -80,6 +81,12 @@ class TrainConfig:
     lambda_elim: float = 0.0
     elim_target_tau: float = 0.0
     elim_bin_weights: tuple[float, ...] | None = None
+    # next_death (who-is-removed-next) soft target temperature, forwarded into
+    # `loss.LossConfig`. τ>0 softens the one-hot next-victim label into a removal-
+    # time distribution over present players (τ in ticks); τ=0 keeps the hard
+    # label. next_death-only — requires `arch.elim_head_variant == "next_death"`
+    # (checked below). Same resume-legacy-pinning caveat as the other τ fields.
+    next_elim_target_tau: float = 0.0
     seed: int = 0
     shuffle_buffer_size: int = 2048
     # Modal GPU class for the run. Recorded provenance that rides into the
@@ -176,12 +183,27 @@ class TrainConfig:
             raise ValueError(
                 f"elim_target_tau must be >= 0; got {self.elim_target_tau}"
             )
+        if self.next_elim_target_tau < 0:
+            raise ValueError(
+                f"next_elim_target_tau must be >= 0; got {self.next_elim_target_tau}"
+            )
         # No loss weight on an absent head — a config asking for elim gradient
         # without the head built is a mistake, not a silent no-op.
         if self.lambda_elim > 0 and self.arch.elim_head_variant is None:
             raise ValueError(
                 "lambda_elim > 0 requires arch.elim_head_variant is not None "
                 "(no loss weight on an absent head)"
+            )
+        # The next_death soft target only exists for that variant — a τ set
+        # against time_bin (or no head) would silently never apply.
+        if (
+            self.next_elim_target_tau > 0
+            and self.arch.elim_head_variant != "next_death"
+        ):
+            raise ValueError(
+                "next_elim_target_tau > 0 requires "
+                'arch.elim_head_variant == "next_death" '
+                f"(got {self.arch.elim_head_variant!r})"
             )
         if self.elim_bin_weights is not None:
             object.__setattr__(

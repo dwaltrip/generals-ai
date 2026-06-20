@@ -15,17 +15,24 @@ from dataclasses import dataclass
 
 import numpy as np
 
-# `alive_mask` is single-sourced in `bc.player_status` (shared with the obs
-# encoder); re-exported here so `elim_targets` callers keep their import path.
-# `ElimCtx` carries the `is_real`/`death_by_slot` fields it reads, so it satisfies
-# the mask's structural type without an import cycle.
-from training.bc.player_status import alive_mask, precompute_player_status
+# `alive_mask` / `present_mask` are single-sourced in `bc.player_status` (shared
+# with the obs encoder); re-exported here so `elim_targets` callers keep their
+# import path. `ElimCtx` carries the `is_real`/`death_by_slot`/`removal_by_slot`
+# fields they read, so it satisfies the masks' structural types without an import
+# cycle.
+from training.bc.player_status import (
+    alive_mask,
+    precompute_player_status,
+    present_mask,
+)
+
 
 __all__ = [
     "ElimCtx",
     "alive_mask",
     "next_death_target",
     "precompute_elim",
+    "present_mask",
     "time_bin_targets",
 ]
 
@@ -35,32 +42,40 @@ class ElimCtx:
     """Per-game precompute backing the elimination heads' targets.
 
     `edges` is the dataset-constant bin-edge array (time_bin head only);
-    `death_by_slot` and `is_real` are per-game [8]-arrays indexed by *raw* slot
-    id; `sentinel` is the winner's stand-in death tick. Built once per game in
-    `_walk` (when an elim head is enabled) and threaded into every `encode_frame`
-    call for that game. Both elim variants read off this one precompute.
+    `death_by_slot` / `removal_by_slot` / `is_real` are per-game [8]-arrays
+    indexed by *raw* slot id; `sentinel` is the winner's stand-in event tick.
+    Built once per game in `_walk` (when an elim head is enabled) and threaded
+    into every `encode_frame` call for that game.
+
+    The two events back different elim targets: `death_by_slot` (first DeathEvent
+    — surrender or capture) drives the time_bin head's `alive` domain;
+    `removal_by_slot` (board-removal — capture/neutralize that clears the slot's
+    tiles) drives the next_death head's `present` domain. See `bc.player_status`
+    for the death-vs-removal distinction (the surrender window is the gap).
     """
 
-    edges: np.ndarray | None   # [n_bins - 1] strictly-increasing bin edges; None for next_death
-    death_by_slot: np.ndarray  # [8] int64 — elim timestep; winner sentinel; -1 = phantom
-    is_real: np.ndarray        # [8] bool — slot actually played this game
-    sentinel: int              # winner's stand-in death tick (> any real death)
+    edges: np.ndarray | None     # [n_bins - 1] strictly-increasing bin edges; None for next_death
+    death_by_slot: np.ndarray    # [8] int64 — first DeathEvent tick; winner sentinel; -1 = phantom
+    removal_by_slot: np.ndarray  # [8] int64 — board-removal tick; winner sentinel; -1 = phantom
+    is_real: np.ndarray          # [8] bool — slot actually played this game
+    sentinel: int                # winner's stand-in event tick (> any real event)
 
 
 def precompute_elim(
     sim: dict[str, np.ndarray], edges: np.ndarray | None
-) -> tuple[np.ndarray, np.ndarray, int]:
-    """Per-game `(death_by_slot, is_real, sentinel)` for the elim targets.
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, int]:
+    """Per-game `(death_by_slot, removal_by_slot, is_real, sentinel)` for the elim targets.
 
-    `death_by_slot[s]` is slot `s`'s elimination timestep, the large finite
-    winner `sentinel` (integer-typed, not `np.inf`) for the one real slot absent
-    from `death_events`, or `-1` for a phantom slot that never played.
-    `is_real[s]` marks the slots present at t=0. The winner-vs-phantom split is
-    what `real_slots` resolves: the winner is real-and-absent-from-deaths, a
-    phantom is not-real — and only the latter must be masked out.
+    `death_by_slot[s]` is slot `s`'s first-DeathEvent timestep and
+    `removal_by_slot[s]` its board-removal timestep — each the large finite
+    winner `sentinel` (integer-typed, not `np.inf`) for a real slot with no such
+    event, or `-1` for a phantom slot that never played. `is_real[s]` marks the
+    slots present at t=0. The winner-vs-phantom split is what `real_slots`
+    resolves: the winner is real-and-absent-from-events, a phantom is not-real —
+    and only the latter must be masked out.
 
-    The sentinel only has to exceed every real death tick (real deaths are ≤
-    T−1) so the winner never wins the soonest-death argmin unless it is the lone
+    The sentinel only has to exceed every real event tick (real events are ≤
+    T−1) so the winner never wins the soonest-event argmin unless it is the lone
     survivor. For the time_bin head it is additionally sized as `T + max_edge`
     so the winner's `Δ = sentinel − t` lands in the top "never" bin; next_death
     passes no edges and uses `T + 1`.
@@ -68,9 +83,9 @@ def precompute_elim(
     The obs encoder always runs at P=8 and `opp_slots` always yields 7 ids from
     `range(8)`, but FFA games can start with <8 players (~7% of the corpus, see
     `6.13-6`). Without `is_real`, those phantom channels would inherit the winner
-    sentinel and train as "alive, never dies" on every frame.
+    sentinel and train as "present, never removed" on every frame.
 
-    The `(death_by_slot, is_real)` computation is single-sourced in
+    The per-slot event computation is single-sourced in
     `bc.player_status.precompute_player_status` (shared with the obs encoder);
     this wrapper sizes the elim-specific `sentinel` and returns the tuple the
     `ElimCtx(edges, *precompute_elim(...))` construction expects.
@@ -78,7 +93,12 @@ def precompute_elim(
     T = sim["ownership"].shape[0]
     sentinel = T + (int(edges[-1]) if edges is not None else 1)
     status = precompute_player_status(sim, sentinel=sentinel)
-    return status.death_by_slot, status.is_real, status.sentinel
+    return (
+        status.death_by_slot,
+        status.removal_by_slot,
+        status.is_real,
+        status.sentinel,
+    )
 
 
 def time_bin_targets(
@@ -105,33 +125,46 @@ def time_bin_targets(
 
 def next_death_target(
     elim: ElimCtx, raw_order: list[int], t: int
-) -> tuple[int, np.ndarray, int]:
-    """Per-frame `(next_victim_channel, alive_mask[8], dt)` for who-dies-next.
+) -> tuple[int, np.ndarray, int, np.ndarray]:
+    """Per-frame `(next_victim_channel, present_mask[8], dt, removal_dt[8])` for who-dies-next.
+
+    The event is **board-removal** (capture/neutralize that clears a player's
+    tiles), not "stops playing" (the DeathEvent the time_bin head uses). Removal
+    is the more value-relevant "the player is gone" signal — a surrendered player
+    still on the board hasn't changed the survivors' position yet; the tile
+    transfer at removal is what does.
 
     `raw_order` is the canonical channel→raw-slot map (`[perspective_slot,
-    *opp_slots]`). A channel is alive iff its slot is real AND not yet eliminated
-    (`death >= t`) — the same convention as the time_bin head; this is the domain
-    of the cross-player softmax. The next victim is the alive channel with the
-    soonest death tick; the winner's `sentinel` death is larger than any real
-    death, so it only wins this argmin when it is the lone survivor.
+    *opp_slots]`). A channel is *present* iff its slot is real AND not yet removed
+    (`removal >= t`); this is the domain of the cross-player softmax. Event and
+    domain move together: a surrendered-but-present player can be the next removal
+    and must stay in the domain to be nameable. The next victim is the present
+    channel with the soonest removal tick; the winner's `sentinel` removal is
+    larger than any real removal, so it only wins this argmin when it is the lone
+    survivor.
 
-    Returns the next-victim channel index, the alive mask, and `dt = death − t`
-    (ticks until that death — the horizon, dumped for offline confidence-ramp /
-    horizon-stratified reads). The death frame itself reads `dt = 0` (the dying
-    player is alive-and-the-victim at frame `death`). Frames with no real future death — the winner's
-    tail, where only the winner remains alive — get `target = -1` (a CE
-    `ignore_index` sentinel, masked from the loss) and `dt = -1`. Ties (two
-    deaths at the same tick) resolve to the lowest canonical channel index via
-    `argmin`'s first-min rule — a fixed, deterministic convention.
+    Returns the next-victim channel index, the present mask, `dt = removal − t`
+    for the next victim (the horizon, dumped for offline confidence-ramp /
+    horizon-stratified reads), and the per-channel `removal_dt = removal − t` over
+    all 8 channels (the soft target's input — masked to `present` by the loss; the
+    winner's huge `dt` underflows to ~0 target mass). The removal frame itself
+    reads `dt = 0` (the player is present-and-the-victim at frame `removal`).
+    Frames with no real future removal — the winner's tail, where only the winner
+    remains present — get `target = -1` (a CE `ignore_index` sentinel, masked from
+    the loss) and `dt = -1`. Ties (two removals at the same tick) resolve to the
+    lowest canonical channel index via `argmin`'s first-min rule — a fixed,
+    deterministic convention; the soft target instead splits mass evenly across a
+    tie.
     """
     raw = np.asarray(raw_order, dtype=np.intp)
-    death_ch = elim.death_by_slot[raw]                       # [8]
-    alive = alive_mask(elim, raw_order, t)                   # [8]
-    # Soonest death among alive channels; non-alive channels can't be the victim.
-    cand = np.where(alive, death_ch, np.iinfo(np.int64).max)
+    removal_ch = elim.removal_by_slot[raw]                   # [8]
+    present = present_mask(elim, raw_order, t)               # [8]
+    removal_dt = (removal_ch - t).astype(np.int64)           # [8] per-channel horizon
+    # Soonest removal among present channels; non-present channels can't be the victim.
+    cand = np.where(present, removal_ch, np.iinfo(np.int64).max)
     nxt = int(cand.argmin())
     if cand[nxt] >= elim.sentinel:
-        # The soonest "death" is the winner sentinel (or no alive channel) → no
-        # real next elimination from here. Mask the frame out.
-        return -1, alive, -1
-    return nxt, alive, int(cand[nxt] - t)
+        # The soonest "removal" is the winner sentinel (or no present channel) →
+        # no real next removal from here. Mask the frame out.
+        return -1, present, -1, removal_dt
+    return nxt, present, int(cand[nxt] - t), removal_dt

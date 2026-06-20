@@ -236,6 +236,95 @@ def test_accumulator_no_elim_keys_for_non_elim_run() -> None:
     )
 
 
+def _next_death_batch(B: int, seed: int = 0):
+    """A minimal `(model_out, targets)` pair for the next_death (who-is-removed-
+    next) head: `[B, 8]` logits, a present mask, the next-victim target, and the
+    per-channel removal horizon the soft target consumes."""
+    torch.manual_seed(seed)
+    model_out = {
+        "policy_logits": torch.randn(B, 8, 4, 4),
+        "pass_logit": torch.randn(B),
+        "value_logits": torch.randn(B, 8),
+        "next_elim_logits": torch.randn(B, 8),
+    }
+    present = torch.ones(B, 8, dtype=torch.bool)
+    present[:, 5:] = False                          # removed/phantom channels
+    # removal horizons: channel c is removed at ~10*c ticks out; channel 0 (self)
+    # is the eventual winner (huge sentinel horizon → ~0 soft mass).
+    removal_dt = (torch.arange(8, dtype=torch.int64) * 10).repeat(B, 1).clone()
+    removal_dt[:, 0] = 100_000                       # winner sentinel-scale horizon
+    targets = {
+        "mask": torch.ones(B, 4, 4, 8, dtype=torch.bool),
+        "action_target": torch.full((B,), _PASS_FLAT_IDX, dtype=torch.int64),
+        "is_pass": torch.ones(B, dtype=torch.bool),
+        "value_target": torch.zeros(B, dtype=torch.int64),
+        "next_elim_target": torch.ones(B, dtype=torch.int64),   # victim = channel 1 (soonest real)
+        "present_mask": present,
+        "next_elim_removal_dt": removal_dt,
+    }
+    return model_out, targets
+
+
+def test_next_death_soft_equals_hard_at_tau_zero() -> None:
+    """τ=0 keeps `next_elim_soft == next_elim` (the hard one-hot CE), and the
+    total carries the soft term alongside the other heads."""
+    B = 6
+    model_out, targets = _next_death_batch(B, seed=1)
+    cfg = LossConfig(lambda_elim=0.3)               # next_elim_target_tau defaults to 0
+    losses = bc_loss(model_out, targets, cfg)
+    assert {"next_elim", "next_elim_soft", "n_next_elim"} <= losses.keys()
+    assert int(losses["n_next_elim"]) == B          # all frames have a defined victim
+    assert losses["next_elim_soft"].item() == pytest.approx(losses["next_elim"].item())
+    assert losses["total"].item() == pytest.approx(
+        (losses["policy"] + cfg.lambda_value * losses["value_soft"]
+         + cfg.mu_pass * losses["pass"]
+         + cfg.lambda_elim * losses["next_elim_soft"]).item(), rel=1e-6
+    )
+
+
+def test_next_death_soft_target_shape_and_winner_mass() -> None:
+    """τ>0 builds the time-based soft target `p_i ∝ exp(-(dt_i-dt_min)/τ)` over the
+    present domain: it diverges from the hard CE, the winner's huge horizon gets
+    ~0 mass, and the math matches a hand-rolled softmax CE."""
+    B = 4
+    model_out, targets = _next_death_batch(B, seed=2)
+    tau = 15.0
+    cfg = LossConfig(lambda_elim=0.5, next_elim_target_tau=tau)
+    losses = bc_loss(model_out, targets, cfg)
+    assert losses["next_elim_soft"].item() != pytest.approx(losses["next_elim"].item())
+
+    # Reconstruct the expected soft CE independently.
+    logits = model_out["next_elim_logits"]
+    present = targets["present_mask"]
+    dt = targets["next_elim_removal_dt"].float()
+    neg = torch.where(present, -dt / tau, torch.tensor(float("-inf")))
+    soft_target = torch.softmax(neg, dim=1)
+    # Winner channel (huge horizon) carries negligible target mass.
+    assert soft_target[:, 0].max().item() < 1e-6
+    logp = torch.log_softmax(logits.masked_fill(~present, float("-inf")), dim=1)
+    logp = torch.where(present, logp, torch.zeros_like(logp))
+    expected = -(soft_target * logp).sum(dim=1).mean()
+    assert losses["next_elim_soft"].item() == pytest.approx(expected.item(), rel=1e-6)
+
+
+def test_next_death_winner_tail_frames_masked() -> None:
+    """Winner-tail frames (`next_elim_target == -1`) contribute nothing to either
+    the hard or the soft next_elim mean, and aren't counted in `n_next_elim`."""
+    B = 5
+    model_out, targets = _next_death_batch(B, seed=3)
+    targets["next_elim_target"][0] = -1             # frame 0 is a winner-tail frame
+    cfg = LossConfig(lambda_elim=0.4, next_elim_target_tau=15.0)
+    losses = bc_loss(model_out, targets, cfg)
+    assert int(losses["n_next_elim"]) == B - 1      # the masked frame is excluded
+
+    # Dropping frame 0 entirely gives the same means (it carried zero weight).
+    sub_out = {k: v[1:] for k, v in model_out.items()}
+    sub_tgt = {k: v[1:] for k, v in targets.items()}
+    sub = bc_loss(sub_out, sub_tgt, cfg)
+    assert losses["next_elim"].item() == pytest.approx(sub["next_elim"].item(), rel=1e-6)
+    assert losses["next_elim_soft"].item() == pytest.approx(sub["next_elim_soft"].item(), rel=1e-6)
+
+
 def test_all_pass_batch_contributes_zero_policy_weight() -> None:
     """An all-pass batch shouldn't bias the policy mean — n_non_pass=0 makes
     its weight zero, but value/pass still average over its samples."""

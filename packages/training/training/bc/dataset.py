@@ -176,14 +176,18 @@ def encode_frame(
     `elim`, when set (the precompute is built), adds the per-frame elim targets;
     `None` leaves them off so non-elim runs carry no extra collate/transfer
     weight. `elim_variant` selects which targets:
-      - `"time_bin"`: per-player `elim_bin_target`.
-      - `"next_death"`: scalar `next_elim_target` (the next-victim channel, or -1
-        when no future death) and `next_elim_dt` (ticks-to-next-death horizon).
+      - `"time_bin"`: per-player `elim_bin_target` (over the `alive_mask` domain).
+      - `"next_death"`: who-is-removed-next over the board-*removal* event and the
+        `present_mask` domain — scalar `next_elim_target` (the next-victim
+        channel, or -1 when no future removal), `next_elim_dt` (ticks-to-next-
+        removal horizon), `next_elim_removal_dt` (per-player [8] removal horizon,
+        the soft target's input), and the per-player [8] `present_mask`.
       - `None` (with `elim` set): no variant targets — the alive-only path.
 
     Whenever `elim` is set, the frame carries the per-player [8] `alive_mask`
-    (the softmax/eval domain), alongside any variant targets — and as the sole
-    output of the `None`-variant path.
+    (the time_bin softmax/eval domain), alongside any variant targets — and as the
+    sole output of the `None`-variant path. The next_death variant additionally
+    carries `present_mask`, its own (board-removal) domain.
 
     Pure-read of `state` + `bfs_cache`. `step_memory` must already have been
     called for this `(t, vis)` — `__iter__` enforces this ordering.
@@ -219,9 +223,14 @@ def encode_frame(
             # then add whatever variant-specific targets were asked for.
             sample["alive_mask"] = torch.from_numpy(alive_mask(elim, raw_order, t))
             if elim_variant == "next_death":
-                nxt, _, dt = next_death_target(elim, raw_order, t)
+                nxt, present, dt, removal_dt = next_death_target(elim, raw_order, t)
+                # next_death targets board-removal over the *present* domain (not
+                # the alive domain), so it carries its own `present_mask`; the
+                # loss/dump softmax over it, not `alive_mask`.
+                sample["present_mask"] = torch.from_numpy(present)
                 sample["next_elim_target"] = torch.tensor(nxt, dtype=torch.int64)
                 sample["next_elim_dt"] = torch.tensor(dt, dtype=torch.int64)
+                sample["next_elim_removal_dt"] = torch.from_numpy(removal_dt)
             elif elim_variant == "time_bin":
                 bins, _ = time_bin_targets(elim, raw_order, t)
                 sample["elim_bin_target"] = torch.from_numpy(bins)

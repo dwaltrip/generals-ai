@@ -141,17 +141,20 @@ class FrameRecordCapture:
             self._push("elim_bin_target", host_batch["elim_bin_target"])
             self._push("alive_mask", host_batch["alive_mask"])
 
-        # who-dies-next head: the cross-player softmax over the alive field, its
-        # per-frame CE, the next-victim target, the alive mask, and the
-        # ticks-to-next-death horizon. The horizon (`next_elim_dt`) is dumped so
+        # who-is-removed-next head: the cross-player softmax over the *present*
+        # field (the board-removal event's domain, not the alive domain), its
+        # per-frame hard CE, the next-victim target, the present mask, and the
+        # ticks-to-next-removal horizon. The horizon (`next_elim_dt`) is dumped so
         # the confidence-ramp / horizon-stratified reads are computable offline
-        # without a re-run. Masked to the alive players (dead/phantom → -inf →
+        # without a re-run. Masked to the present players (removed/phantom → -inf →
         # prob 0); winner-tail frames (target -1) get NaN CE (nan-aware
-        # reductions downstream), mirroring the pass-frame policy CE.
+        # reductions downstream), mirroring the pass-frame policy CE. The reported
+        # CE is hard (one-hot) for cross-run comparability even when the run trains
+        # on the soft target.
         if "next_elim_logits" in out:
-            alive_mask = moved_batch["alive_mask"]
+            present_mask = moved_batch["present_mask"]
             nd_logits = out["next_elim_logits"].float().masked_fill(
-                ~alive_mask, float("-inf")
+                ~present_mask, float("-inf")
             )
             nd_logp = F.log_softmax(nd_logits, dim=1)               # [B, 8]
             nd_target = moved_batch["next_elim_target"]            # [B]; -1 = none
@@ -164,6 +167,10 @@ class FrameRecordCapture:
             self._push("next_elim_probs", nd_logp.exp().to(torch.float16))
             self._push("next_elim_ce", nd_ce)
             self._push("next_elim_target", host_batch["next_elim_target"])
+            self._push("present_mask", host_batch["present_mask"])
+            # `alive_mask` rides along too (the dataset emits it unconditionally):
+            # offline tooling keyed on the alive domain stays joinable, and the
+            # alive-vs-present gap (the surrender window) is itself analyzable.
             self._push("alive_mask", host_batch["alive_mask"])
             self._push("next_elim_dt", host_batch["next_elim_dt"])
 

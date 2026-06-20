@@ -60,6 +60,20 @@ class _HasDeathFields(Protocol):
     def death_by_slot(self) -> np.ndarray: ...
 
 
+class _HasRemovalFields(Protocol):
+    """Structural type for `present_mask` — anything carrying the removal markers.
+
+    The `present_mask` analogue of `_HasDeathFields`: `PlayerStatusCtx` and
+    `ElimCtx` (which now threads `removal_by_slot` for the board-removal elim
+    target) both satisfy it, so the one `present_mask` serves both.
+    """
+
+    @property
+    def is_real(self) -> np.ndarray: ...
+    @property
+    def removal_by_slot(self) -> np.ndarray: ...
+
+
 def precompute_player_status(
     sim: Mapping[str, Any], sentinel: int | None = None
 ) -> PlayerStatusCtx:
@@ -113,7 +127,7 @@ def alive_mask(ctx: _HasDeathFields, raw_order: list[int], t: int) -> np.ndarray
     return ctx.is_real[raw] & (ctx.death_by_slot[raw] >= t)
 
 
-def present_mask(ctx: PlayerStatusCtx, raw_order: list[int], t: int) -> np.ndarray:
+def present_mask(ctx: _HasRemovalFields, raw_order: list[int], t: int) -> np.ndarray:
     """Per-channel present mask `[8]`: real and still on the board.
 
     `removal_by_slot >= t` — the player's tiles are still on the board through

@@ -611,6 +611,7 @@ def train_loop(
         lambda_elim=config.lambda_elim,
         elim_target_tau=config.elim_target_tau,
         elim_bin_weights=config.elim_bin_weights,
+        next_elim_target_tau=config.next_elim_target_tau,
     )
 
     run_start = time.perf_counter()

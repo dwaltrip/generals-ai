@@ -247,7 +247,7 @@ def _death_tick_deriver():
     soft scorer excludes them with one comparison."""
 
     def prepare(sim: dict[str, np.ndarray]) -> np.ndarray:
-        death_by_slot, _is_real, sentinel = precompute_elim(sim, None)
+        death_by_slot, _removal, _is_real, sentinel = precompute_elim(sim, None)
         real = (death_by_slot >= 0) & (death_by_slot < sentinel)
         return np.where(real, death_by_slot, NO_DEATH)
 
