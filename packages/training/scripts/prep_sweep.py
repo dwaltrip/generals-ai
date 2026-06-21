@@ -18,8 +18,8 @@ generated label — typos error out.
 For non-cartesian (star) designs, sweep.json also supports an optional
 "cells" list: [{"label": ..., "overrides": {...}}, ...]. Each cell's
 overrides merge into the base config at the ROOT, so one cell can touch
-multiple fields and subtrees at once (e.g. arch.* plus a top-level loss
-knob). When both "cells" and "axes" are present, the grid is their product
+multiple fields and subtrees at once (e.g. arch.* plus loss.* knobs).
+When both "cells" and "axes" are present, the grid is their product
 (cells × axes) — e.g. a 7-cell star crossed with a seed axis.
 """
 # TODO: add --out-dir to run_bc_local.py and pass $SWEEP_DIR/runs/

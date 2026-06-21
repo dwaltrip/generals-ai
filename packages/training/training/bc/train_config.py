@@ -18,7 +18,32 @@ from pathlib import Path
 from typing import Any
 
 from training.bc.aux_heads import REGISTRY
+from training.bc.loss import LossConfig
 from training.bc.model_config import ModelConfig, build_model_cfg
+
+
+# The loss knobs live in a nested `LossConfig` (composition), but older config
+# files and run-dir `args.json` carry them as flat top-level keys. `_extract_loss`
+# accepts both shapes at the parsing boundary; remove this migration shim once no
+# flat configs/args remain on disk.
+_LOSS_FIELDS = frozenset(f.name for f in fields(LossConfig))
+
+
+def _extract_loss(data: dict) -> dict:
+    """Pop the loss knobs out of a raw config dict and return them as one dict.
+
+    Accepts both the flat (pre-nesting) shape — loss knobs at the top level — and
+    a nested `loss:` block. Mutates `data`, removing the consumed keys. Raises if
+    a knob is set in both places, since the intent is then ambiguous."""
+    nested = dict(data.pop("loss", {}))
+    flat = {k: data.pop(k) for k in list(data) if k in _LOSS_FIELDS}
+    clash = nested.keys() & flat.keys()
+    if clash:
+        raise ValueError(
+            f"loss knob(s) {sorted(clash)} set both at the top level and under "
+            "`loss`; use one shape"
+        )
+    return {**flat, **nested}
 
 
 @dataclass(frozen=True)
@@ -30,13 +55,11 @@ class TrainConfig:
     Fields fall into three groups that decide how they're supplied:
       - `arch` (model design) — from the `--config` file; recorded in the
         checkpoint's `arch` key so a checkpoint self-describes its model.
-      - recipe (`lr`, `batch_size`, `epochs`, `lambda_value`,
-        `value_target_tau`, `lambda_elim`, `elim_target_tau`,
-        `next_elim_target_tau`, `elim_bin_weights`, `seed`, `precision`,
-        `shuffle_buffer_size`,
-        `gpu`, `dump_val_frames`, `manifest`, `intermediate`) — from the
-        `--config` file; the run's reproducible identity, not in the
-        checkpoint.
+      - recipe (`lr`, `batch_size`, `epochs`, `loss` (the nested objective
+        knobs — weights and soft-target taus), `seed`, `precision`,
+        `shuffle_buffer_size`, `gpu`, `dump_val_frames`, `manifest`,
+        `intermediate`) — from the `--config` file; the run's reproducible
+        identity, not in the checkpoint.
       - operational / invocation-local (`run_dir`, `device`, `num_workers`,
         `pin_memory`, `prefetch_factor`, `log_every`, `skip_val`,
         `max_batches`) — from CLI flags; where/how this invocation runs.
@@ -63,31 +86,16 @@ class TrainConfig:
     batch_size: int = 64
     lr: float = 3e-4
     weight_decay: float = 1e-4
-    # Objective knobs, forwarded into `loss.LossConfig` (see its field docs
-    # for semantics: λ weights the value head; τ>0 enables soft ordinal
-    # placement targets). NOTE: these defaults are also the historical
-    # behavior of every run that predates the fields — if a default ever
-    # changes, resuming a pre-field run would silently mis-describe it, and
-    # the resume path needs legacy pinning à la `checkpoint.LEGACY_ARCH`.
-    lambda_value: float = 0.5
-    value_target_tau: float = 0.0
-    # Next-elimination aux head (6.13-5), forwarded into `loss.LossConfig`.
-    # `lambda_elim`/`elim_target_tau` mirror the value-head pair (λ weights the
-    # elim term; τ>0 soft-ordinal targets). `elim_bin_weights` is the optional
-    # per-bin class-imbalance reweighting (6.13-6 vectors), None = unweighted —
-    # Stage 1 runs unweighted, weights are the pre-registered floor-miss remedy.
-    # Defaults reproduce "no elim head"; same resume-legacy-pinning caveat as
-    # lambda_value/value_target_tau. `lambda_elim > 0` requires
-    # `arch.elim_head_variant is not None` (checked below).
-    lambda_elim: float = 0.0
-    elim_target_tau: float = 0.0
-    elim_bin_weights: tuple[float, ...] | None = None
-    # next_death (who-is-removed-next) soft target temperature, forwarded into
-    # `loss.LossConfig`. τ>0 softens the one-hot next-victim label into a removal-
-    # time distribution over present players (τ in ticks); τ=0 keeps the hard
-    # label. next_death-only — requires `arch.elim_head_variant == "next_death"`
-    # (checked below). Same resume-legacy-pinning caveat as the other τ fields.
-    next_elim_target_tau: float = 0.0
+    # The training objective: value/elim head weights and soft-target taus. One
+    # nested object (see `loss.LossConfig` for the per-knob semantics and ranges,
+    # which it validates), forwarded into `bc_loss` as `config.loss`. The
+    # cross-cutting `lambda_elim > 0` / τ-requires-variant rules need both arch
+    # and loss visible, so they live in this class's `__post_init__`, not in
+    # `LossConfig`. NOTE: the `LossConfig` defaults are also the historical
+    # behavior of every run predating each knob — if a default ever changes,
+    # resuming a pre-knob run would silently mis-describe it, and the resume path
+    # needs legacy pinning à la `checkpoint.LEGACY_ARCH`.
+    loss: LossConfig = field(default_factory=LossConfig)
     seed: int = 0
     shuffle_buffer_size: int = 2048
     # Modal GPU class for the run. Recorded provenance that rides into the
@@ -172,25 +180,11 @@ class TrainConfig:
             raise ValueError(f"lr must be > 0; got {self.lr}")
         if self.weight_decay < 0:
             raise ValueError(f"weight_decay must be >= 0; got {self.weight_decay}")
-        if self.lambda_value < 0:
-            raise ValueError(f"lambda_value must be >= 0; got {self.lambda_value}")
-        if self.value_target_tau < 0:
-            raise ValueError(
-                f"value_target_tau must be >= 0; got {self.value_target_tau}"
-            )
-        if self.lambda_elim < 0:
-            raise ValueError(f"lambda_elim must be >= 0; got {self.lambda_elim}")
-        if self.elim_target_tau < 0:
-            raise ValueError(
-                f"elim_target_tau must be >= 0; got {self.elim_target_tau}"
-            )
-        if self.next_elim_target_tau < 0:
-            raise ValueError(
-                f"next_elim_target_tau must be >= 0; got {self.next_elim_target_tau}"
-            )
         # No loss weight on an absent head — a config asking for elim gradient
-        # without the head built is a mistake, not a silent no-op.
-        if self.lambda_elim > 0 and self.arch.elim_head_variant is None:
+        # without the head built is a mistake, not a silent no-op. This rule and
+        # the spec τ-requires-variant rules need both arch and loss visible, so
+        # they live here rather than in `LossConfig`.
+        if self.loss.lambda_elim > 0 and self.arch.elim_head_variant is None:
             raise ValueError(
                 "lambda_elim > 0 requires arch.elim_head_variant is not None "
                 "(no loss weight on an absent head)"
@@ -200,11 +194,7 @@ class TrainConfig:
         # spec, not just the active one, so a knob aimed at the wrong variant is
         # caught even when that variant isn't the one built.
         for spec in REGISTRY.values():
-            spec.validate(self.arch, self)
-        if self.elim_bin_weights is not None:
-            object.__setattr__(
-                self, "elim_bin_weights", tuple(self.elim_bin_weights)
-            )
+            spec.validate(self.arch, self.loss)
         if self.shuffle_buffer_size < 0:
             raise ValueError(f"shuffle_buffer_size must be >= 0; got {self.shuffle_buffer_size}")
         if self.log_every < 1:
@@ -230,6 +220,11 @@ class TrainConfig:
             if key == "arch":
                 if isinstance(d[key], dict):
                     errors.extend(ModelConfig.validate_partial(d[key]))
+            elif key == "loss":
+                if isinstance(d[key], dict):
+                    errors.extend(LossConfig.validate_partial(d[key]))
+            elif key in _LOSS_FIELDS:
+                continue  # back-compat: a flat loss knob, validated by LossConfig
             elif key not in valid:
                 errors.append(f"unknown TrainConfig field: {key!r}")
         return errors
@@ -249,10 +244,12 @@ class TrainConfig:
         """Build a `TrainConfig` from a `--config` JSON file plus invocation-local
         overrides.
 
-        The file supplies the arch + recipe (`arch` as a nested object, plus the
-        recipe knobs + `manifest`/`intermediate` paths) and may be partial —
-        unset recipe fields fall through to this dataclass's defaults, unset arch
-        fields to `build_model_cfg`'s (`MODEL_CONFIG_DEFAULTS`).
+        The file supplies the arch + recipe (`arch` and `loss` as nested objects,
+        plus the remaining recipe knobs + `manifest`/`intermediate` paths) and may
+        be partial — unset recipe fields fall through to this dataclass's defaults,
+        unset arch fields to `build_model_cfg`'s (`MODEL_CONFIG_DEFAULTS`), unset
+        loss knobs to `LossConfig`'s. Loss knobs are accepted both nested under
+        `loss:` and (back-compat) flat at the top level.
         `overrides` supplies operational (invocation-local) fields (`run_dir`,
         `device`, `num_workers`, …). The two domains are disjoint, so this is a
         plain union; an unknown file key or a field set in both surfaces as a
@@ -260,10 +257,11 @@ class TrainConfig:
         """
         data = json.loads(Path(path).read_text())
         arch = build_model_cfg(**data.pop("arch", {}))
+        loss = LossConfig(**_extract_loss(data))
         for path_field in ("manifest", "intermediate"):
             if path_field in data:
                 data[path_field] = Path(data[path_field])
-        return cls(arch=arch, **data, **overrides)
+        return cls(arch=arch, loss=loss, **data, **overrides)
 
 
 def make_run_id() -> str:

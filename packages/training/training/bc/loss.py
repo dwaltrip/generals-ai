@@ -36,7 +36,7 @@ policy CE here applies it.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 
 import torch
 import torch.nn.functional as F
@@ -123,6 +123,14 @@ class LossConfig:
             # Coerce to tuple (a config JSON hands a list) so the frozen
             # dataclass stays hashable and the @cache weight-tensor key is stable.
             object.__setattr__(self, "elim_bin_weights", weights)
+
+    @classmethod
+    def validate_partial(cls, d: dict) -> list[str]:
+        """Pre-flight check of a config-file `loss:` block: flag unknown knobs.
+        Mirrors `ObsConfig.validate_partial` — value ranges are enforced by
+        `__post_init__` at construction; this only catches typo'd field names."""
+        valid = {f.name for f in fields(cls)}
+        return [f"unknown LossConfig field: {k!r}" for k in d if k not in valid]
 
 
 # Shared no-knobs-set instance: the default for `bc_loss` / `run_val`

@@ -17,7 +17,12 @@ import torch
 
 from training.bc.model_config import build_model_cfg
 from training.bc.resume import _resume_config, bc_resume
-from training.bc.run_dir import ResumeInfo, check_drift, prepare_resume
+from training.bc.run_dir import (
+    ResumeInfo,
+    check_drift,
+    load_parent_config,
+    prepare_resume,
+)
 from training.bc.train_config import TrainConfig, json_default
 
 
@@ -148,6 +153,23 @@ def test_resume_arch_carries_and_change_is_locked() -> None:
     assert changed.arch.outer_width == 128         # overlay deep-merges over parent
     with pytest.raises(SystemExit):
         check_drift(changed, parent, force_config_mismatch=True)  # locked even w/ force
+
+
+def test_resume_flat_parent_loss_no_spurious_drift(tmp_path: Path) -> None:
+    """Back-compat: a pre-nesting parent args.json (loss knobs flat at the top
+    level, no `loss` block, no `mu_pass`) normalizes to the nested shape via
+    `load_parent_config`, so an unchanged resume doesn't trip loss drift."""
+    nested = asdict(_config(epochs=5))
+    loss = nested.pop("loss")
+    loss.pop("mu_pass")                      # mu_pass postdates the flat-config era
+    flat_args = {**nested, **loss}           # loss knobs splayed flat at top level
+    args_path = tmp_path / "args.json"
+    args_path.write_text(json.dumps(flat_args, default=json_default))
+
+    parent = load_parent_config(args_path)
+    assert parent["loss"]["mu_pass"] == 1.0  # completed from LossConfig defaults
+    effective = _resume_config(tmp_path / "r", parent, overlay={}, operational={})
+    check_drift(effective, parent, force_config_mismatch=False)  # no spurious abort
 
 
 def test_resume_legacy_parent_skips_arch_drift() -> None:

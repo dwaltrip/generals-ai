@@ -608,14 +608,7 @@ def train_loop(
     # GradScaler decision on `state` (both derive from the same precision).
     amp_dtype = torch.float16 if resolve_precision(config.precision, device) == "fp16" else None
 
-    loss_cfg = LossConfig(
-        lambda_value=config.lambda_value,
-        value_target_tau=config.value_target_tau,
-        lambda_elim=config.lambda_elim,
-        elim_target_tau=config.elim_target_tau,
-        elim_bin_weights=config.elim_bin_weights,
-        next_elim_target_tau=config.next_elim_target_tau,
-    )
+    loss_cfg = config.loss
 
     run_start = time.perf_counter()
     # `RunArtifacts` opens/closes the JSONL writers; the gpu sidecar is a

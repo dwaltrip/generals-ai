@@ -15,6 +15,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from training.bc.loss import LossConfig
 from training.bc.model_config import build_model_cfg
 from training.bc.resume_warmup import WarmupSchedule
 from training.bc.run_dir import (
@@ -25,7 +26,7 @@ from training.bc.run_dir import (
 )
 from training.bc.state import TrainingState
 from training.bc.train import run_training
-from training.bc.train_config import TrainConfig
+from training.bc.train_config import TrainConfig, _extract_loss
 from utils.log import abort
 
 
@@ -38,8 +39,10 @@ def _resume_config(
     carry over), overlay the operator's `--config` file (arch + recipe), then the
     explicit operational CLI flags — so an unchanged knob continues the parent's
     value instead of resetting to a default. `run_dir` is the resume target.
-    Arch is deep-merged (overlay over parent); any *net* arch change is rejected
-    downstream by `check_drift` (arch is checkpoint-owned).
+    Arch and loss are deep-merged (overlay over parent), so an overlay that sets
+    one loss knob continues the parent's other knobs rather than resetting them to
+    defaults; any *net* arch change is rejected downstream by `check_drift` (arch
+    is checkpoint-owned).
 
     Note the asymmetry with a fresh run: a fresh `--config` merges over
     *defaults*; resume's merges over the *parent*.
@@ -53,15 +56,19 @@ def _resume_config(
     legacy_variant = parent.pop("value_head_variant", None)
     if parent_arch is None:
         parent_arch = {} if legacy_variant is None else {"value_head_variant": legacy_variant}
-
+    # Loss knobs deep-merge like arch: pull them out of both sides (flat or
+    # nested) so the overlay overrides per-knob, not whole-block.
+    parent_loss = _extract_loss(parent)
     overlay = dict(overlay)
     overlay_arch = overlay.pop("arch", {})
+    overlay_loss = _extract_loss(overlay)
 
     merged = {**parent, **overlay, **operational}
     merged["manifest"] = Path(merged["manifest"])
     merged["intermediate"] = Path(merged["intermediate"])
     arch = build_model_cfg(**{**parent_arch, **overlay_arch})
-    return TrainConfig(arch=arch, run_dir=run_dir, **merged)
+    loss = LossConfig(**{**parent_loss, **overlay_loss})
+    return TrainConfig(arch=arch, loss=loss, run_dir=run_dir, **merged)
 
 
 def bc_resume(

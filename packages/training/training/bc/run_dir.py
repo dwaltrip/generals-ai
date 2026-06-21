@@ -17,8 +17,9 @@ from pathlib import Path
 import re
 
 from training.bc.checkpoint import is_legacy_checkpoint
+from training.bc.loss import LossConfig
 from training.bc.run_logger import RunLogger
-from training.bc.train_config import TrainConfig, json_default
+from training.bc.train_config import TrainConfig, _extract_loss, json_default
 from utils.log import abort
 
 
@@ -166,11 +167,20 @@ def prepare_resume(run_dir: Path) -> ResumeInfo:
 
 def load_parent_config(parent_args_path: Path) -> dict:
     """Load a parent run's args file as a `TrainConfig` field dict, dropping
-    the `_resume_meta` block (present when the parent is itself a resume)."""
+    the `_resume_meta` block (present when the parent is itself a resume) and
+    normalizing loss knobs into the current nested `loss` shape.
+
+    Migration shim: a pre-nesting parent recorded loss knobs flat at the top
+    level and lacks knobs added since (e.g. `mu_pass`). Folding them under `loss`
+    and completing from the `LossConfig` defaults lets both the drift-compare and
+    the resume merge see the current shape instead of tripping on the reshape —
+    the parent's resolved objective is its old values plus today's defaults for
+    knobs it predates, which is exactly what an unchanged resume reconstructs."""
     if not parent_args_path.exists():
         abort(f"--resume: parent args not found: {parent_args_path}")
     data = json.loads(parent_args_path.read_text())
     data.pop("_resume_meta", None)
+    data["loss"] = {**asdict(LossConfig()), **_extract_loss(data)}
     return data
 
 
