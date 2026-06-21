@@ -35,6 +35,7 @@ from torch.utils.data import DataLoader, default_collate
 from torch.utils.data import IterableDataset as TorchIterableDataset
 
 from training.bc import bfs
+from training.bc.aux_heads import spec_for
 from training.bc.constants import H_PADDED, W_PADDED
 from training.bc.mask import build_mask
 from training.bc.obs import (
@@ -49,9 +50,7 @@ from training.bc.targets.core_targets import policy_pass_target, value_target
 from training.bc.targets.elim_targets import (
     ElimCtx,
     alive_mask,
-    next_death_target,
     precompute_elim,
-    time_bin_targets,
 )
 from training.bc.visibility import compute_visibility
 from training.shared.timing import timer
@@ -220,20 +219,11 @@ def encode_frame(
             raw_order = [perspective_slot, *opp_slots]
             # Aliveness is variant-independent and is the one key every elim
             # consumer (and the alive-only probe path) needs — emit it once here,
-            # then add whatever variant-specific targets were asked for.
+            # then add the active spec's variant-specific targets.
             sample["alive_mask"] = torch.from_numpy(alive_mask(elim, raw_order, t))
-            if elim_variant == "next_death":
-                nxt, present, dt, removal_dt = next_death_target(elim, raw_order, t)
-                # next_death targets board-removal over the *present* domain (not
-                # the alive domain), so it carries its own `present_mask`; the
-                # loss/dump softmax over it, not `alive_mask`.
-                sample["present_mask"] = torch.from_numpy(present)
-                sample["next_elim_target"] = torch.tensor(nxt, dtype=torch.int64)
-                sample["next_elim_dt"] = torch.tensor(dt, dtype=torch.int64)
-                sample["next_elim_removal_dt"] = torch.from_numpy(removal_dt)
-            elif elim_variant == "time_bin":
-                bins, _ = time_bin_targets(elim, raw_order, t)
-                sample["elim_bin_target"] = torch.from_numpy(bins)
+            spec = spec_for(elim_variant)
+            if spec is not None:
+                sample.update(spec.encode_targets(elim, raw_order, t))
             # elim_variant is None → alive-only emission (emit_alive_mask path).
         return sample
 
@@ -486,13 +476,24 @@ class IterableDataset(TorchIterableDataset):
                 p_start = int((np.unique(sim["ownership"][0]) >= 0).sum())
 
             # Per-game elim precompute (winner-vs-phantom resolution lives here,
-            # once per game, not per perspective). `None` unless a variant or the
-            # standalone alive mask was requested.
-            elim_ctx = (
-                ElimCtx(self._elim_edges, *precompute_elim(sim, self._elim_edges))
-                if self._needs_elim_ctx
-                else None
-            )
+            # once per game, not per perspective). Variant-independent — the ctx
+            # carries both death and removal markers, shared by both elim specs and
+            # the standalone alive-mask path. `None` unless a variant or the
+            # standalone alive mask was requested. Keyword construction: the field
+            # order of `ElimCtx` and the tuple `precompute_elim` returns must not
+            # silently desync (all arrays/ints, no type error on a swap).
+            elim_ctx = None
+            if self._needs_elim_ctx:
+                death, removal, is_real, sentinel = precompute_elim(
+                    sim, self._elim_edges
+                )
+                elim_ctx = ElimCtx(
+                    edges=self._elim_edges,
+                    death_by_slot=death,
+                    removal_by_slot=removal,
+                    is_real=is_real,
+                    sentinel=sentinel,
+                )
 
             for k in ks:
                 perspective_slot = int(meta["perspective_player_ids"][k])

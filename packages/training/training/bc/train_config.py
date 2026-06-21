@@ -17,6 +17,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+from training.bc.aux_heads import REGISTRY
 from training.bc.model_config import ModelConfig, build_model_cfg
 
 
@@ -194,17 +195,12 @@ class TrainConfig:
                 "lambda_elim > 0 requires arch.elim_head_variant is not None "
                 "(no loss weight on an absent head)"
             )
-        # The next_death soft target only exists for that variant — a τ set
-        # against time_bin (or no head) would silently never apply.
-        if (
-            self.next_elim_target_tau > 0
-            and self.arch.elim_head_variant != "next_death"
-        ):
-            raise ValueError(
-                "next_elim_target_tau > 0 requires "
-                'arch.elim_head_variant == "next_death" '
-                f"(got {self.arch.elim_head_variant!r})"
-            )
+        # Each aux-head spec validates its own cross-cutting config rules (e.g. a
+        # soft-target τ set against the wrong variant). Looped over every registry
+        # spec, not just the active one, so a knob aimed at the wrong variant is
+        # caught even when that variant isn't the one built.
+        for spec in REGISTRY.values():
+            spec.validate(self.arch, self)
         if self.elim_bin_weights is not None:
             object.__setattr__(
                 self, "elim_bin_weights", tuple(self.elim_bin_weights)

@@ -22,8 +22,7 @@ from __future__ import annotations
 import torch
 import torch.nn as nn
 
-from training.bc.model.heads.elim_next_death import ElimNextDeathHead
-from training.bc.model.heads.elim_time_bin import ElimTimeBinHead
+from training.bc.aux_heads import spec_for
 from training.bc.model.heads.pass_head import PassHead
 from training.bc.model.heads.policy import PolicyHead
 from training.bc.model.heads.value import ValueHead
@@ -63,18 +62,13 @@ class BCModel(nn.Module):
         # Arch-gated aux head: constructed only for an enabled variant, so an
         # off model (variant None) carries zero extra state_dict keys and every
         # pre-elim checkpoint still loads strict=True. Assigning `None` registers
-        # no submodule. The variant picks the head and (in `forward`) its output
-        # key — `time_bin` emits `elim_logits`, `next_death` `next_elim_logits`.
-        self.elim_variant = cfg.elim_head_variant
-        if cfg.elim_head_variant == "time_bin":
-            self.elim_head: nn.Module | None = ElimTimeBinHead(
-                in_ch=cfg.outer_width, n_bins=cfg.elim_n_bins,
-                pool=cfg.elim_pool, hidden=cfg.elim_head_hidden,
-            )
-        elif cfg.elim_head_variant == "next_death":
-            self.elim_head = ElimNextDeathHead(in_ch=cfg.outer_width)
-        else:
-            self.elim_head = None
+        # no submodule. The aux-head spec builds the head and names its output key
+        # (`elim_logits` for time_bin, `next_elim_logits` for next_death).
+        spec = spec_for(cfg.elim_head_variant)
+        self.elim_output_key: str | None = spec.output_key if spec is not None else None
+        self.elim_head: nn.Module | None = (
+            spec.build_head(cfg) if spec is not None else None
+        )
 
     def forward(
         self, obs: torch.Tensor, valid_mask: torch.Tensor
@@ -102,6 +96,6 @@ class BCModel(nn.Module):
             "value_logits": self.value_head(trunk_out, valid_mask),
         }
         if self.elim_head is not None:
-            key = "elim_logits" if self.elim_variant == "time_bin" else "next_elim_logits"
-            out[key] = self.elim_head(trunk_out, valid_mask)
+            assert self.elim_output_key is not None  # set together with elim_head
+            out[self.elim_output_key] = self.elim_head(trunk_out, valid_mask)
         return out

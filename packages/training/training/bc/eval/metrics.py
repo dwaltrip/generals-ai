@@ -16,7 +16,7 @@ from __future__ import annotations
 import torch
 import torch.nn.functional as F
 
-from training.bc.loss import _soft_target_kernel
+from training.bc.soft_target import _soft_target_kernel
 
 
 class PolicyEntropyMeter:

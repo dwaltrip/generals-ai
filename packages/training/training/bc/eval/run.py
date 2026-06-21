@@ -54,8 +54,9 @@ import time
 
 import torch
 
+from training.bc.aux_heads import spec_for
 from training.bc.eval.dump import FrameRecordCapture, iter_val_forward
-from training.bc.eval.metrics import ActionDistMeter, ElimMeter, PolicyEntropyMeter
+from training.bc.eval.metrics import ActionDistMeter, PolicyEntropyMeter
 from training.bc.loss import (
     DEFAULT_LOSS_CFG,
     LossAccumulator,
@@ -103,13 +104,14 @@ def run_val(
     acc = LossAccumulator(loss_cfg)
     ent_meter = PolicyEntropyMeter()
     dist_meter = ActionDistMeter()
-    # Elim diagnostics ride the same forward; the time_bin head's ElimMeter is
-    # built only for that variant. The next_death head has no in-loop meter yet
-    # (its diagnostics are computed offline from the dump's raw columns); its
-    # `next_elim` loss still rides through the LossAccumulator below.
+    # Elim diagnostics ride the same forward. The active aux-head spec owns its
+    # in-loop meter (the time_bin head's `ElimMeter`); next_death has none — its
+    # diagnostics are computed offline from the dump — while its `next_elim` loss
+    # still rides through the LossAccumulator below.
+    elim_spec = spec_for(elim_head_variant)
     elim_meter = (
-        ElimMeter(n_bins=len(elim_bin_edges) + 1, target_tau=loss_cfg.elim_target_tau)
-        if elim_bin_edges is not None and elim_head_variant == "time_bin"
+        elim_spec.build_eval_meter(loss_cfg, elim_bin_edges)
+        if elim_spec is not None
         else None
     )
     n_top1_correct = 0
@@ -183,12 +185,8 @@ def run_val(
 
         dist_meter.update(topk[:, 0], action_target, non_pass)
 
-        if elim_meter is not None and "elim_logits" in out:
-            elim_meter.update(
-                out["elim_logits"],
-                batch["elim_bin_target"],
-                batch["alive_mask"],
-            )
+        if elim_spec is not None and elim_meter is not None and elim_spec.output_key in out:
+            elim_spec.eval_update(elim_meter, out, batch)
 
     duration_sec = time.perf_counter() - val_start
     s = acc.summary()
@@ -220,18 +218,11 @@ def run_val(
         "action_dist": dist_meter.pred_dist(),
         "action_target_dist": dist_meter.target_dist(),
     }
-    # Elim head metrics — present only when the head is active, so non-elim val
-    # rows are unchanged. `elim_soft` is the health metric (vs `elim_soft_floor`,
-    # the soft-marginal floor); `elim` (hard CE) is recorded but not the in-loop
-    # check at τ>0 (it pays the softness tax — see ElimMeter).
-    if elim_meter is not None:
-        summary["elim_soft"] = s.get("elim_soft")
-        summary["elim"] = s.get("elim")
-        summary["elim_top1"] = elim_meter.top1()
-        summary["elim_soft_floor"] = elim_meter.soft_floor()
-        summary["elim_pred_entropy"] = elim_meter.pred_entropy()
-    # who-dies-next: only the loss is surfaced in-loop (no meter yet); the
-    # accuracy / ramp / horizon reads are computed offline from the dump.
-    if "next_elim" in s:
-        summary["next_elim"] = s.get("next_elim")
+    # Aux-head metrics — present only when a head is active, so non-elim val rows
+    # are unchanged. The active spec surfaces its own summary: the time_bin head
+    # adds its meter reads (top1/soft_floor/pred_entropy) alongside the accumulator
+    # `elim`/`elim_soft`; next_death surfaces only its `next_elim` loss (no meter —
+    # the accuracy / ramp / horizon reads are computed offline from the dump).
+    if elim_spec is not None:
+        summary.update(elim_spec.eval_summary(elim_meter, s))
     return summary

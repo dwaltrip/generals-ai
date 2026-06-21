@@ -549,6 +549,9 @@ def write_val_dump(
         # are fp32-forward) — the comparability caveat lives here.
         "forward_dtype": "fp16" if amp_dtype is not None else "fp32",
     }
+    # Bin edges are a time_bin-only concept (the offline report needs them to
+    # interpret the bins); a residual variant-specific dump-meta site, not part of
+    # the per-frame spec dispatch.
     if config.arch.elim_head_variant == "time_bin":
         meta["elim_bin_edges"] = list(config.arch.elim_bin_edges)
     save_dump(records, path, meta)

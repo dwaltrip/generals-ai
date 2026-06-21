@@ -37,13 +37,14 @@ policy CE here applies it.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from functools import cache
 
 import torch
 import torch.nn.functional as F
 
 from training.bc.actions import _PASS_FLAT_IDX
+from training.bc.aux_heads import REGISTRY
 from training.bc.model import flatten_policy_logits
+from training.bc.soft_target import _soft_target_kernel
 
 
 @dataclass(frozen=True)
@@ -122,36 +123,6 @@ class LossConfig:
             # Coerce to tuple (a config JSON hands a list) so the frozen
             # dataclass stays hashable and the @cache weight-tensor key is stable.
             object.__setattr__(self, "elim_bin_weights", weights)
-
-
-@cache
-def _soft_target_kernel(
-    tau: float, n_classes: int, device: torch.device
-) -> torch.Tensor:
-    """The `[n_classes, n_classes]` soft-target matrix for τ > 0: row k* is
-    `softmax(-|k - k*|/τ)`. Row-indexing with the hard targets yields the
-    per-sample soft distributions. The row softmax renormalizes edge rows
-    (rank 1 / rank 8 have one-sided neighborhoods) automatically.
-
-    Cached per (τ, device) — built once, reused every batch. fp32 on
-    purpose: autocast routes cross_entropy to fp32, so the targets match.
-    """
-    ranks = torch.arange(n_classes, dtype=torch.float32, device=device)
-    dist = (ranks.unsqueeze(0) - ranks.unsqueeze(1)).abs()
-    return F.softmax(-dist / tau, dim=1)
-
-
-@cache
-def _elim_weight_tensor(
-    weights: tuple[float, ...], device: torch.device
-) -> torch.Tensor:
-    """Per-bin CE weight vector for the elim head, as an fp32 device tensor.
-
-    Cached per `(weights, device)` — the tuple is hashable (LossConfig coerces
-    it) so it keys the cache directly. fp32 because autocast routes
-    cross_entropy to fp32.
-    """
-    return torch.tensor(weights, dtype=torch.float32, device=device)
 
 
 # Shared no-knobs-set instance: the default for `bc_loss` / `run_val`
@@ -275,104 +246,21 @@ def bc_loss(
         "n_non_pass": n_non_pass,
     }
 
-    # --- Elim CE (only when the model emits the head's logits) ---
-    # A disabled head is a clean no-op: existing consumers are untouched, and
-    # the per-player masked-mean reduction added here is the discrimination the
-    # value head lacks.
-    if "elim_logits" in model_out:
-        elim_logits = model_out["elim_logits"]          # [B, 8, n_bins]
-        elim_bin_target = targets["elim_bin_target"]    # [B, 8] int64
-        alive_mask = targets["alive_mask"]         # [B, 8] bool
-        n_bins = elim_logits.shape[2]
-        weight = (
-            _elim_weight_tensor(cfg.elim_bin_weights, elim_logits.device)
-            if cfg.elim_bin_weights is not None
-            else None
-        )
-        # Per-(player, frame) CE with reduction="none" so we apply the alive
-        # mask + masked mean ourselves. Hard CE against the bin label is the
-        # reporting metric; the soft variant (soft ordinal targets) is the
-        # objective at τ>0. Weight, when set, applies to both — so they stay
-        # equal at τ=0.
-        logits_flat = elim_logits.reshape(-1, n_bins)            # [B·8, n_bins]
-        target_flat = elim_bin_target.reshape(-1)                # [B·8]
-        ce_hard = F.cross_entropy(
-            logits_flat, target_flat, weight=weight, reduction="none"
-        ).reshape(elim_logits.shape[:2])                         # [B, 8]
-        if cfg.elim_target_tau > 0:
-            kernel = _soft_target_kernel(
-                cfg.elim_target_tau, n_bins, elim_logits.device
-            )
-            ce_soft = F.cross_entropy(
-                logits_flat, kernel[target_flat], weight=weight, reduction="none"
-            ).reshape(elim_logits.shape[:2])
-        else:
-            ce_soft = ce_hard
-
-        # Masked mean over alive (player, frame) pairs. Channel 0 (self) is
-        # always alive in-trajectory, so the denominator is ≥ B — the
-        # clamp(min=1) mirrors the policy-CE safe divide as cheap insurance.
-        mask = alive_mask.to(ce_hard.dtype)                 # [B, 8]
-        n_elim = alive_mask.sum()                           # 0-d, stays on device
-        denom = n_elim.clamp(min=1)
-        elim = (ce_hard * mask).sum() / denom
-        elim_soft = (ce_soft * mask).sum() / denom
-
-        total = total + cfg.lambda_elim * elim_soft
-        out["elim"] = elim
-        out["elim_soft"] = elim_soft
-        out["n_elim"] = n_elim
-
-    # --- Who-dies-next CE (only when the next_death head emits its logits) ---
-    # The `next_death` elim variant: a single cross-player softmax per frame over
-    # "which present player is removed from the board next". Shares `lambda_elim`
-    # with the time_bin head — only one variant is built per model, so they never
-    # both contribute. The cross-player softmax is over the *present* domain (the
-    # board-removal event's domain), not the alive domain the time_bin head uses.
-    if "next_elim_logits" in model_out:
-        nd_logits = model_out["next_elim_logits"]       # [B, 8]
-        nd_target = targets["next_elim_target"]         # [B] int64, -1 = ignore
-        present_mask = targets["present_mask"]          # [B, 8] bool
-        # Cross-player softmax over the present field only: removed/phantom
-        # channels get -inf logits → zero prob, zero gradient. Channel 0 (self) is
-        # always present in-trajectory, so no included row is all-masked.
-        # ignore_index=-1 drops the winner-tail frames that carry no next removal;
-        # reduction="sum" over the kept frames / their count mirrors the policy-CE
-        # safe divide.
-        masked_logits = nd_logits.masked_fill(~present_mask, float("-inf"))
-        valid = nd_target != -1                         # [B] frames with a real next removal
-        n_next_elim = valid.sum()                       # 0-d, stays on device
-        denom = n_next_elim.clamp(min=1)
-        # Hard CE against the one-hot next victim — always the cross-run-comparable
-        # reporting metric (the top-1 the heuristics baseline against).
-        next_elim = F.cross_entropy(
-            masked_logits, nd_target, ignore_index=-1, reduction="sum"
-        ) / denom
-        if cfg.next_elim_target_tau > 0:
-            # Soft objective: a per-frame distribution over present players,
-            # `p_i ∝ exp(-(removal_dt_i - removal_dt_min)/τ)`. softmax subtracts the
-            # row-max (the `-removal_dt_min` term) for free, and the winner's huge
-            # `removal_dt` underflows to ~0 mass — no explicit min/winner handling.
-            removal_dt = targets["next_elim_removal_dt"].to(torch.float32)   # [B, 8]
-            neg = torch.where(
-                present_mask, -removal_dt / cfg.next_elim_target_tau, float("-inf")
-            )
-            soft_target = F.softmax(neg, dim=1)                             # [B, 8]
-            # CE against prob targets has no ignore_index, so mask by hand. Zero
-            # log-prob on absent channels first: soft_target is 0 there, but the
-            # logits are -inf → log_softmax -inf, and 0·(-inf)=nan would poison it.
-            logp = F.log_softmax(masked_logits, dim=1)
-            logp = torch.where(present_mask, logp, torch.zeros_like(logp))
-            ce = -(soft_target * logp).sum(dim=1)                          # [B]
-            next_elim_soft = torch.where(
-                valid, ce, torch.zeros_like(ce)
-            ).sum() / denom
-        else:
-            next_elim_soft = next_elim
-        total = total + cfg.lambda_elim * next_elim_soft
-        out["next_elim"] = next_elim
-        out["next_elim_soft"] = next_elim_soft
-        out["n_next_elim"] = n_next_elim
+    # --- Aux-head terms (the variant-gated elimination heads) ---
+    # Each aux head contributes through its registered spec: the spec whose logits
+    # key the model emitted computes its loss; its *soft* term feeds `total`
+    # (weighted by the head's λ) and its metrics ride into `out` for reporting. A
+    # head whose key is absent is a clean no-op, so non-aux runs are untouched. The
+    # elim variants are mutually exclusive today (one head per model), but the loop
+    # imposes no such limit. `total` keying on the soft term, and the per-head
+    # count denominator, are properties of `AuxLossResult` — see `aux_heads`.
+    for spec in REGISTRY.values():
+        if spec.output_key not in model_out:
+            continue
+        res = spec.loss(model_out, targets, cfg)
+        out.update(res.metrics)
+        out[res.count_key] = res.count
+        total = total + res.weight * res.metrics[res.term_key]
 
     out["total"] = total
     return out

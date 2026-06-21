@@ -33,6 +33,7 @@ import torch
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
 
+from training.bc.aux_heads import REGISTRY
 from training.bc.dataset import IterableDataset, assert_safe_loader
 from training.bc.model import BCModel, flatten_policy_logits
 from training.bc.obs_config import ObsConfig
@@ -125,54 +126,15 @@ class FrameRecordCapture:
         self._push("top3", (target.unsqueeze(1) == topk).any(dim=1) & non_pass)
         self._push("pass_prob", torch.sigmoid(out["pass_logit"].float()))
 
-        # Elim head: per-(player, frame) bin distribution + hard CE. The columns
-        # carry a player axis (probs [B, 8, n_bins]; ce/target/mask [B, 8]) and
-        # are masked to alive players at report time. Present only when the head
-        # is active — non-elim runs add no elim columns. CE is unweighted (the
-        # report wants per-bin unweighted CE; matches the loss's `elim` only when
-        # `elim_bin_weights` is None, the current default).
-        if "elim_logits" in out:
-            elim_logp = F.log_softmax(out["elim_logits"].float(), dim=2)
-            elim_ce = -elim_logp.gather(
-                2, moved_batch["elim_bin_target"].unsqueeze(2)
-            ).squeeze(2)
-            self._push("elim_probs", elim_logp.exp().to(torch.float16))
-            self._push("elim_ce", elim_ce)
-            self._push("elim_bin_target", host_batch["elim_bin_target"])
-            self._push("alive_mask", host_batch["alive_mask"])
-
-        # who-is-removed-next head: the cross-player softmax over the *present*
-        # field (the board-removal event's domain, not the alive domain), its
-        # per-frame hard CE, the next-victim target, the present mask, and the
-        # ticks-to-next-removal horizon. The horizon (`next_elim_dt`) is dumped so
-        # the confidence-ramp / horizon-stratified reads are computable offline
-        # without a re-run. Masked to the present players (removed/phantom → -inf →
-        # prob 0); winner-tail frames (target -1) get NaN CE (nan-aware
-        # reductions downstream), mirroring the pass-frame policy CE. The reported
-        # CE is hard (one-hot) for cross-run comparability even when the run trains
-        # on the soft target.
-        if "next_elim_logits" in out:
-            present_mask = moved_batch["present_mask"]
-            nd_logits = out["next_elim_logits"].float().masked_fill(
-                ~present_mask, float("-inf")
-            )
-            nd_logp = F.log_softmax(nd_logits, dim=1)               # [B, 8]
-            nd_target = moved_batch["next_elim_target"]            # [B]; -1 = none
-            nd_ce = -nd_logp.gather(
-                1, nd_target.clamp(min=0).unsqueeze(1)
-            ).squeeze(1)
-            nd_ce = torch.where(
-                nd_target < 0, torch.full_like(nd_ce, float("nan")), nd_ce
-            )
-            self._push("next_elim_probs", nd_logp.exp().to(torch.float16))
-            self._push("next_elim_ce", nd_ce)
-            self._push("next_elim_target", host_batch["next_elim_target"])
-            self._push("present_mask", host_batch["present_mask"])
-            # `alive_mask` rides along too (the dataset emits it unconditionally):
-            # offline tooling keyed on the alive domain stays joinable, and the
-            # alive-vs-present gap (the surrender window) is itself analyzable.
-            self._push("alive_mask", host_batch["alive_mask"])
-            self._push("next_elim_dt", host_batch["next_elim_dt"])
+        # Aux heads (elim variants): each registered spec whose logits the model
+        # emitted contributes its dump columns (per-frame distribution, hard CE,
+        # targets/masks). Absent → no columns, so non-aux runs add none. The dump
+        # CE is unweighted/hard — see each spec's `dump_records`.
+        for spec in REGISTRY.values():
+            if spec.output_key not in out:
+                continue
+            for key, val in spec.dump_records(out, moved_batch, host_batch).items():
+                self._push(key, val)
 
         self.n_frames += int(host_batch["is_pass"].shape[0])
 
