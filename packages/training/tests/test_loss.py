@@ -307,6 +307,25 @@ def test_next_death_soft_target_shape_and_winner_mass() -> None:
     assert losses["next_elim_soft"].item() == pytest.approx(expected.item(), rel=1e-6)
 
 
+def test_next_death_soft_target_splits_ties_evenly() -> None:
+    """A removal tie (two present channels with the same horizon) gets equal soft
+    mass — the property the hard one-hot's lowest-channel tie-break can't express."""
+    B = 2
+    model_out, targets = _next_death_batch(B, seed=4)
+    # Channels 1 and 2 are removed at the same tick → equal removal_dt.
+    targets["next_elim_removal_dt"][:, 1] = 30
+    targets["next_elim_removal_dt"][:, 2] = 30
+    tau = 15.0
+    present = targets["present_mask"]
+    dt = targets["next_elim_removal_dt"].float()
+    neg = torch.where(present, -dt / tau, torch.tensor(float("-inf")))
+    soft_target = torch.softmax(neg, dim=1)
+    assert torch.allclose(soft_target[:, 1], soft_target[:, 2])
+    # And the loss runs clean on the tie (no NaN).
+    losses = bc_loss(model_out, targets, LossConfig(lambda_elim=0.3, next_elim_target_tau=tau))
+    assert torch.isfinite(losses["next_elim_soft"]).all()
+
+
 def test_next_death_winner_tail_frames_masked() -> None:
     """Winner-tail frames (`next_elim_target == -1`) contribute nothing to either
     the hard or the soft next_elim mean, and aren't counted in `n_next_elim`."""

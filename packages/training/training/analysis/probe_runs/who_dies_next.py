@@ -73,7 +73,10 @@ class WhoDiesNextTask:
         return {
             "target": target,
             "valid_mask": frame["valid_mask"],
-            "alive_mask": frame["alive_mask"],
+            # next_death targets board-removal over the present domain, so the
+            # cross-player softmax masks to present_mask (not alive_mask) — else a
+            # surrendered-but-present victim is -inf and the label is unreachable.
+            "present_mask": frame["present_mask"],
             "dt": dt,
         }
 
@@ -81,14 +84,14 @@ class WhoDiesNextTask:
         return cross_player_head_zoo(in_ch)
 
     def loss(self, pred: Tensor, target: Tensor, aux: dict) -> Tensor:
-        return masked_cross_player_ce(pred, target, aux["alive_mask"])
+        return masked_cross_player_ce(pred, target, aux["present_mask"])
 
     def metrics(self, pred: Tensor, target: Tensor, aux: dict) -> dict[str, float]:
         dt = aux["dt"]
         imm = (dt >= 0) & (dt < 10)
         return {
-            "top1": masked_top1(pred, target, aux["alive_mask"]),
-            "top1_imminent": masked_top1(pred[imm], target[imm], aux["alive_mask"][imm]),
+            "top1": masked_top1(pred, target, aux["present_mask"]),
+            "top1_imminent": masked_top1(pred[imm], target[imm], aux["present_mask"][imm]),
         }
 
 

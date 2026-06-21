@@ -3,6 +3,14 @@
 Pairs the head's next_death targets with sim/obs army and the lowest-army rule as
 derived columns, so head-vs-rule comparisons are matched to the eval frames by
 construction. Join a model dump (`join_dump`) to add the head's predictions.
+
+NOTE (follow-up): the next_death head's domain is now board-*removal* (the
+`present` field), but this family still keys the softmax/rule domain on
+`alive_mask` (`emit_cols` + the `_masked_army_totals` rule). The two differ only
+on the surrender window (~1% of frames), so the head-vs-rule reads are close but
+not exact. Aligning this to `present_mask` (the dataset emits it) is deferred —
+it ripples to the `low_army_victim` rule, the `join_dump` truth_map, and the
+`head_vs_rule_by_margin` consumer, so it wants its own pass.
 """
 
 from __future__ import annotations
