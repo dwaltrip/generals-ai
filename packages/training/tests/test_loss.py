@@ -29,10 +29,13 @@ def _fake_losses(
     value_soft: float | None = None,
     elim: float | None = None, elim_soft: float | None = None,
     n_elim: int | None = None,
+    next_elim: float | None = None, next_elim_soft: float | None = None,
+    n_next_elim: int | None = None,
 ) -> dict[str, torch.Tensor]:
     """Mimic the `bc_loss` return dict shape with synthetic scalars.
-    `value_soft` defaults to `value` (the τ=0 relationship). The elim keys are
-    omitted unless `elim` is given — matching a non-elim `bc_loss` return."""
+    `value_soft` defaults to `value` (the τ=0 relationship). The elim /
+    next_elim keys are omitted unless their hard metric is given — matching a
+    non-elim `bc_loss` return (the two are mutually exclusive in practice)."""
     out = {
         "policy": torch.tensor(policy),
         "value": torch.tensor(value),
@@ -44,6 +47,12 @@ def _fake_losses(
         out["elim"] = torch.tensor(elim)
         out["elim_soft"] = torch.tensor(elim if elim_soft is None else elim_soft)
         out["n_elim"] = torch.tensor(n_elim if n_elim is not None else 0)
+    if next_elim is not None:
+        out["next_elim"] = torch.tensor(next_elim)
+        out["next_elim_soft"] = torch.tensor(
+            next_elim if next_elim_soft is None else next_elim_soft
+        )
+        out["n_next_elim"] = torch.tensor(n_next_elim if n_next_elim is not None else 0)
     return out
 
 
@@ -219,6 +228,38 @@ def test_accumulator_elim_weighted_by_alive_count() -> None:
     expected_total = (
         s["policy"] + cfg.lambda_value * s["value_soft"]
         + cfg.mu_pass * s["pass"] + cfg.lambda_elim * s["elim_soft"]
+    )
+    assert s["total"] == pytest.approx(expected_total)
+
+
+def test_accumulator_next_death_weighted_by_victim_count() -> None:
+    """The next_death analogue: the accumulator weights next_elim means by the
+    per-batch defined-next-victim count `n_next_elim`, and the reconstructed epoch
+    total carries the *soft* next_elim term (the core slice-2 invariant — the
+    accumulator rebuilds `total` from the registry, not a hardcoded list)."""
+    cfg = LossConfig(lambda_elim=0.4)
+    acc = LossAccumulator(cfg)
+    acc.update(
+        _fake_losses(policy=2.0, value=1.0, pass_=0.5, n_non_pass=4,
+                     next_elim=1.2, next_elim_soft=1.1, n_next_elim=10),
+        batch_size=8,
+    )
+    acc.update(
+        _fake_losses(policy=1.0, value=2.0, pass_=0.3, n_non_pass=2,
+                     next_elim=0.6, next_elim_soft=0.5, n_next_elim=30),
+        batch_size=8,
+    )
+    s = acc.summary()
+    # next_elim weighted by n_next_elim: (1.2*10 + 0.6*30) / 40, soft likewise.
+    assert s["next_elim"] == pytest.approx((1.2 * 10 + 0.6 * 30) / 40)
+    assert s["next_elim_soft"] == pytest.approx((1.1 * 10 + 0.5 * 30) / 40)
+    assert s["n_next_elim"] == 40
+    # No time_bin keys leak in (that head never fired).
+    assert "elim" not in s and "n_elim" not in s
+    # Total reconstructs from the soft term, NOT the hard reporting CE.
+    expected_total = (
+        s["policy"] + cfg.lambda_value * s["value_soft"]
+        + cfg.mu_pass * s["pass"] + cfg.lambda_elim * s["next_elim_soft"]
     )
     assert s["total"] == pytest.approx(expected_total)
 

@@ -252,18 +252,43 @@ def bc_loss(
     # (weighted by the head's λ) and its metrics ride into `out` for reporting. A
     # head whose key is absent is a clean no-op, so non-aux runs are untouched. The
     # elim variants are mutually exclusive today (one head per model), but the loop
-    # imposes no such limit. `total` keying on the soft term, and the per-head
-    # count denominator, are properties of `AuxLossResult` — see `aux_heads`.
+    # imposes no such limit. Which metric is the trained term (`spec.term_key`),
+    # the count's reporting name (`spec.count_key`), and the loss weight
+    # (`spec.weight_attr`) are static spec properties — so the accumulator
+    # reconstructs `total` from the same registry. See `aux_heads`.
     for spec in REGISTRY.values():
         if spec.output_key not in model_out:
             continue
         res = spec.loss(model_out, targets, cfg)
         out.update(res.metrics)
-        out[res.count_key] = res.count
-        total = total + res.weight * res.metrics[res.term_key]
+        out[spec.count_key] = res.count
+        total = total + getattr(cfg, spec.weight_attr) * res.metrics[spec.term_key]
 
     out["total"] = total
     return out
+
+
+@dataclass
+class _AuxAccum:
+    """Running sums for one aux spec's metrics, weighted by its own count.
+
+    `count` and `sums` move together — both fold in the same per-batch denominator
+    (the head's count, e.g. alive-pair count) — so they live in one object rather
+    than parallel dicts that have to be kept in sync.
+    """
+
+    count: int = 0
+    sums: dict[str, float] = field(default_factory=dict)  # metric_key → Σ value·count
+
+    def add(
+        self,
+        n: int,
+        metric_keys: tuple[str, ...],
+        losses: dict[str, torch.Tensor],
+    ) -> None:
+        self.count += n
+        for k in metric_keys:
+            self.sums[k] = self.sums.get(k, 0.0) + losses[k].item() * n
 
 
 @dataclass
@@ -279,13 +304,16 @@ class LossAccumulator:
         which is the right thing.
       - `value`, `value_soft`, `pass` are mean-over-full-batch per batch, so
         the epoch mean weights each batch by its sample count `B`.
-      - `total` is *derived* from the component epoch means using the
-        `cfg` weights. This preserves the identity
-        `total == policy + λ·value_soft + μ·pass [+ λ_elim·elim_soft]` at
-        every aggregation level — useful when reading the log to see which
-        head is driving the loss. `cfg` must match the one given to `bc_loss`.
-        The elim term contributes only when elim batches were folded in
-        (otherwise `elim_soft` and `lambda_elim` are both 0).
+      - Each aux head's metrics weight by the head's *own* count (`spec.count_key`
+        — alive-pair count for time_bin, defined-next-victim count for next_death),
+        not n_samples. Folded generically: any spec whose count key is present in
+        the batch accumulates under its name; absent heads contribute nothing.
+      - `total` is *derived* from the component epoch means using the `cfg`
+        weights, reconstructed from the same registry `bc_loss` sums it from —
+        one source of truth, so the identity holds at every aggregation level.
+        Each active head adds `getattr(cfg, spec.weight_attr) · mean[term_key]`;
+        the *soft* term is the trained objective (== hard at τ=0). `cfg` must
+        match the one given to `bc_loss`.
 
     One accumulator per epoch per split (train + val each get their own).
     No `reset()` — instantiate a fresh accumulator at the start of each
@@ -299,18 +327,9 @@ class LossAccumulator:
     sum_value: float = 0.0       # weighted by batch_size per batch
     sum_value_soft: float = 0.0  # weighted by batch_size per batch
     sum_pass: float = 0.0        # weighted by batch_size per batch
-    # Elim means use their own weight: the alive (player, frame) count, distinct
-    # from both n_non_pass and n_samples. Stay zero for non-elim runs (the keys
-    # are absent from `bc_loss`'s return), so the elim term drops out of total.
-    n_elim: int = 0
-    sum_elim: float = 0.0        # weighted by n_elim per batch
-    sum_elim_soft: float = 0.0   # weighted by n_elim per batch
-    # who-dies-next (next_death variant) means: weight by the count of frames
-    # with a defined next victim. Zero for non-next_death runs (the keys are
-    # absent from `bc_loss`'s return), so the term drops out of total.
-    n_next_elim: int = 0
-    sum_next_elim: float = 0.0       # weighted by n_next_elim per batch
-    sum_next_elim_soft: float = 0.0  # weighted by n_next_elim per batch
+    # Per-aux-spec running sums, keyed by spec.name; populated lazily as aux
+    # batches arrive. Absent for non-aux runs, so those heads drop out of total.
+    aux: dict[str, _AuxAccum] = field(default_factory=dict)
 
     def update(
         self,
@@ -325,19 +344,15 @@ class LossAccumulator:
         self.sum_value += losses["value"].item() * batch_size
         self.sum_value_soft += losses["value_soft"].item() * batch_size
         self.sum_pass += losses["pass"].item() * batch_size
-        # Elim keys appear only when the head is built; weight by n_elim.
-        if "elim" in losses:
-            n_e = int(losses["n_elim"].item())
-            self.n_elim += n_e
-            self.sum_elim += losses["elim"].item() * n_e
-            self.sum_elim_soft += losses["elim_soft"].item() * n_e
-        # next_death keys appear only when that variant is built; weight by the
-        # defined-next-victim frame count.
-        if "next_elim" in losses:
-            n_nx = int(losses["n_next_elim"].item())
-            self.n_next_elim += n_nx
-            self.sum_next_elim += losses["next_elim"].item() * n_nx
-            self.sum_next_elim_soft += losses["next_elim_soft"].item() * n_nx
+        # Each aux head's keys appear only when that head is built; weight its
+        # metrics by the head's own count.
+        for spec in REGISTRY.values():
+            if spec.count_key not in losses:
+                continue
+            n = int(losses[spec.count_key].item())
+            self.aux.setdefault(spec.name, _AuxAccum()).add(
+                n, spec.metric_keys, losses
+            )
 
     def summary(self) -> dict[str, float | int]:
         """
@@ -351,46 +366,28 @@ class LossAccumulator:
         value = self.sum_value / self.n_samples if self.n_samples > 0 else 0.0
         value_soft = self.sum_value_soft / self.n_samples if self.n_samples > 0 else 0.0
         pass_ = self.sum_pass / self.n_samples if self.n_samples > 0 else 0.0
-        # Elim means weight by the running alive-pair count, NOT n_samples.
-        elim = self.sum_elim / self.n_elim if self.n_elim > 0 else 0.0
-        elim_soft = self.sum_elim_soft / self.n_elim if self.n_elim > 0 else 0.0
-        # who-dies-next means weight by the running defined-next-victim count.
-        next_elim = (
-            self.sum_next_elim / self.n_next_elim if self.n_next_elim > 0 else 0.0
-        )
-        next_elim_soft = (
-            self.sum_next_elim_soft / self.n_next_elim if self.n_next_elim > 0 else 0.0
-        )
-        # Hardcoded total identity — must carry the elim terms or the component
-        # sum silently breaks for elim runs. Inert for non-elim runs: lambda_elim
-        # defaults to 0, and elim_soft / next_elim_soft are 0 when no such batches
-        # were folded. The two elim variants are mutually exclusive, so at most one
-        # of elim_soft / next_elim_soft is nonzero. The *soft* terms are the trained
-        # objective (== hard at τ=0), matching `bc_loss`'s `total`.
-        total = (
-            policy
-            + self.cfg.lambda_value * value_soft
-            + self.cfg.mu_pass * pass_
-            + self.cfg.lambda_elim * elim_soft
-            + self.cfg.lambda_elim * next_elim_soft
-        )
+        total = policy + self.cfg.lambda_value * value_soft + self.cfg.mu_pass * pass_
         summary: dict[str, float | int] = {
             "policy": policy,
             "value": value,
             "value_soft": value_soft,
             "pass": pass_,
-            "total": total,
             "n_non_pass": self.n_non_pass,
             "n_samples": self.n_samples,
         }
-        # Presence-gate the elim entries so non-elim summaries are byte-identical
-        # to before.
-        if self.n_elim > 0:
-            summary["elim"] = elim
-            summary["elim_soft"] = elim_soft
-            summary["n_elim"] = self.n_elim
-        if self.n_next_elim > 0:
-            summary["next_elim"] = next_elim
-            summary["next_elim_soft"] = next_elim_soft
-            summary["n_next_elim"] = self.n_next_elim
+        # Reconstruct each active head's mean metrics and its total contribution
+        # from the same registry. Presence-gated on count > 0, so non-aux
+        # summaries are byte-identical to before. The variants are mutually
+        # exclusive today, so at most one head is active; the loop imposes no such
+        # limit. `total` keys on the *soft* term (`spec.term_key`), matching
+        # `bc_loss`.
+        for spec in REGISTRY.values():
+            a = self.aux.get(spec.name)
+            if a is None or a.count <= 0:
+                continue
+            for k in spec.metric_keys:
+                summary[k] = a.sums[k] / a.count
+            summary[spec.count_key] = a.count
+            total += getattr(self.cfg, spec.weight_attr) * (a.sums[spec.term_key] / a.count)
+        summary["total"] = total
         return summary

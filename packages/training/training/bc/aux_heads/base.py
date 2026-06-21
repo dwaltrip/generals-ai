@@ -21,23 +21,20 @@ import torch.nn as nn
 
 @dataclass
 class AuxLossResult:
-    """What a spec's `loss` returns — everything `bc_loss` needs to fold the head
-    into the total and the reporting dict, without `bc_loss` knowing the variant.
+    """What a spec's `loss` returns — the per-batch quantities `bc_loss` folds into
+    the total and the reporting dict, without `bc_loss` knowing the variant.
 
-    `metrics` holds every reported quantity by name (e.g. the hard reporting CE
-    and the soft objective). `term_key` selects which of them is the *trained*
-    objective — the scalar that enters `total` (weighted by `weight`); it is also
-    a reported metric, so the τ=0 "soft == hard" guarantee stays a property of the
-    metrics dict. `count` is the head's own denominator (alive-pair count, defined-
-    next-victim count, … — NOT the sample count), reported under `count_key` so the
-    accumulator can weight the running means by it.
+    `metrics` holds every reported quantity by name (e.g. the hard reporting CE and
+    the soft objective). `count` is the head's own denominator (alive-pair count,
+    defined-next-victim count, … — NOT the sample count). Which metric is the
+    trained term, the reporting name for the count, and the loss weight are *static*
+    properties of the spec class (`term_key` / `count_key` / `weight_attr`), so both
+    `bc_loss` and the accumulator read them without re-running `loss`; only the live
+    tensors travel in this result.
     """
 
     metrics: dict[str, torch.Tensor]
-    term_key: str
-    weight: float
     count: torch.Tensor
-    count_key: str
 
 
 @runtime_checkable
@@ -55,10 +52,21 @@ class AuxHeadSpec(Protocol):
     The per-game `ElimCtx` precompute is *not* here: it is variant-independent
     (carries both death and removal markers) and shared with the standalone
     alive-mask path, so it lives once in the dataset walk, not per spec.
+
+    The static string attrs name this head's keys so the loss and accumulator
+    fold it generically: `output_key` is what `bc_model.forward` emits;
+    `metric_keys` are the reported metric names; `term_key` ∈ `metric_keys` is the
+    *trained* objective fed into `total`; `count_key` names the per-batch count;
+    `weight_attr` is the `LossConfig` field holding this head's loss weight (read
+    via `getattr`).
     """
 
     name: str
     output_key: str
+    metric_keys: tuple[str, ...]
+    term_key: str
+    count_key: str
+    weight_attr: str
 
     def build_head(self, arch: Any) -> nn.Module: ...
 

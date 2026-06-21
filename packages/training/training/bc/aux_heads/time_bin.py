@@ -23,6 +23,10 @@ from training.bc.targets.elim_targets import ElimCtx, time_bin_targets
 class TimeBinSpec:
     name = "time_bin"
     output_key = "elim_logits"
+    metric_keys: tuple[str, ...] = ("elim", "elim_soft")
+    term_key = "elim_soft"
+    count_key = "n_elim"
+    weight_attr = "lambda_elim"
 
     def build_head(self, arch: Any) -> nn.Module:
         from training.bc.model.heads.elim_time_bin import ElimTimeBinHead
@@ -86,10 +90,7 @@ class TimeBinSpec:
 
         return AuxLossResult(
             metrics={"elim": elim, "elim_soft": elim_soft},
-            term_key="elim_soft",
-            weight=cfg.lambda_elim,
             count=n_elim,
-            count_key="n_elim",
         )
 
     def dump_records(

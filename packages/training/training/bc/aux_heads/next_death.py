@@ -24,6 +24,10 @@ from training.bc.targets.elim_targets import ElimCtx, next_death_target
 class NextDeathSpec:
     name = "next_death"
     output_key = "next_elim_logits"
+    metric_keys: tuple[str, ...] = ("next_elim", "next_elim_soft")
+    term_key = "next_elim_soft"
+    count_key = "n_next_elim"
+    weight_attr = "lambda_elim"
 
     def build_head(self, arch: Any) -> nn.Module:
         from training.bc.model.heads.elim_next_death import ElimNextDeathHead
@@ -92,10 +96,7 @@ class NextDeathSpec:
 
         return AuxLossResult(
             metrics={"next_elim": next_elim, "next_elim_soft": next_elim_soft},
-            term_key="next_elim_soft",
-            weight=cfg.lambda_elim,
             count=n_next_elim,
-            count_key="n_next_elim",
         )
 
     def dump_records(
