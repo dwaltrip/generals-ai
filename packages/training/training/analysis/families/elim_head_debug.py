@@ -48,7 +48,17 @@ ELIM_HEAD_DEBUG = FrameTableSpec(
     dataset_kwargs=dict(
         elim_head_variant="next_death", include_frame_info=True, unsafe_attach_sim_frame=True
     ),
-    emit_cols={"alive_mask": "alive", "next_elim_target": "victim", "next_elim_dt": "dt"},
+    emit_cols={
+        "alive_mask": "alive",
+        "next_elim_target": "victim",
+        "next_elim_dt": "dt",
+        # Board-removal/present domain (the head's actual domain): the per-frame
+        # present mask and the per-channel removal horizon that feeds the soft
+        # target (`p_i ∝ exp(-removal_dt_i/τ)`). Additive — for soft-target shape
+        # diagnostics; leaves the alive/rule columns above untouched.
+        "present_mask": "present",
+        "next_elim_removal_dt": "removal_dt",
+    },
     derivers=[ARMY_OBS, ARMY_SIM],
     derived_cols={"margin": bottom_two_margin, "low_army_victim": lowest_army_victim},
     # Shared ground truth for join_dump: these table cols must equal the dump's
