@@ -149,6 +149,12 @@ def _val(e: dict) -> dict:
     return e.get("val") or {}
 
 
+def _first(*vals: float | None) -> float | None:
+    """First non-None value — coalesce a metric across renamed keys
+    (e.g. older runs log `elim`, newer ones `next_elim`)."""
+    return next((v for v in vals if v is not None), None)
+
+
 def _value_gap(e: dict) -> float | None:
     """val_value − train_value. Positive and growing across epochs is the
     value-head memorization signature (train falls while val doesn't follow)."""
@@ -182,9 +188,9 @@ _EXTRACTORS: dict[str, Extract] = {
     "sps":        lambda e: e.get("samples_per_sec"),
     "pass_frac":  lambda e: _val(e).get("pass_frac"),
     "pass_acc":   lambda e: _val(e).get("pass_acc"),
-    "t_elim":     lambda e: e.get("elim"),
-    "t_esoft":    lambda e: e.get("elim_soft"),
-    "v_elim":     lambda e: _val(e).get("elim"),
+    "t_elim":     lambda e: _first(e.get("elim"), e.get("next_elim")),
+    "t_esoft":    lambda e: _first(e.get("elim_soft"), e.get("next_elim_soft")),
+    "v_elim":     lambda e: _first(_val(e).get("elim"), _val(e).get("next_elim")),
     "v_esoft":    lambda e: _val(e).get("elim_soft"),
     "e_top1":     lambda e: _val(e).get("elim_top1"),
     "e_H":        lambda e: _val(e).get("elim_pred_entropy"),
