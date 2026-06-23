@@ -147,7 +147,7 @@ class NextDeathSpec:
         out: ModelOut,
         batch: dict[str, torch.Tensor],
     ) -> None:
-        return None
+        return None  # no in-loop meter — diagnostics come from the dump offline
 
     def eval_summary(
         self, meter: Any, accum_summary: dict[str, float | int]

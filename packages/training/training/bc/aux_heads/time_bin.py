@@ -130,6 +130,8 @@ class TimeBinSpec:
         out: ModelOut,
         batch: dict[str, torch.Tensor],
     ) -> None:
+        if meter is None:  # no edges → no meter (guarded like eval_summary)
+            return
         meter.update(out.aux["elim_logits"], batch["elim_bin_target"], batch["alive_mask"])
 
     def eval_summary(

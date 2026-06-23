@@ -103,17 +103,14 @@ def run_val(
     acc = LossAccumulator(loss_cfg, model.active_aux_specs)
     ent_meter = PolicyEntropyMeter()
     dist_meter = ActionDistMeter()
-    # Elim diagnostics ride the same forward. The active aux-head spec owns its
-    # in-loop meter (the time_bin head's `ElimMeter`); next_death has none — its
-    # diagnostics are computed offline from the dump — while its `next_elim` loss
-    # still rides through the LossAccumulator below. Read the spec off the model
-    # (the owner) rather than re-resolving the variant.
-    elim_spec = model.active_aux_specs[0] if model.active_aux_specs else None
-    elim_meter = (
-        elim_spec.build_eval_meter(loss_cfg, elim_bin_edges)
-        if elim_spec is not None
-        else None
-    )
+    # Elim diagnostics ride the same forward.
+    # Each active aux head is paired with its in-loop meter.
+    # This design is used as specs are stateless singletons shared across runs
+    # via the registry, while a meter is per-pass mutable state.
+    aux_specs_with_meters = [
+        (spec, spec.build_eval_meter(loss_cfg, elim_bin_edges))
+        for spec in model.active_aux_specs
+    ]
     n_top1_correct = 0
     n_top3_correct = 0
     n_pass_correct = 0
@@ -185,8 +182,9 @@ def run_val(
 
         dist_meter.update(topk[:, 0], action_target, non_pass)
 
-        if elim_spec is not None and elim_meter is not None and elim_spec.output_key in out.aux:
-            elim_spec.eval_update(elim_meter, out, batch)
+        # Each spec handles updating its own metrics.
+        for spec, meter in aux_specs_with_meters:
+            spec.eval_update(meter, out, batch)
 
     duration_sec = time.perf_counter() - val_start
     s = acc.summary()
@@ -219,10 +217,7 @@ def run_val(
         "action_target_dist": dist_meter.target_dist(),
     }
     # Aux-head metrics — present only when a head is active, so non-elim val rows
-    # are unchanged. The active spec surfaces its own summary: the time_bin head
-    # adds its meter reads (top1/soft_floor/pred_entropy) alongside the accumulator
-    # `elim`/`elim_soft`; next_death surfaces only its `next_elim` loss (no meter —
-    # the accuracy / ramp / horizon reads are computed offline from the dump).
-    if elim_spec is not None:
-        summary.update(elim_spec.eval_summary(elim_meter, s))
+    # are unchanged. Each active spec surfaces its own summary.
+    for spec, meter in aux_specs_with_meters:
+        summary.update(spec.eval_summary(meter, s))
     return summary
