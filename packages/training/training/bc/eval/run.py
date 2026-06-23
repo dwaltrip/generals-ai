@@ -54,7 +54,6 @@ import time
 
 import torch
 
-from training.bc.aux_heads import spec_for
 from training.bc.eval.dump import FrameRecordCapture, iter_val_forward
 from training.bc.eval.metrics import ActionDistMeter, PolicyEntropyMeter
 from training.bc.loss import (
@@ -63,12 +62,12 @@ from training.bc.loss import (
     LossConfig,
     bc_loss,
 )
-from training.bc.model import flatten_policy_logits
+from training.bc.model import BCModel, flatten_policy_logits
 from training.bc.obs_config import ObsConfig
 
 
 def run_val(
-    model: torch.nn.Module,
+    model: BCModel,
     val_samples: list[tuple[Path, int]],
     device: torch.device,
     batch_size: int,
@@ -101,14 +100,15 @@ def run_val(
     auto (True iff device is CUDA).
     """
     val_start = time.perf_counter()
-    acc = LossAccumulator(loss_cfg)
+    acc = LossAccumulator(loss_cfg, model.active_aux_specs)
     ent_meter = PolicyEntropyMeter()
     dist_meter = ActionDistMeter()
     # Elim diagnostics ride the same forward. The active aux-head spec owns its
     # in-loop meter (the time_bin head's `ElimMeter`); next_death has none — its
     # diagnostics are computed offline from the dump — while its `next_elim` loss
-    # still rides through the LossAccumulator below.
-    elim_spec = spec_for(elim_head_variant)
+    # still rides through the LossAccumulator below. Read the spec off the model
+    # (the owner) rather than re-resolving the variant.
+    elim_spec = model.active_aux_specs[0] if model.active_aux_specs else None
     elim_meter = (
         elim_spec.build_eval_meter(loss_cfg, elim_bin_edges)
         if elim_spec is not None
@@ -145,7 +145,7 @@ def run_val(
             dtype=amp_dtype or torch.float32,
             enabled=amp_dtype is not None,
         ):
-            losses = bc_loss(out, batch, loss_cfg)
+            losses = bc_loss(out, batch, loss_cfg, model.active_aux_specs)
         B = batch["obs"].shape[0]
         acc.update(losses, batch_size=B)
 

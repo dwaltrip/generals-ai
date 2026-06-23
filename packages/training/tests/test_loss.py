@@ -21,7 +21,14 @@ import pytest
 import torch
 
 from training.bc.actions import _PASS_FLAT_IDX
+from training.bc.aux_heads import REGISTRY
 from training.bc.loss import LossAccumulator, LossConfig, bc_loss
+
+
+# The active-aux-head spec lists a caller hands to `bc_loss` / `LossAccumulator`
+# (the model's `active_aux_specs`). One head per run today (mutually exclusive).
+TIME_BIN = (REGISTRY["time_bin"],)
+NEXT_DEATH = (REGISTRY["next_death"],)
 
 
 def _fake_losses(
@@ -122,7 +129,7 @@ def test_bc_loss_elim_masked_mean_and_total_identity() -> None:
     B, n_bins = 4, 8
     model_out, targets = _elim_batch(B, n_bins, seed=1)
     cfg = LossConfig(lambda_elim=0.3)
-    losses = bc_loss(model_out, targets, cfg)
+    losses = bc_loss(model_out, targets, cfg, TIME_BIN)
 
     assert {"elim", "elim_soft", "n_elim"} <= losses.keys()
     alive = targets["alive_mask"]
@@ -154,14 +161,14 @@ def test_bc_loss_elim_mask_excludes_dead_channels() -> None:
     target (which would change an *unmasked* mean) leaves `elim` unchanged."""
     B, n_bins = 3, 8
     model_out, targets = _elim_batch(B, n_bins, seed=2)
-    base = bc_loss(model_out, targets, LossConfig(lambda_elim=0.5))
+    base = bc_loss(model_out, targets, LossConfig(lambda_elim=0.5), TIME_BIN)
 
     # Perturb a masked (dead) channel's target — must not move the loss.
     perturbed = dict(targets)
     bt = targets["elim_bin_target"].clone()
     bt[:, 7] = (bt[:, 7] + 3) % n_bins        # channel 7 is masked off
     perturbed["elim_bin_target"] = bt
-    after = bc_loss(model_out, perturbed, LossConfig(lambda_elim=0.5))
+    after = bc_loss(model_out, perturbed, LossConfig(lambda_elim=0.5), TIME_BIN)
     assert after["elim"].item() == pytest.approx(base["elim"].item(), rel=1e-6)
 
 
@@ -171,7 +178,7 @@ def test_bc_loss_elim_soft_differs_at_tau() -> None:
     B, n_bins = 4, 8
     model_out, targets = _elim_batch(B, n_bins, seed=3)
     cfg = LossConfig(lambda_elim=0.2, elim_target_tau=1.0)
-    losses = bc_loss(model_out, targets, cfg)
+    losses = bc_loss(model_out, targets, cfg, TIME_BIN)
     assert losses["elim_soft"].item() != pytest.approx(losses["elim"].item())
     expected_total = (
         losses["policy"]
@@ -183,8 +190,9 @@ def test_bc_loss_elim_soft_differs_at_tau() -> None:
 
 
 def test_bc_loss_no_elim_keys_without_head() -> None:
-    """A model_out without `elim_logits` yields no elim keys and a total
-    untouched by `lambda_elim` — the disabled-head no-op."""
+    """With no active aux specs, no elim keys appear and the total is untouched by
+    `lambda_elim` — the disabled-head no-op. Gating is the `active_aux_specs` list
+    (empty here), not the presence of `elim_logits`."""
     B = 4
     torch.manual_seed(0)
     model_out = {
@@ -204,12 +212,33 @@ def test_bc_loss_no_elim_keys_without_head() -> None:
     assert with_lambda["total"].item() == pytest.approx(baseline["total"].item())
 
 
+def test_bc_loss_asserts_active_head_missing_logits() -> None:
+    """A spec declared active whose logits the model didn't emit is a loud error,
+    not a silent no-op — the model and the passed-in spec list disagree on what
+    was built."""
+    B = 4
+    torch.manual_seed(0)
+    model_out = {                          # no `elim_logits`, but time_bin declared
+        "policy_logits": torch.randn(B, 8, 4, 4),
+        "pass_logit": torch.randn(B),
+        "value_logits": torch.randn(B, 8),
+    }
+    targets = {
+        "mask": torch.ones(B, 4, 4, 8, dtype=torch.bool),
+        "action_target": torch.full((B,), _PASS_FLAT_IDX, dtype=torch.int64),
+        "is_pass": torch.ones(B, dtype=torch.bool),
+        "value_target": torch.zeros(B, dtype=torch.int64),
+    }
+    with pytest.raises(AssertionError, match="elim_logits"):
+        bc_loss(model_out, targets, LossConfig(lambda_elim=0.3), TIME_BIN)
+
+
 def test_accumulator_elim_weighted_by_alive_count() -> None:
     """The accumulator weights elim means by the per-batch alive count `n_elim`
     (distinct from n_non_pass / n_samples), and the epoch total carries the
     elim term."""
     cfg = LossConfig(lambda_elim=0.4)
-    acc = LossAccumulator(cfg)
+    acc = LossAccumulator(cfg, TIME_BIN)
     acc.update(
         _fake_losses(policy=2.0, value=1.0, pass_=0.5, n_non_pass=4,
                      elim=1.2, elim_soft=1.1, n_elim=10),
@@ -238,7 +267,7 @@ def test_accumulator_next_death_weighted_by_victim_count() -> None:
     total carries the *soft* next_elim term (the core slice-2 invariant — the
     accumulator rebuilds `total` from the registry, not a hardcoded list)."""
     cfg = LossConfig(lambda_elim=0.4)
-    acc = LossAccumulator(cfg)
+    acc = LossAccumulator(cfg, NEXT_DEATH)
     acc.update(
         _fake_losses(policy=2.0, value=1.0, pass_=0.5, n_non_pass=4,
                      next_elim=1.2, next_elim_soft=1.1, n_next_elim=10),
@@ -262,6 +291,15 @@ def test_accumulator_next_death_weighted_by_victim_count() -> None:
         + cfg.mu_pass * s["pass"] + cfg.lambda_elim * s["next_elim_soft"]
     )
     assert s["total"] == pytest.approx(expected_total)
+
+
+def test_accumulator_warns_on_zero_count_active_head() -> None:
+    """An active head that accumulates zero countable frames across the epoch (the
+    degenerate empty case) warns loudly and skips its metrics — no NaN, no silence."""
+    acc = LossAccumulator(LossConfig(lambda_elim=0.5), TIME_BIN)
+    with pytest.warns(UserWarning, match="zero countable frames"):
+        s = acc.summary()
+    assert "elim" not in s
 
 
 def test_accumulator_no_elim_keys_for_non_elim_run() -> None:
@@ -312,7 +350,7 @@ def test_next_death_soft_equals_hard_at_tau_zero() -> None:
     B = 6
     model_out, targets = _next_death_batch(B, seed=1)
     cfg = LossConfig(lambda_elim=0.3)               # next_elim_target_tau defaults to 0
-    losses = bc_loss(model_out, targets, cfg)
+    losses = bc_loss(model_out, targets, cfg, NEXT_DEATH)
     assert {"next_elim", "next_elim_soft", "n_next_elim"} <= losses.keys()
     assert int(losses["n_next_elim"]) == B          # all frames have a defined victim
     assert losses["next_elim_soft"].item() == pytest.approx(losses["next_elim"].item())
@@ -331,7 +369,7 @@ def test_next_death_soft_target_shape_and_winner_mass() -> None:
     model_out, targets = _next_death_batch(B, seed=2)
     tau = 15.0
     cfg = LossConfig(lambda_elim=0.5, next_elim_target_tau=tau)
-    losses = bc_loss(model_out, targets, cfg)
+    losses = bc_loss(model_out, targets, cfg, NEXT_DEATH)
     assert losses["next_elim_soft"].item() != pytest.approx(losses["next_elim"].item())
 
     # Reconstruct the expected soft CE independently.
@@ -363,7 +401,9 @@ def test_next_death_soft_target_splits_ties_evenly() -> None:
     soft_target = torch.softmax(neg, dim=1)
     assert torch.allclose(soft_target[:, 1], soft_target[:, 2])
     # And the loss runs clean on the tie (no NaN).
-    losses = bc_loss(model_out, targets, LossConfig(lambda_elim=0.3, next_elim_target_tau=tau))
+    losses = bc_loss(
+        model_out, targets, LossConfig(lambda_elim=0.3, next_elim_target_tau=tau), NEXT_DEATH
+    )
     assert torch.isfinite(losses["next_elim_soft"]).all()
 
 
@@ -374,13 +414,13 @@ def test_next_death_winner_tail_frames_masked() -> None:
     model_out, targets = _next_death_batch(B, seed=3)
     targets["next_elim_target"][0] = -1             # frame 0 is a winner-tail frame
     cfg = LossConfig(lambda_elim=0.4, next_elim_target_tau=15.0)
-    losses = bc_loss(model_out, targets, cfg)
+    losses = bc_loss(model_out, targets, cfg, NEXT_DEATH)
     assert int(losses["n_next_elim"]) == B - 1      # the masked frame is excluded
 
     # Dropping frame 0 entirely gives the same means (it carried zero weight).
     sub_out = {k: v[1:] for k, v in model_out.items()}
     sub_tgt = {k: v[1:] for k, v in targets.items()}
-    sub = bc_loss(sub_out, sub_tgt, cfg)
+    sub = bc_loss(sub_out, sub_tgt, cfg, NEXT_DEATH)
     assert losses["next_elim"].item() == pytest.approx(sub["next_elim"].item(), rel=1e-6)
     assert losses["next_elim_soft"].item() == pytest.approx(sub["next_elim_soft"].item(), rel=1e-6)
 

@@ -33,7 +33,7 @@ import torch
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
 
-from training.bc.aux_heads import REGISTRY
+from training.bc.aux_heads import AuxHeadSpec
 from training.bc.dataset import IterableDataset, assert_safe_loader
 from training.bc.model import BCModel, flatten_policy_logits
 from training.bc.obs_config import ObsConfig
@@ -49,11 +49,15 @@ class FrameRecordCapture:
 
     Requires the dataset to be built with `include_frame_info=True` — the
     provenance scalars come from the batch, not the model.
+
+    `active_aux_specs` is the model's built aux heads (`BCModel.active_aux_specs`);
+    each contributes its per-frame dump columns. Empty means no aux heads.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, active_aux_specs: tuple[AuxHeadSpec, ...] = ()) -> None:
         self._cols: dict[str, list[np.ndarray]] = {}
         self.n_frames = 0
+        self._active_aux_specs = active_aux_specs
 
     def _push(self, name: str, t: torch.Tensor) -> None:
         # Copy host-resident tensors: DataLoader batches may live in pinned
@@ -126,13 +130,13 @@ class FrameRecordCapture:
         self._push("top3", (target.unsqueeze(1) == topk).any(dim=1) & non_pass)
         self._push("pass_prob", torch.sigmoid(out["pass_logit"].float()))
 
-        # Aux heads (elim variants): each registered spec whose logits the model
-        # emitted contributes its dump columns (per-frame distribution, hard CE,
-        # targets/masks). Absent → no columns, so non-aux runs add none. The dump
-        # CE is unweighted/hard — see each spec's `dump_records`.
-        for spec in REGISTRY.values():
-            if spec.output_key not in out:
-                continue
+        # Aux heads (elim variants): each built head contributes its dump columns
+        # (per-frame distribution, hard CE, targets/masks). Empty for non-aux runs.
+        # The dump CE is unweighted/hard — see each spec's `dump_records`.
+        for spec in self._active_aux_specs:
+            assert spec.output_key in out, (
+                f"active aux head {spec.name!r} did not emit {spec.output_key!r}"
+            )
             for key, val in spec.dump_records(out, moved_batch, host_batch).items():
                 self._push(key, val)
 
@@ -238,7 +242,7 @@ def capture_val_frames(
     model carries the head. `persp_index_map` maps the (possibly subsampled)
     walked sample list back to full-val-split positions for `finalize`.
     """
-    capture = FrameRecordCapture()
+    capture = FrameRecordCapture(model.active_aux_specs)
     elim_on = model.cfg.elim_head_variant is not None
     elim_bin_edges = model.cfg.elim_bin_edges if elim_on else None
     start = time.perf_counter()

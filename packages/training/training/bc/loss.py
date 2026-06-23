@@ -37,12 +37,14 @@ policy CE here applies it.
 from __future__ import annotations
 
 from dataclasses import dataclass, field, fields
+from typing import Any
+import warnings
 
 import torch
 import torch.nn.functional as F
 
 from training.bc.actions import _PASS_FLAT_IDX
-from training.bc.aux_heads import REGISTRY
+from training.bc.aux_heads import AuxHeadSpec
 from training.bc.model import flatten_policy_logits
 from training.bc.soft_target import _soft_target_kernel
 
@@ -142,6 +144,7 @@ def bc_loss(
     model_out: dict[str, torch.Tensor],
     targets: dict[str, torch.Tensor],
     cfg: LossConfig = DEFAULT_LOSS_CFG,
+    active_aux_specs: tuple[AuxHeadSpec, ...] = (),
 ) -> dict[str, torch.Tensor]:
     """
     One-step loss over a batch.
@@ -169,8 +172,13 @@ def bc_loss(
         - `n_non_pass`: 0-d int tensor, number of non-pass frames in the batch
                        (debugging signal for the overfit harness)
 
-    When `model_out` carries `elim_logits` (the time_bin elim head is built),
-    three more keys appear (absent otherwise, so non-elim runs are unchanged):
+    `active_aux_specs` is the caller's list of built aux heads (the model's own
+    `BCModel.active_aux_specs`); the loss computes a term for each. Each active
+    head asserts its logits are present, so a declared/built mismatch is loud,
+    not a silent no-op.
+
+    When `time_bin` is among `active_aux_specs`, three more keys appear (absent
+    otherwise, so non-elim runs are unchanged):
         - `elim`:      hard elim CE, masked-mean over alive (player, frame)
                        pairs — the reporting metric
         - `elim_soft`: soft-target elim CE, the trained objective
@@ -178,8 +186,8 @@ def bc_loss(
         - `n_elim`:    0-d int tensor, count of alive (player, frame) pairs
                        (the accumulator weight for the elim means)
 
-    When `model_out` carries `next_elim_logits` (the next_death elim head is
-    built — mutually exclusive with `elim_logits`), three keys appear instead:
+    When `next_death` is among `active_aux_specs` (mutually exclusive with
+    `time_bin`), three keys appear instead:
         - `next_elim`:      hard who-is-removed-next CE against the one-hot next
                             victim, mean over frames with a defined next removal
                             (winner-tail frames excluded via -1) — the reporting
@@ -244,8 +252,6 @@ def bc_loss(
         pass_logit, is_pass.float(), reduction="mean"
     )
 
-    total = policy_ce + cfg.lambda_value * value_soft + cfg.mu_pass * pass_bce
-
     out = {
         "policy": policy_ce,
         "value": value_ce,
@@ -254,25 +260,19 @@ def bc_loss(
         "n_non_pass": n_non_pass,
     }
 
-    # --- Aux-head terms (the variant-gated elimination heads) ---
-    # Each aux head contributes through its registered spec: the spec whose logits
-    # key the model emitted computes its loss; its *soft* term feeds `total`
-    # (weighted by the head's λ) and its metrics ride into `out` for reporting. A
-    # head whose key is absent is a clean no-op, so non-aux runs are untouched. The
-    # elim variants are mutually exclusive today (one head per model), but the loop
-    # imposes no such limit. Which metric is the trained term (`spec.term_key`),
-    # the count's reporting name (`spec.count_key`), and the loss weight
-    # (`spec.weight_attr`) are static spec properties — so the accumulator
-    # reconstructs `total` from the same registry. See `aux_heads`.
-    for spec in REGISTRY.values():
-        if spec.output_key not in model_out:
-            continue
+    # Aux-head terms: each active head computes its loss and its metrics ride into
+    # `out`; `_assemble_total` then folds the trained terms into `total`.
+    for spec in active_aux_specs:
+        # A declared-active head must have emitted its logits — a miss means the
+        # model and the passed-in spec list disagree on what was built.
+        assert spec.output_key in model_out, (
+            f"active aux head {spec.name!r} did not emit {spec.output_key!r}"
+        )
         res = spec.loss(model_out, targets, cfg)
         out.update(res.metrics)
         out[spec.count_key] = res.count
-        total = total + getattr(cfg, spec.weight_attr) * res.metrics[spec.term_key]
 
-    out["total"] = total
+    out["total"] = _assemble_total(out, cfg, active_aux_specs)
     return out
 
 
@@ -314,14 +314,12 @@ class LossAccumulator:
         the epoch mean weights each batch by its sample count `B`.
       - Each aux head's metrics weight by the head's *own* count (`spec.count_key`
         — alive-pair count for time_bin, defined-next-victim count for next_death),
-        not n_samples. Folded generically: any spec whose count key is present in
-        the batch accumulates under its name; absent heads contribute nothing.
-      - `total` is *derived* from the component epoch means using the `cfg`
-        weights, reconstructed from the same registry `bc_loss` sums it from —
-        one source of truth, so the identity holds at every aggregation level.
-        Each active head adds `getattr(cfg, spec.weight_attr) · mean[term_key]`;
-        the *soft* term is the trained objective (== hard at τ=0). `cfg` must
-        match the one given to `bc_loss`.
+        not n_samples. The active heads come from `active_aux_specs` (the model's
+        own list), so the fold iterates exactly the built heads.
+      - `total` is built by the shared `_assemble_total` (same call as `bc_loss`),
+        so the identity holds at every aggregation level. The *soft* term is the
+        trained objective (== hard at τ=0). `cfg` and `active_aux_specs` must
+        match those given to `bc_loss`.
 
     One accumulator per epoch per split (train + val each get their own).
     No `reset()` — instantiate a fresh accumulator at the start of each
@@ -329,15 +327,22 @@ class LossAccumulator:
     """
 
     cfg: LossConfig = field(default_factory=LossConfig)
+    active_aux_specs: tuple[AuxHeadSpec, ...] = ()
     n_non_pass: int = 0
     n_samples: int = 0
     sum_policy: float = 0.0      # weighted by n_non_pass per batch
     sum_value: float = 0.0       # weighted by batch_size per batch
     sum_value_soft: float = 0.0  # weighted by batch_size per batch
     sum_pass: float = 0.0        # weighted by batch_size per batch
-    # Per-aux-spec running sums, keyed by spec.name; populated lazily as aux
-    # batches arrive. Absent for non-aux runs, so those heads drop out of total.
+    # Per-aux-spec running sums, keyed by spec.name; one entry per active head,
+    # built in __post_init__ from `active_aux_specs`. Empty for non-aux runs.
     aux: dict[str, _AuxAccum] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        # One accumulator per active head, built up front from the declared specs
+        # rather than lazily on first sighting of a batch key — so `update` and
+        # `summary` index directly without a presence check.
+        self.aux = {spec.name: _AuxAccum() for spec in self.active_aux_specs}
 
     def update(
         self,
@@ -352,15 +357,10 @@ class LossAccumulator:
         self.sum_value += losses["value"].item() * batch_size
         self.sum_value_soft += losses["value_soft"].item() * batch_size
         self.sum_pass += losses["pass"].item() * batch_size
-        # Each aux head's keys appear only when that head is built; weight its
-        # metrics by the head's own count.
-        for spec in REGISTRY.values():
-            if spec.count_key not in losses:
-                continue
+        # Each active head weights its metrics by the head's own count.
+        for spec in self.active_aux_specs:
             n = int(losses[spec.count_key].item())
-            self.aux.setdefault(spec.name, _AuxAccum()).add(
-                n, spec.metric_keys, losses
-            )
+            self.aux[spec.name].add(n, spec.metric_keys, losses)
 
     def summary(self) -> dict[str, float | int]:
         """
@@ -370,11 +370,13 @@ class LossAccumulator:
         consisting entirely of all-pass batches also returns 0 for the
         policy mean — `n_non_pass` is 0 across all batches.
         """
-        policy = self.sum_policy / self.n_non_pass if self.n_non_pass > 0 else 0.0
-        value = self.sum_value / self.n_samples if self.n_samples > 0 else 0.0
-        value_soft = self.sum_value_soft / self.n_samples if self.n_samples > 0 else 0.0
-        pass_ = self.sum_pass / self.n_samples if self.n_samples > 0 else 0.0
-        total = policy + self.cfg.lambda_value * value_soft + self.cfg.mu_pass * pass_
+
+        # TODO: Should we do something other other than return 0 if divisor is 0 here?
+        policy = _divide_safe(self.sum_policy, self.n_non_pass)
+        value = _divide_safe(self.sum_value, self.n_samples)
+        value_soft = _divide_safe(self.sum_value_soft, self.n_samples)
+        pass_ = _divide_safe(self.sum_pass, self.n_samples)
+
         summary: dict[str, float | int] = {
             "policy": policy,
             "value": value,
@@ -383,19 +385,48 @@ class LossAccumulator:
             "n_non_pass": self.n_non_pass,
             "n_samples": self.n_samples,
         }
-        # Reconstruct each active head's mean metrics and its total contribution
-        # from the same registry. Presence-gated on count > 0, so non-aux
-        # summaries are byte-identical to before. The variants are mutually
-        # exclusive today, so at most one head is active; the loop imposes no such
-        # limit. `total` keys on the *soft* term (`spec.term_key`), matching
-        # `bc_loss`.
-        for spec in REGISTRY.values():
-            a = self.aux.get(spec.name)
-            if a is None or a.count <= 0:
+        # Reconstruct each active head's mean metrics; collect the ones that
+        # contributed so `_assemble_total` folds exactly those into `total`.
+        contributing: list[AuxHeadSpec] = []
+        for spec in self.active_aux_specs:
+            a = self.aux[spec.name]
+            if a.count <= 0:
+                # In a real training run, `count` being 0 is probably almost always bug.
+                # But it could happen in a "smoke run", so we warn instead of throwing an error.
+                # Throwing an error in the middle of a run should be done very cautiously.
+                warnings.warn(
+                    f"aux head {spec.name!r} saw zero countable frames "
+                    f"({spec.count_key}=0) across the epoch; skipping its metrics"
+                )
                 continue
             for k in spec.metric_keys:
                 summary[k] = a.sums[k] / a.count
             summary[spec.count_key] = a.count
-            total += getattr(self.cfg, spec.weight_attr) * (a.sums[spec.term_key] / a.count)
-        summary["total"] = total
+            contributing.append(spec)
+        summary["total"] = _assemble_total(summary, self.cfg, tuple(contributing))
         return summary
+
+
+def _assemble_total(
+    metrics: dict[str, Any],
+    cfg: LossConfig,
+    specs: tuple[AuxHeadSpec, ...],
+) -> Any:
+    """The one definition of how `total` is composed from component metrics — shared
+    by `bc_loss` (live tensors) and `LossAccumulator.summary` (epoch-mean floats), so
+    the per-batch and epoch totals can't drift. Reads `policy`/`value_soft`/`pass`
+    plus each spec's `term_key` from `metrics` (the caller must have populated them);
+    polymorphic over tensor/float via the shared `+`/`*`."""
+    total = (
+        metrics["policy"]
+        + cfg.lambda_value * metrics["value_soft"]
+        + cfg.mu_pass * metrics["pass"]
+    )
+    for spec in specs:
+        total = total + getattr(cfg, spec.weight_attr) * metrics[spec.term_key]
+    return total
+
+
+def _divide_safe(val: float, divisor: int) -> float:
+    """Return 0.0 if divisor is zero"""
+    return val / divisor if divisor > 0 else 0.0

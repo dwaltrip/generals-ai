@@ -22,14 +22,21 @@ from training.bc.loss import LossConfig
 from training.bc.model_config import ModelConfig, build_model_cfg
 
 
-# The loss knobs live in a nested `LossConfig` (composition), but older config
-# files and run-dir `args.json` carry them as flat top-level keys. `_extract_loss`
-# accepts both shapes at the parsing boundary; remove this migration shim once no
-# flat configs/args remain on disk.
+# The loss knobs live in a nested `LossConfig`, but older `--config` files and
+# run-dir `args.json` carry them as flat top-level keys.
+# `_extract_loss`: shim that accepts both shapes at the parsing boundary.
+#
+# Removing that shim does NOT affect loading old checkpoints — the loss config
+# isn't in the `.pt` (`TrainingState.save` writes model/arch/optim/scaler/epoch),
+# so an old checkpoint's weights + arch still load shape-agnostic. What it breaks
+# is *resuming* a pre-nesting run or re-running an old flat `--config`: both read
+# flat loss keys, which without the shim stay at the top level and make the
+# `TrainConfig` constructor raise. Safe to drop once no flat configs/args remain
+# on disk and you won't resume a pre-nesting run.
 _LOSS_FIELDS = frozenset(f.name for f in fields(LossConfig))
 
 
-def _extract_loss(data: dict) -> dict:
+def _extract_loss(data: dict[str, Any]) -> dict[str, Any]:
     """Pop the loss knobs out of a raw config dict and return them as one dict.
 
     Accepts both the flat (pre-nesting) shape — loss knobs at the top level — and

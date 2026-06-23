@@ -22,7 +22,7 @@ from __future__ import annotations
 import torch
 import torch.nn as nn
 
-from training.bc.aux_heads import spec_for
+from training.bc.aux_heads import AuxHeadSpec, spec_for
 from training.bc.model.heads.pass_head import PassHead
 from training.bc.model.heads.policy import PolicyHead
 from training.bc.model.heads.value import ValueHead
@@ -54,8 +54,11 @@ class BCModel(nn.Module):
         self.policy_head = PolicyHead(in_ch=cfg.outer_width)
         self.pass_head = PassHead(in_ch=cfg.outer_width)
         self.value_head = ValueHead(
-            in_ch=cfg.outer_width, H=cfg.H, W=cfg.W, variant=cfg.value_head_variant,
-            dropout2d_p=cfg.value_head_dropout2d, dropout_p=cfg.value_head_dropout,
+            in_ch=cfg.outer_width,
+            H=cfg.H, W=cfg.W,
+            variant=cfg.value_head_variant,
+            dropout2d_p=cfg.value_head_dropout2d,
+            dropout_p=cfg.value_head_dropout,
             dropout2d_site=cfg.value_head_dropout2d_site,
             skip_dropout2d_p=cfg.value_head_skip_dropout2d,
         )
@@ -65,6 +68,14 @@ class BCModel(nn.Module):
         # no submodule. The aux-head spec builds the head and names its output key
         # (`elim_logits` for time_bin, `next_elim_logits` for next_death).
         spec = spec_for(cfg.elim_head_variant)
+        # The active aux-head specs this model built — the single owner of "which
+        # aux heads are live." The loss, accumulator, and eval read this instead of
+        # re-resolving the variant or sniffing output keys. Empty when no head is
+        # built; one element today (the variants are mutually exclusive) but a tuple
+        # so the additive-ready loss/accumulator loops iterate a uniform thing.
+        self.active_aux_specs: tuple[AuxHeadSpec, ...] = (
+            (spec,) if spec is not None else ()
+        )
         self.elim_output_key: str | None = spec.output_key if spec is not None else None
         self.elim_head: nn.Module | None = (
             spec.build_head(cfg) if spec is not None else None

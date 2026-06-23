@@ -121,7 +121,7 @@ def _move_batch_timed(
 
 def train_one_epoch(
     epoch: int,
-    model: torch.nn.Module,
+    model: BCModel,
     optim: torch.optim.Optimizer,
     dataset: IterableDataset,
     loader: DataLoader,
@@ -161,7 +161,7 @@ def train_one_epoch(
     # latter is typed as the base `Dataset` (no `set_epoch`).
     dataset.set_epoch(epoch)
 
-    acc = LossAccumulator(loss_cfg)
+    acc = LossAccumulator(loss_cfg, model.active_aux_specs)
     epoch_start = time.perf_counter()
     n_batches_seen = 0
 
@@ -199,7 +199,7 @@ def train_one_epoch(
             enabled=amp_dtype is not None,
         ):
             out = model(obs_for_model(batch, amp_dtype), batch["valid_mask"])
-            losses = bc_loss(out, batch, loss_cfg)
+            losses = bc_loss(out, batch, loss_cfg, model.active_aux_specs)
         scaler.scale(losses["total"]).backward()
         scaler.step(optim)
         scaler.update()
@@ -635,7 +635,11 @@ def train_loop(
             if config.skip_val:
                 val_summary = None
             else:
-                capture = FrameRecordCapture() if config.dump_val_frames else None
+                capture = (
+                    FrameRecordCapture(state.model.active_aux_specs)
+                    if config.dump_val_frames
+                    else None
+                )
                 val_summary = run_val(
                     model=state.model,
                     val_samples=val_samples,

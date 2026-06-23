@@ -1,10 +1,8 @@
 """The aux-head registry: variant-string → spec, the single dispatch point.
 
-Pipeline sites select a spec two ways. Construction-time sites (model, dataset,
-eval) key on `arch.elim_head_variant` via `spec_for`. The loss and dump, which
-receive only `model_out`/`out` and no arch, instead iterate `REGISTRY` and act on
-the spec whose `output_key` is present — preserving the existing "no-op unless the
-head emitted its logits" gating.
+`spec_for` resolves the variant string to a spec at construction.
+`BCModel` builds the head(s) and keeps the resolved spec as `active_aux_specs`. 
+The dataset workers also use `spec_for`, and the model isn't available.
 """
 
 from __future__ import annotations
