@@ -37,7 +37,7 @@ from training.bc import mask as bc_mask
 from training.bc import obs as bc_obs
 from training.bc.checkpoint import is_arch_bearing, load_bc_model
 from training.bc.constants import H_PADDED, W_PADDED
-from training.bc.model import BCModel, flatten_policy_logits
+from training.bc.model import BCModel, ModelOut, flatten_policy_logits
 from training.bc.obs import pad_initial_generals
 from training.bc.obs_config import ObsConfig
 from training.bc.player_status import precompute_player_status
@@ -53,11 +53,6 @@ def default_device() -> torch.device:
     if torch.cuda.is_available():
         return torch.device("cuda")
     return torch.device("cpu")
-
-
-# One batched forward's raw output (batch dim intact). Opaque to the generic
-# runner, which only shuttles it from forward_batch into decode_batch.
-ModelOutput = dict[str, torch.Tensor]
 
 
 @dataclass(frozen=True, slots=True)
@@ -98,7 +93,10 @@ class BCModelHandle:
 
     @classmethod
     def load(
-        cls, path: str | Path, device: torch.device, value_head_variant: str = "direct",
+        cls,
+        path: str | Path,
+        device: torch.device,
+        value_head_variant: str = "direct",
     ) -> BCModelHandle:
         """Load a checkpoint into a handle. `value_head_variant` is a legacy-only
         fallback — used when the checkpoint has no `arch` key, ignored otherwise.
@@ -117,13 +115,16 @@ class BCModelHandle:
         return cls(model, device, model_key=model_key)
 
     def forward_batch(
-        self, obs_batch: np.ndarray, valid_batch: np.ndarray,
-    ) -> ModelOutput:
+        self,
+        obs_batch: np.ndarray,
+        valid_batch: np.ndarray,
+    ) -> ModelOut:
         """Run one forward over a stacked batch; return the raw batched output.
 
         obs_batch:   fp16/fp32 [B, OBS_CHANNELS, H_PADDED, W_PADDED]
         valid_batch: bool      [B, 1, H_PADDED, W_PADDED]
-        Returns {policy_logits [B,8,H,W], pass_logit [B], value_logits [B,8]}.
+        Returns a `ModelOut` (policy_logits [B,8,H,W], pass_logit [B],
+        value_logits [B,8]); inference builds no aux head.
         """
         # Inference runs fp32 (no autocast), so coerce obs to fp32 — a no-op for
         # an fp32 obs, an on-device upcast for an fp16 one (matches the training
@@ -134,7 +135,10 @@ class BCModelHandle:
             return self.model(obs_t, valid_t)
 
     def decode_batch(
-        self, out: ModelOutput, mask_batch: np.ndarray, configs: list[DecodeConfig],
+        self,
+        out: ModelOut,
+        mask_batch: np.ndarray,
+        configs: list[DecodeConfig],
     ) -> list[RowDecision]:
         """Turn a batched forward output into one `RowDecision` per row, paying a
         single GPU→CPU sync. All policy/pass/value math is batched; per-row
@@ -144,13 +148,13 @@ class BCModelHandle:
         mask_batch: bool [B, H, W, 8] per-cell legality (stacked policy masks).
         """
         device = self.device
-        B = out["pass_logit"].shape[0]
+        B = out.pass_logit.shape[0]
         mask_t = torch.from_numpy(mask_batch).to(device)               # [B,H,W,8]
-        masked = flatten_policy_logits(out["policy_logits"], mask_t)   # [B, H*W*8]
+        masked = flatten_policy_logits(out.policy_logits, mask_t)      # [B, H*W*8]
         has_legal = mask_t.reshape(B, -1).any(dim=1)                   # [B]
 
         # Value head: categorical placement over 8 classes (0=1st … 7=8th).
-        value_probs = torch.softmax(out["value_logits"], dim=1)        # [B,8]
+        value_probs = torch.softmax(out.value_logits, dim=1)           # [B,8]
         placements = torch.arange(
             value_probs.shape[1], dtype=value_probs.dtype, device=device,
         )
@@ -159,8 +163,8 @@ class BCModelHandle:
         value_entropy = -(value_probs * (value_probs + 1e-12).log()).sum(dim=1)
 
         # Pass head.
-        pass_prob = torch.sigmoid(out["pass_logit"])                   # [B]
-        hard_pass = out["pass_logit"] > 0                              # [B] (argmax path)
+        pass_prob = torch.sigmoid(out.pass_logit)                      # [B]
+        hard_pass = out.pass_logit > 0                                 # [B] (argmax path)
 
         # Policy head diagnostics (untempered, masked).
         pol_probs = torch.softmax(masked, dim=1)                       # [B, H*W*8]

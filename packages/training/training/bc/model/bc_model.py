@@ -6,8 +6,9 @@ architecture (Perolat 2022, arXiv:2206.15378, supplementary Fig. 7) at the
 half-width 128/128/160 variant (see `bc/model/trunk.py`). Three heads read
 off the trunk's [B, C, H, W] spatial embedding (see `bc/model/heads/`).
 
-The model returns a dict so the loss code can address each head's output
-independently and the overfit harness can log component-wise losses.
+The model returns a `ModelOut` (see `model/output.py`) so the loss code can
+address each head's output independently and the overfit harness can log
+component-wise losses.
 
 Two deviations from the inherited design (`network-architecture-design.md`)
 are flagged in code:
@@ -26,6 +27,7 @@ from training.bc.aux_heads import AuxHeadSpec, spec_for
 from training.bc.model.heads.pass_head import PassHead
 from training.bc.model.heads.policy import PolicyHead
 from training.bc.model.heads.value import ValueHead
+from training.bc.model.output import ModelOut
 from training.bc.model.trunk import PyramidModule
 from training.bc.model_config import MODEL_CONFIG_DEFAULTS, ModelConfig
 
@@ -83,30 +85,31 @@ class BCModel(nn.Module):
 
     def forward(
         self, obs: torch.Tensor, valid_mask: torch.Tensor
-    ) -> dict[str, torch.Tensor]:
+    ) -> ModelOut:
         """
         obs:        `[B, in_ch, H, W]`
         valid_mask: `[B, 1, H, W]` bool — True over the unpadded board region.
 
-        Returns:
+        Returns a `ModelOut` with:
           - `policy_logits`: `[B, 8, H, W]`  (NCHW; loss code does the
             permute to cell-major flat layout and applies the per-cell
             legality mask)
           - `pass_logit`: `[B]`              (pre-sigmoid; masked pool)
           - `value_logits`: `[B, 8]`          (padded cells masked before flatten)
-          - `elim_logits`: `[B, 8, n_bins]`   (only the `time_bin` elim variant)
-          - `next_elim_logits`: `[B, 8]`      (only the `next_death` elim variant)
-
-          The two elim keys are mutually exclusive (one variant is built at a
-          time); downstream consumers presence-gate on whichever key is emitted.
+          - `aux`: the active aux head's logits keyed by `output_key` —
+            `elim_logits` `[B, 8, n_bins]` for `time_bin`, `next_elim_logits`
+            `[B, 8]` for `next_death`. Empty for a non-aux run (the variants are
+            mutually exclusive; at most one head is built).
         """
         trunk_out = self.trunk(obs)
-        out = {
-            "policy_logits": self.policy_head(trunk_out),
-            "pass_logit": self.pass_head(trunk_out, valid_mask),
-            "value_logits": self.value_head(trunk_out, valid_mask),
-        }
+        aux: dict[str, torch.Tensor] = {}
         if self.elim_head is not None:
             assert self.elim_output_key is not None  # set together with elim_head
-            out[self.elim_output_key] = self.elim_head(trunk_out, valid_mask)
-        return out
+            aux[self.elim_output_key] = self.elim_head(trunk_out, valid_mask)
+        return ModelOut(
+            policy_logits=self.policy_head(trunk_out),
+            pass_logit=self.pass_head(trunk_out, valid_mask),
+            value_logits=self.value_head(trunk_out, valid_mask),
+            aux=aux,
+            active_aux_specs=self.active_aux_specs,
+        )

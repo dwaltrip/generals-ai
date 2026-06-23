@@ -45,7 +45,7 @@ import torch.nn.functional as F
 
 from training.bc.actions import _PASS_FLAT_IDX
 from training.bc.aux_heads import AuxHeadSpec
-from training.bc.model import flatten_policy_logits
+from training.bc.model import ModelOut, flatten_policy_logits
 from training.bc.soft_target import _soft_target_kernel
 
 
@@ -141,20 +141,21 @@ DEFAULT_LOSS_CFG = LossConfig()
 
 
 def bc_loss(
-    model_out: dict[str, torch.Tensor],
+    model_out: ModelOut,
     targets: dict[str, torch.Tensor],
     cfg: LossConfig = DEFAULT_LOSS_CFG,
-    active_aux_specs: tuple[AuxHeadSpec, ...] = (),
 ) -> dict[str, torch.Tensor]:
     """
     One-step loss over a batch.
 
     Inputs
     ------
-    model_out
+    model_out (a `ModelOut`)
         - `policy_logits`: `[B, 8, H, W]` (NCHW; from `PolicyHead`)
         - `pass_logit`:    `[B]`         (pre-sigmoid)
         - `value_logits`:  `[B, 8]`
+        - `aux`:               active aux-head logits, keyed by `output_key`
+        - `active_aux_specs`:  the built aux heads — the loss computes a term for each
 
     targets (collated from `dataset.encode_frame`)
         - `mask`:          `[B, H, W, 8]` bool, per-cell legality
@@ -172,13 +173,11 @@ def bc_loss(
         - `n_non_pass`: 0-d int tensor, number of non-pass frames in the batch
                        (debugging signal for the overfit harness)
 
-    `active_aux_specs` is the caller's list of built aux heads (the model's own
-    `BCModel.active_aux_specs`); the loss computes a term for each. Each active
-    head asserts its logits are present, so a declared/built mismatch is loud,
-    not a silent no-op.
+    The loss computes a term for each spec in `model_out.active_aux_specs`.
+    `ModelOut` asserts that each active head has its expected output.
 
-    When `time_bin` is among `active_aux_specs`, three more keys appear (absent
-    otherwise, so non-elim runs are unchanged):
+    When `time_bin` is among `model_out.active_aux_specs`, three more keys appear
+    (absent otherwise, so non-elim runs are unchanged):
         - `elim`:      hard elim CE, masked-mean over alive (player, frame)
                        pairs — the reporting metric
         - `elim_soft`: soft-target elim CE, the trained objective
@@ -186,8 +185,8 @@ def bc_loss(
         - `n_elim`:    0-d int tensor, count of alive (player, frame) pairs
                        (the accumulator weight for the elim means)
 
-    When `next_death` is among `active_aux_specs` (mutually exclusive with
-    `time_bin`), three keys appear instead:
+    When `next_death` is among `model_out.active_aux_specs` (mutually exclusive
+    with `time_bin`), three keys appear instead:
         - `next_elim`:      hard who-is-removed-next CE against the one-hot next
                             victim, mean over frames with a defined next removal
                             (winner-tail frames excluded via -1) — the reporting
@@ -197,9 +196,9 @@ def bc_loss(
         - `n_next_elim`:    0-d int tensor, count of those frames (the accumulator
                             weight for the next_elim means)
     """
-    policy_logits = model_out["policy_logits"]  # [B, 8, H, W]
-    pass_logit = model_out["pass_logit"]        # [B]
-    value_logits = model_out["value_logits"]    # [B, 8]
+    policy_logits = model_out.policy_logits  # [B, 8, H, W]
+    pass_logit = model_out.pass_logit        # [B]
+    value_logits = model_out.value_logits    # [B, 8]
 
     mask = targets["mask"]                      # [B, H, W, 8] bool
     action_target = targets["action_target"]    # [B] int64
@@ -260,19 +259,14 @@ def bc_loss(
         "n_non_pass": n_non_pass,
     }
 
-    # Aux-head terms: each active head computes its loss and its metrics ride into
-    # `out`; `_assemble_total` then folds the trained terms into `total`.
-    for spec in active_aux_specs:
-        # A declared-active head must have emitted its logits — a miss means the
-        # model and the passed-in spec list disagree on what was built.
-        assert spec.output_key in model_out, (
-            f"active aux head {spec.name!r} did not emit {spec.output_key!r}"
-        )
+    # Aux-head terms: each active head computes its loss and metrics.
+    # `_assemble_total` then folds the trained terms into `total`.
+    for spec in model_out.active_aux_specs:
         res = spec.loss(model_out, targets, cfg)
         out.update(res.metrics)
         out[spec.count_key] = res.count
 
-    out["total"] = _assemble_total(out, cfg, active_aux_specs)
+    out["total"] = _assemble_total(out, cfg, model_out.active_aux_specs)
     return out
 
 

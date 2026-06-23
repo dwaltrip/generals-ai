@@ -98,9 +98,9 @@ def _run_device(name: str) -> None:
     out_batched = handle.forward_batch(obs_stack, valid_stack)
     batched_rows = [
         {
-            "policy_logits": out_batched["policy_logits"][i],
-            "pass_logit": out_batched["pass_logit"][i],
-            "value_logits": out_batched["value_logits"][i],
+            "policy_logits": out_batched.policy_logits[i],
+            "pass_logit": out_batched.pass_logit[i],
+            "value_logits": out_batched.value_logits[i],
         }
         for i in range(n)
     ]
@@ -110,7 +110,7 @@ def _run_device(name: str) -> None:
     gaps = []
     for i, b in enumerate(batch):
         solo_out = handle.forward_batch(b.obs[None], b.valid_mask[None])
-        solo = {k: solo_out[k][0] for k in ("policy_logits", "pass_logit", "value_logits")}
+        solo = {k: getattr(solo_out, k)[0] for k in ("policy_logits", "pass_logit", "value_logits")}
         bat = batched_rows[i]
         max_dp = max(max_dp, _maxabs(bat["policy_logits"], solo["policy_logits"]))
         max_dpass = max(max_dpass, _maxabs(bat["pass_logit"], solo["pass_logit"]))

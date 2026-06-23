@@ -30,6 +30,6 @@ def test_load_checkpoint_smoke():
     valid_mask = torch.ones((1, 1, H_PADDED, W_PADDED), dtype=torch.bool, device=device)
     with torch.no_grad():
         out = model(obs, valid_mask)
-    assert out["policy_logits"].shape == (1, 8, H_PADDED, W_PADDED)
-    assert out["pass_logit"].shape == (1,)
-    assert out["value_logits"].shape == (1, 8)
+    assert out.policy_logits.shape == (1, 8, H_PADDED, W_PADDED)
+    assert out.pass_logit.shape == (1,)
+    assert out.value_logits.shape == (1, 8)

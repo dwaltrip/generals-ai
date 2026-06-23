@@ -14,6 +14,7 @@ import torch
 import torch.nn.functional as F
 
 from training.bc.eval import FrameRecordCapture, dump_path, save_dump
+from training.bc.model import ModelOut
 
 
 def _fake_batch_and_out(B: int = 4, H: int = 2, W: int = 2):
@@ -28,11 +29,11 @@ def _fake_batch_and_out(B: int = 4, H: int = 2, W: int = 2):
         "action_target": torch.tensor([3, -1, 7, 12]),
         "mask": torch.ones(B, 8, H, W, dtype=torch.bool),
     }
-    out = {
-        "value_logits": torch.randn(B, 8, generator=g),
-        "policy_logits": torch.randn(B, 8, H, W, generator=g),
-        "pass_logit": torch.randn(B, generator=g),
-    }
+    out = ModelOut(
+        policy_logits=torch.randn(B, 8, H, W, generator=g),
+        pass_logit=torch.randn(B, generator=g),
+        value_logits=torch.randn(B, 8, generator=g),
+    )
     return batch, out
 
 
@@ -50,7 +51,7 @@ def test_capture_records_and_save(tmp_path):
     np.testing.assert_array_equal(records["persp_val_index"][:4], [0, 0, 1, 1])
 
     # Value head math vs a hand reduction; probs stored fp16, rows sum to 1.
-    logp = F.log_softmax(out["value_logits"], dim=1)
+    logp = F.log_softmax(out.value_logits, dim=1)
     expected_ce = -logp[torch.arange(4), batch["value_target"]].numpy()
     np.testing.assert_allclose(records["value_ce"][:4], expected_ce, rtol=1e-6)
     assert records["value_probs"].dtype == np.float16

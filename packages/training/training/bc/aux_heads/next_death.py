@@ -11,7 +11,7 @@ computed offline from the dump. See
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import torch
 import torch.nn as nn
@@ -19,6 +19,10 @@ import torch.nn.functional as F
 
 from training.bc.aux_heads.base import AuxLossResult
 from training.bc.targets.elim_targets import ElimCtx, next_death_target
+
+
+if TYPE_CHECKING:
+    from training.bc.model.output import ModelOut
 
 
 class NextDeathSpec:
@@ -50,11 +54,11 @@ class NextDeathSpec:
 
     def loss(
         self,
-        model_out: dict[str, torch.Tensor],
+        model_out: ModelOut,
         targets: dict[str, torch.Tensor],
         cfg: Any,
     ) -> AuxLossResult:
-        nd_logits = model_out["next_elim_logits"]       # [B, 8]
+        nd_logits = model_out.aux["next_elim_logits"]   # [B, 8]
         nd_target = targets["next_elim_target"]         # [B] int64, -1 = ignore
         present_mask = targets["present_mask"]          # [B, 8] bool
         # Cross-player softmax over the present field only: removed/phantom
@@ -101,7 +105,7 @@ class NextDeathSpec:
 
     def dump_records(
         self,
-        out: dict[str, torch.Tensor],
+        out: ModelOut,
         moved_batch: dict[str, torch.Tensor],
         host_batch: dict[str, torch.Tensor],
     ) -> dict[str, torch.Tensor]:
@@ -109,7 +113,7 @@ class NextDeathSpec:
         # Masked to present players (removed/phantom → -inf → prob 0); winner-tail
         # frames (target -1) get NaN CE (nan-aware reductions downstream).
         present_mask = moved_batch["present_mask"]
-        nd_logits = out["next_elim_logits"].float().masked_fill(
+        nd_logits = out.aux["next_elim_logits"].float().masked_fill(
             ~present_mask, float("-inf")
         )
         nd_logp = F.log_softmax(nd_logits, dim=1)       # [B, 8]
@@ -140,7 +144,7 @@ class NextDeathSpec:
     def eval_update(
         self,
         meter: Any,
-        out: dict[str, torch.Tensor],
+        out: ModelOut,
         batch: dict[str, torch.Tensor],
     ) -> None:
         return None

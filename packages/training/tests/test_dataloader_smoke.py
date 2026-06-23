@@ -111,9 +111,9 @@ def test_dataloader_pipeline_smoke(
         # fp32 model, no autocast here → upcast the (fp16-default) obs, mirroring
         # the no-autocast branch of shared.device.obs_for_model.
         out = model(obs.float(), valid_mask)
-    assert out["policy_logits"].shape == (BATCH_SIZE, 8, H_PADDED, W_PADDED)
-    assert out["pass_logit"].shape == (BATCH_SIZE,)
-    assert out["value_logits"].shape == (BATCH_SIZE, 8)
+    assert out.policy_logits.shape == (BATCH_SIZE, 8, H_PADDED, W_PADDED)
+    assert out.pass_logit.shape == (BATCH_SIZE,)
+    assert out.value_logits.shape == (BATCH_SIZE, 8)
 
 
 def test_obs_fp16_matches_fp32_downcast(samples: list[tuple[Path, int]]) -> None:

@@ -27,7 +27,7 @@ def _one_step(state: TrainingState, device: torch.device) -> None:
     obs = torch.zeros(2, OBS_CHANNELS, H_PADDED, W_PADDED, device=device)
     valid_mask = torch.ones(2, 1, H_PADDED, W_PADDED, dtype=torch.bool, device=device)
     out = state.model(obs, valid_mask)
-    loss = out["policy_logits"].sum() + out["pass_logit"].sum() + out["value_logits"].sum()
+    loss = out.policy_logits.sum() + out.pass_logit.sum() + out.value_logits.sum()
     state.optim.zero_grad()
     state.scaler.scale(loss).backward()
     state.scaler.step(state.optim)

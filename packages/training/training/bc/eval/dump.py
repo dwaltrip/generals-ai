@@ -33,9 +33,8 @@ import torch
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
 
-from training.bc.aux_heads import AuxHeadSpec
 from training.bc.dataset import IterableDataset, assert_safe_loader
-from training.bc.model import BCModel, flatten_policy_logits
+from training.bc.model import BCModel, ModelOut, flatten_policy_logits
 from training.bc.obs_config import ObsConfig
 from training.shared.device import dataloader_kwargs, move_batch, obs_for_model
 
@@ -50,14 +49,14 @@ class FrameRecordCapture:
     Requires the dataset to be built with `include_frame_info=True` — the
     provenance scalars come from the batch, not the model.
 
-    `active_aux_specs` is the model's built aux heads (`BCModel.active_aux_specs`);
-    each contributes its per-frame dump columns. Empty means no aux heads.
+    Each batch's `ModelOut` carries its own `aux_specs`, so `add_batch` records
+    the active aux heads' columns without the capture needing to be told which
+    heads are live.
     """
 
-    def __init__(self, active_aux_specs: tuple[AuxHeadSpec, ...] = ()) -> None:
+    def __init__(self) -> None:
         self._cols: dict[str, list[np.ndarray]] = {}
         self.n_frames = 0
-        self._active_aux_specs = active_aux_specs
 
     def _push(self, name: str, t: torch.Tensor) -> None:
         # Copy host-resident tensors: DataLoader batches may live in pinned
@@ -74,7 +73,7 @@ class FrameRecordCapture:
         self,
         host_batch: dict[str, torch.Tensor],
         moved_batch: dict[str, torch.Tensor],
-        out: dict[str, torch.Tensor],
+        out: ModelOut,
     ) -> None:
         """Record one batch's frames.
 
@@ -94,7 +93,7 @@ class FrameRecordCapture:
         # (prediction entropy, argmax mode share; measured impact ≤3e-4 on
         # both), and halving them cuts the compressed artifact ~35%. The
         # load-bearing CE column stays fp32.
-        value_logp = F.log_softmax(out["value_logits"].float(), dim=1)
+        value_logp = F.log_softmax(out.value_logits.float(), dim=1)
         value_ce = -value_logp.gather(
             1, moved_batch["value_target"].unsqueeze(1)
         ).squeeze(1)
@@ -105,7 +104,7 @@ class FrameRecordCapture:
         # frames carry no action target, so their policy CE is NaN'd in
         # place — downstream report code uses nan-aware reductions.
         masked = flatten_policy_logits(
-            out["policy_logits"].float(), moved_batch["mask"]
+            out.policy_logits.float(), moved_batch["mask"]
         )
         pol_logp = F.log_softmax(masked, dim=1)
         target = moved_batch["action_target"]
@@ -128,15 +127,12 @@ class FrameRecordCapture:
         non_pass = ~is_pass
         self._push("top1", (topk[:, 0] == target) & non_pass)
         self._push("top3", (target.unsqueeze(1) == topk).any(dim=1) & non_pass)
-        self._push("pass_prob", torch.sigmoid(out["pass_logit"].float()))
+        self._push("pass_prob", torch.sigmoid(out.pass_logit.float()))
 
         # Aux heads (elim variants): each built head contributes its dump columns
         # (per-frame distribution, hard CE, targets/masks). Empty for non-aux runs.
         # The dump CE is unweighted/hard — see each spec's `dump_records`.
-        for spec in self._active_aux_specs:
-            assert spec.output_key in out, (
-                f"active aux head {spec.name!r} did not emit {spec.output_key!r}"
-            )
+        for spec in out.active_aux_specs:
             for key, val in spec.dump_records(out, moved_batch, host_batch).items():
                 self._push(key, val)
 
@@ -176,7 +172,7 @@ def iter_val_forward(
     amp_dtype: torch.dtype | None = None,
     pin_memory: bool | None = None,
     prefetch_factor: int = 2,
-) -> Iterator[tuple[dict, dict, dict]]:
+) -> Iterator[tuple[dict, dict, ModelOut]]:
     """Drive one forward-only val pass, yielding `(host_batch, moved_batch, out)`
     per batch — the loader+loop skeleton shared by both val-metric producers
     (`run_val`'s summary reductions and `capture_val_frames`'s per-frame dump).
@@ -242,7 +238,7 @@ def capture_val_frames(
     model carries the head. `persp_index_map` maps the (possibly subsampled)
     walked sample list back to full-val-split positions for `finalize`.
     """
-    capture = FrameRecordCapture(model.active_aux_specs)
+    capture = FrameRecordCapture()
     elim_on = model.cfg.elim_head_variant is not None
     elim_bin_edges = model.cfg.elim_bin_edges if elim_on else None
     start = time.perf_counter()

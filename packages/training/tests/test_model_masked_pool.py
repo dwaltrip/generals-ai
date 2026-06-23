@@ -110,9 +110,9 @@ def test_value_head_variant_pyramid_adds_expected_capacity() -> None:
     vm = torch.ones(2, 1, H_PADDED, W_PADDED, dtype=torch.bool)
     with torch.no_grad():
         out = m_pyr(obs, vm)
-    assert out["value_logits"].shape == (2, 8)
-    assert out["policy_logits"].shape == (2, 8, H_PADDED, W_PADDED)
-    assert out["pass_logit"].shape == (2,)
+    assert out.value_logits.shape == (2, 8)
+    assert out.policy_logits.shape == (2, 8, H_PADDED, W_PADDED)
+    assert out.pass_logit.shape == (2,)
 
 
 def test_elim_head_disabled_by_default_adds_no_state() -> None:
@@ -128,7 +128,7 @@ def test_elim_head_disabled_by_default_adds_no_state() -> None:
     vm = torch.ones(2, 1, H_PADDED, W_PADDED, dtype=torch.bool)
     with torch.no_grad():
         out = m(obs, vm)
-    assert "elim_logits" not in out
+    assert "elim_logits" not in out.aux
 
 
 def test_elim_head_time_bin_shape_and_isolated_keys() -> None:
@@ -143,8 +143,8 @@ def test_elim_head_time_bin_shape_and_isolated_keys() -> None:
     vm = torch.ones(3, 1, H_PADDED, W_PADDED, dtype=torch.bool)
     with torch.no_grad():
         out = m(obs, vm)
-    assert out["elim_logits"].shape == (3, 8, cfg.elim_n_bins)
-    assert "next_elim_logits" not in out
+    assert out.aux["elim_logits"].shape == (3, 8, cfg.elim_n_bins)
+    assert "next_elim_logits" not in out.aux
 
     extra = set(m.state_dict()) - set(BCModel().state_dict())
     assert extra and all(k.startswith("elim_head.") for k in extra)
@@ -163,8 +163,8 @@ def test_elim_head_next_death_shape_and_isolated_keys() -> None:
     vm = torch.ones(3, 1, H_PADDED, W_PADDED, dtype=torch.bool)
     with torch.no_grad():
         out = m(obs, vm)
-    assert out["next_elim_logits"].shape == (3, 8)
-    assert "elim_logits" not in out
+    assert out.aux["next_elim_logits"].shape == (3, 8)
+    assert "elim_logits" not in out.aux
 
     extra = set(m.state_dict()) - set(BCModel().state_dict())
     assert extra and all(k.startswith("elim_head.") for k in extra)

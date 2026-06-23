@@ -9,7 +9,7 @@ diagnostic meter is `eval/metrics.py:ElimMeter`. See
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import torch
 import torch.nn as nn
@@ -18,6 +18,10 @@ import torch.nn.functional as F
 from training.bc.aux_heads.base import AuxLossResult
 from training.bc.soft_target import _elim_weight_tensor, _soft_target_kernel
 from training.bc.targets.elim_targets import ElimCtx, time_bin_targets
+
+
+if TYPE_CHECKING:
+    from training.bc.model.output import ModelOut
 
 
 class TimeBinSpec:
@@ -46,11 +50,11 @@ class TimeBinSpec:
 
     def loss(
         self,
-        model_out: dict[str, torch.Tensor],
+        model_out: ModelOut,
         targets: dict[str, torch.Tensor],
         cfg: Any,
     ) -> AuxLossResult:
-        elim_logits = model_out["elim_logits"]          # [B, 8, n_bins]
+        elim_logits = model_out.aux["elim_logits"]      # [B, 8, n_bins]
         elim_bin_target = targets["elim_bin_target"]    # [B, 8] int64
         alive_mask = targets["alive_mask"]              # [B, 8] bool
         n_bins = elim_logits.shape[2]
@@ -95,14 +99,14 @@ class TimeBinSpec:
 
     def dump_records(
         self,
-        out: dict[str, torch.Tensor],
+        out: ModelOut,
         moved_batch: dict[str, torch.Tensor],
         host_batch: dict[str, torch.Tensor],
     ) -> dict[str, torch.Tensor]:
         # Per-(player, frame) bin distribution + hard CE. CE is unweighted (the
         # report wants per-bin unweighted CE; matches the loss's `elim` only when
         # `elim_bin_weights` is None, the current default).
-        elim_logp = F.log_softmax(out["elim_logits"].float(), dim=2)
+        elim_logp = F.log_softmax(out.aux["elim_logits"].float(), dim=2)
         elim_ce = -elim_logp.gather(
             2, moved_batch["elim_bin_target"].unsqueeze(2)
         ).squeeze(2)
@@ -123,10 +127,10 @@ class TimeBinSpec:
     def eval_update(
         self,
         meter: Any,
-        out: dict[str, torch.Tensor],
+        out: ModelOut,
         batch: dict[str, torch.Tensor],
     ) -> None:
-        meter.update(out["elim_logits"], batch["elim_bin_target"], batch["alive_mask"])
+        meter.update(out.aux["elim_logits"], batch["elim_bin_target"], batch["alive_mask"])
 
     def eval_summary(
         self, meter: Any, accum_summary: dict[str, float | int]

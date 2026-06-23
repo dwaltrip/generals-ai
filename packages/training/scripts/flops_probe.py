@@ -64,7 +64,7 @@ def main() -> None:
         x = torch.zeros(1, in_ch, H_PADDED, W_PADDED)
         vm = torch.ones(1, 1, H_PADDED, W_PADDED, dtype=torch.bool)
         out = model(x, vm)
-        return out["policy_logits"].sum() + out["pass_logit"].sum() + out["value_logits"].sum()
+        return out.policy_logits.sum() + out.pass_logit.sum() + out.value_logits.sum()
 
     fb_flops = measure_total_flops(fwd_bwd_b1)
     print(f"fwd+bwd FLOPs (B=1): {fb_flops:,} ({fb_flops / 1e9:.3f} GFLOPs)")
@@ -76,7 +76,7 @@ def main() -> None:
         x = torch.zeros(8, in_ch, H_PADDED, W_PADDED)
         vm = torch.ones(8, 1, H_PADDED, W_PADDED, dtype=torch.bool)
         out = model(x, vm)
-        return out["policy_logits"].sum() + out["pass_logit"].sum() + out["value_logits"].sum()
+        return out.policy_logits.sum() + out.pass_logit.sum() + out.value_logits.sum()
 
     b8_flops = measure_total_flops(fwd_bwd_b8)
     print(f"\nfwd+bwd FLOPs (B=8): {b8_flops:,} ({b8_flops / 1e9:.3f} GFLOPs)")

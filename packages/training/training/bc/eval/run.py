@@ -145,7 +145,7 @@ def run_val(
             dtype=amp_dtype or torch.float32,
             enabled=amp_dtype is not None,
         ):
-            losses = bc_loss(out, batch, loss_cfg, model.active_aux_specs)
+            losses = bc_loss(out, batch, loss_cfg)
         B = batch["obs"].shape[0]
         acc.update(losses, batch_size=B)
 
@@ -158,8 +158,8 @@ def run_val(
         mask = batch["mask"]
         action_target = batch["action_target"]
         is_pass = batch["is_pass"]
-        pass_logit = out["pass_logit"]
-        policy_logits = out["policy_logits"]
+        pass_logit = out.pass_logit
+        policy_logits = out.policy_logits
 
         # Top-k indices on the flat masked layout. The k=3 result serves both
         # top-1 (column 0) and top-3 (any-match across the 3 columns) with a
@@ -185,7 +185,7 @@ def run_val(
 
         dist_meter.update(topk[:, 0], action_target, non_pass)
 
-        if elim_spec is not None and elim_meter is not None and elim_spec.output_key in out:
+        if elim_spec is not None and elim_meter is not None and elim_spec.output_key in out.aux:
             elim_spec.eval_update(elim_meter, out, batch)
 
     duration_sec = time.perf_counter() - val_start

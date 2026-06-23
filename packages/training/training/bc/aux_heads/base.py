@@ -13,10 +13,14 @@ See `docs/2026-06/6.21-1-aux-head-spec-registry-refactor.md`.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 import torch
 import torch.nn as nn
+
+
+if TYPE_CHECKING:
+    from training.bc.model.output import ModelOut
 
 
 @dataclass
@@ -76,14 +80,14 @@ class AuxHeadSpec(Protocol):
 
     def loss(
         self,
-        model_out: dict[str, torch.Tensor],
+        model_out: ModelOut,
         targets: dict[str, torch.Tensor],
         cfg: Any,
     ) -> AuxLossResult: ...
 
     def dump_records(
         self,
-        out: dict[str, torch.Tensor],
+        out: ModelOut,
         moved_batch: dict[str, torch.Tensor],
         host_batch: dict[str, torch.Tensor],
     ) -> dict[str, torch.Tensor]: ...
@@ -93,7 +97,7 @@ class AuxHeadSpec(Protocol):
     def eval_update(
         self,
         meter: Any,
-        out: dict[str, torch.Tensor],
+        out: ModelOut,
         batch: dict[str, torch.Tensor],
     ) -> None: ...
 

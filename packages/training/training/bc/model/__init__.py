@@ -13,6 +13,7 @@ from training.bc.model.heads.elim_time_bin import ElimTimeBinHead
 from training.bc.model.heads.pass_head import PassHead
 from training.bc.model.heads.policy import MASK_NEG, PolicyHead, flatten_policy_logits
 from training.bc.model.heads.value import ValueHead
+from training.bc.model.output import ModelOut
 from training.bc.model.trunk import PyramidModule
 
 
@@ -21,6 +22,7 @@ __all__ = [
     "BCModel",
     "ElimNextDeathHead",
     "ElimTimeBinHead",
+    "ModelOut",
     "PassHead",
     "PolicyHead",
     "PyramidModule",
