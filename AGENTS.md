@@ -4,7 +4,9 @@ Building an AI bot to play the [generals.io](https://generals.io) strategy game 
 
 Always check [`README.md`](./README.md) — it carries current material this file doesn't duplicate (e.g. the frozen-representation probe tooling). It's known to be partly out of date and is being brought back into sync over time, so prefer the docs it links and this file where they conflict, but read it for anything not covered here.
 
-## Code comments and docstrings: ongoing improvements
+## Code comments and docstrings cleanup
+
+This is the project's addition to the global "Finishing pass", alongside read-clean / plainly-written / well-calibrated. It is an ongoing effort to clean up existing code comments and docstrings, as well as  ensure that new ones don't inadvertently inherit the problematic styles (see below).
 
 Existing comments and docstrings are uneven — written fast and agent-authored without much oversight. Two past workflow issues pushed the prose in opposite directions: a semicolon style-contagion made it overly terse and cramped, and a since-corrected memory rule that demanded long docstrings across the training code made it overly verbose. Beyond those, plenty is simply low-value or misplaced. Recent comments are generally better. We're in an open-ended fix-as-we-go phase: apply the keep-or-drop test below to the comments and docstrings on code you touch, rather than trusting them on sight.
 
