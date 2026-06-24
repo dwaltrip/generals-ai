@@ -127,20 +127,20 @@ def _arch_for_load(obj: object, value_head_variant: str) -> ModelConfig:
     gets the whole legacy obs config via the top-level fill).
     """
     if is_combined_checkpoint(obj) and "arch" in obj:
-        recorded = dict(obj["arch"])
+        ckpt_arch = dict(obj["arch"])
         # Migrate the retired `elim_head_enabled` flag to `elim_head_variant`.
         # Every checkpoint that recorded an enabled elim head was the time_bin
         # head (the only variant that existed then); disabled → no head (None).
         # Drop the removed key so it can't reach `build_model_cfg`/`replace()`,
         # and only synthesize a variant if the checkpoint didn't already record
         # one (a post-migration checkpoint records `elim_head_variant` directly).
-        if "elim_head_enabled" in recorded:
-            was_enabled = recorded.pop("elim_head_enabled")
-            recorded.setdefault(
+        if "elim_head_enabled" in ckpt_arch:
+            was_enabled = ckpt_arch.pop("elim_head_enabled")
+            ckpt_arch.setdefault(
                 "elim_head_variant", "time_bin" if was_enabled else None
             )
-        obs = recorded.get("obs")
-        arch_dict = {**asdict(LEGACY_ARCH), **recorded}
+        obs = ckpt_arch.get("obs")
+        arch_dict = {**asdict(LEGACY_ARCH), **ckpt_arch}
         if isinstance(obs, dict):
             arch_dict["obs"] = {**asdict(LEGACY_OBS_CFG), **obs}
         # in_ch is a recorded checksum (TrainingState.save), derived from obs.
