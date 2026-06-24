@@ -140,11 +140,43 @@ class LossConfig:
 DEFAULT_LOSS_CFG = LossConfig()
 
 
+@dataclass(frozen=True)
+class LossOut:
+    """`bc_loss`'s return as a typed value object.
+
+    The core loss components are typed fields. The variant-gated aux-head metrics
+    and counts live in the untyped `aux` dict (TODO: think about improving that).
+    """
+
+    total: torch.Tensor       # scalar, for .backward()
+    policy: torch.Tensor      # policy CE, mean over non-pass frames
+    value: torch.Tensor       # hard value CE (the reporting metric)
+    # Soft value CE (trained objective). Identical to `value` at tau=0.
+    value_soft: torch.Tensor
+    pass_loss: torch.Tensor   # pass BCE. `pass_loss` as `pass` is a keyword.
+    n_non_pass: torch.Tensor  # 0-d int, non-pass frame count
+    # Variant-gated aux metrics + counts, keyed by each active spec's
+    # `metric_keys` / `count_key`. Empty for non-aux runs.
+    aux: dict[str, torch.Tensor] = field(default_factory=dict)
+    # The active aux specs this output carries — the same list as
+    # `ModelOut.active_aux_specs`, threaded through so consumers (the accumulator,
+    # the train-loop reporters) iterate exactly the built heads.
+    active_aux_specs: tuple[AuxHeadSpec, ...] = ()
+
+    def __post_init__(self) -> None:
+        # Validate that `aux` carries every metric + count the active heads declare.
+        for spec in self.active_aux_specs:
+            for key in (*spec.metric_keys, spec.count_key):
+                assert key in self.aux, (
+                    f"aux head {spec.name!r} declared but {key!r} not emitted"
+                )
+
+
 def bc_loss(
     model_out: ModelOut,
     targets: dict[str, torch.Tensor],
     cfg: LossConfig = DEFAULT_LOSS_CFG,
-) -> dict[str, torch.Tensor]:
+) -> LossOut:
     """
     One-step loss over a batch.
 
@@ -163,21 +195,19 @@ def bc_loss(
         - `is_pass`:       `[B]` bool
         - `value_target`:  `[B]` int64 (placement class 0..7)
 
-    Returns a dict
-        - `total`:    scalar loss for `.backward()`
-        - `policy`:   policy CE (mean over non-pass frames; 0 if batch is all pass)
-        - `value`:    hard value CE (mean over batch) — the reporting metric
+    Returns a `LossOut` (core fields, always present):
+        - `total`:      scalar loss for `.backward()`
+        - `policy`:     policy CE (mean over non-pass frames; 0 if batch is all pass)
+        - `value`:      hard value CE (mean over batch) — the reporting metric
         - `value_soft`: soft-target value CE, the trained objective
-                       (same tensor as `value` at τ=0)
-        - `pass`:     pass BCE (mean over batch)
+        - `pass_loss`:  pass BCE (mean over batch)
         - `n_non_pass`: 0-d int tensor, number of non-pass frames in the batch
-                       (debugging signal for the overfit harness)
+                        (debugging signal for the overfit harness)
 
-    The loss computes a term for each spec in `model_out.active_aux_specs`.
-    `ModelOut` asserts that each active head has its expected output.
+    The loss computes a term for each spec in `model_out.active_aux_specs`, storing
+    metrics and count in `LossOut.aux`.
 
-    When `time_bin` is among `model_out.active_aux_specs`, three more keys appear
-    (absent otherwise, so non-elim runs are unchanged):
+    When `time_bin` is active, `aux` carries:
         - `elim`:      hard elim CE, masked-mean over alive (player, frame)
                        pairs — the reporting metric
         - `elim_soft`: soft-target elim CE, the trained objective
@@ -185,8 +215,7 @@ def bc_loss(
         - `n_elim`:    0-d int tensor, count of alive (player, frame) pairs
                        (the accumulator weight for the elim means)
 
-    When `next_death` is among `model_out.active_aux_specs` (mutually exclusive
-    with `time_bin`), three keys appear instead:
+    When `next_death` is active (mutually exclusive with `time_bin`), `aux` carries:
         - `next_elim`:      hard who-is-removed-next CE against the one-hot next
                             victim, mean over frames with a defined next removal
                             (winner-tail frames excluded via -1) — the reporting
@@ -251,6 +280,11 @@ def bc_loss(
         pass_logit, is_pass.float(), reduction="mean"
     )
 
+    # `_assemble_total` needs the raw flat `out` dict so we build that first,
+    # and then finally assemble `LossOut` as the return value.
+    # TODO: This will be cleaned up once `_assemble_total` accepts dataclass
+    # instead of bare dicts. This needs a `LossAccumulator.summary` fixup to
+    # return a dataclass instead of a bare dict (second caller of `_assemble_total`).
     out = {
         "policy": policy_ce,
         "value": value_ce,
@@ -267,7 +301,18 @@ def bc_loss(
         out[spec.count_key] = res.count
 
     out["total"] = _assemble_total(out, cfg, model_out.active_aux_specs)
-    return out
+
+    core = {"total", "policy", "value", "value_soft", "pass", "n_non_pass"}
+    return LossOut(
+        total=out["total"],
+        policy=out["policy"],
+        value=out["value"],
+        value_soft=out["value_soft"],
+        pass_loss=out["pass"],
+        n_non_pass=out["n_non_pass"],
+        aux={k: v for k, v in out.items() if k not in core},
+        active_aux_specs=model_out.active_aux_specs,
+    )
 
 
 @dataclass
@@ -286,11 +331,11 @@ class _AuxAccum:
         self,
         n: int,
         metric_keys: tuple[str, ...],
-        losses: dict[str, torch.Tensor],
+        aux: dict[str, torch.Tensor],
     ) -> None:
         self.count += n
         for k in metric_keys:
-            self.sums[k] = self.sums.get(k, 0.0) + losses[k].item() * n
+            self.sums[k] = self.sums.get(k, 0.0) + aux[k].item() * n
 
 
 @dataclass
@@ -340,21 +385,21 @@ class LossAccumulator:
 
     def update(
         self,
-        losses: dict[str, torch.Tensor],
+        losses: LossOut,
         batch_size: int,
     ) -> None:
-        """Fold one batch's `bc_loss` return dict into the running totals."""
-        n_np = int(losses["n_non_pass"].item())
+        """Fold one batch's `bc_loss` return into the running totals."""
+        n_np = int(losses.n_non_pass.item())
         self.n_non_pass += n_np
         self.n_samples += batch_size
-        self.sum_policy += losses["policy"].item() * n_np
-        self.sum_value += losses["value"].item() * batch_size
-        self.sum_value_soft += losses["value_soft"].item() * batch_size
-        self.sum_pass += losses["pass"].item() * batch_size
+        self.sum_policy += losses.policy.item() * n_np
+        self.sum_value += losses.value.item() * batch_size
+        self.sum_value_soft += losses.value_soft.item() * batch_size
+        self.sum_pass += losses.pass_loss.item() * batch_size
         # Each active head weights its metrics by the head's own count.
         for spec in self.active_aux_specs:
-            n = int(losses[spec.count_key].item())
-            self.aux[spec.name].add(n, spec.metric_keys, losses)
+            n = int(losses.aux[spec.count_key].item())
+            self.aux[spec.name].add(n, spec.metric_keys, losses.aux)
 
     def summary(self) -> dict[str, float | int]:
         """

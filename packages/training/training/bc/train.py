@@ -200,7 +200,7 @@ def train_one_epoch(
         ):
             out = model(obs_for_model(batch, amp_dtype), batch["valid_mask"])
             losses = bc_loss(out, batch, loss_cfg)
-        scaler.scale(losses["total"]).backward()
+        scaler.scale(losses.total).backward()
         scaler.step(optim)
         scaler.update()
 
@@ -213,40 +213,43 @@ def train_one_epoch(
             "epoch": epoch,
             "batch_idx": batch_idx,
             "batch_size": B,
-            "policy": float(losses["policy"].item()),
-            "value": float(losses["value"].item()),
-            "value_soft": float(losses["value_soft"].item()),
-            "pass": float(losses["pass"].item()),
-            "total": float(losses["total"].item()),
+            "policy": float(losses.policy.item()),
+            "value": float(losses.value.item()),
+            "value_soft": float(losses.value_soft.item()),
+            "pass": float(losses.pass_loss.item()),
+            "total": float(losses.total.item()),
             "lr": optim.param_groups[0]["lr"],
-            "n_non_pass": int(losses["n_non_pass"].item()),
+            "n_non_pass": int(losses.n_non_pass.item()),
             "wall_time_sec": round(time.perf_counter() - run_start, 3),
         }
-        # Elim keys appear only when the head is built — keep non-elim rows
-        # byte-identical. The two variants are mutually exclusive.
-        if "elim" in losses:
-            record["elim"] = float(losses["elim"].item())
-            record["elim_soft"] = float(losses["elim_soft"].item())
-            record["n_elim"] = int(losses["n_elim"].item())
-        if "next_elim" in losses:
-            record["next_elim"] = float(losses["next_elim"].item())
-            record["n_next_elim"] = int(losses["n_next_elim"].item())
+        # Log every metric + count each active head declares.
+        # This is a no-op if there are no active aux heads.
+        for spec in model.active_aux_specs:
+            for k in spec.metric_keys:
+                record[k] = float(losses.aux[k].item())
+            record[spec.count_key] = int(losses.aux[spec.count_key].item())
         logger.log_batch(record)
 
         if (batch_idx + 1) % log_every == 0:
             rate = window_samples / (time.perf_counter() - window_start)
-            elim_str = (
-                f"elim {losses['elim'].item():6.4f} " if "elim" in losses else ""
+            # TODO: with soft targets disabled (tau=0) a head's hard and soft
+            # metrics are equal, so this prints the same number twice (e.g.
+            # "elim X elim_soft X"). A later cleanup that makes the aux-spec
+            # metric roles (reporting vs. trained) first-class will fix this.
+            # For now, we simply print every declared metric (rather than encode a
+            # positional which-one-to-show convention or some other brittle hack).
+            aux_str = "".join(
+                f"{k} {losses.aux[k].item():6.4f} "
+                for spec in model.active_aux_specs
+                for k in spec.metric_keys
             )
-            if "next_elim" in losses:
-                elim_str = f"next_elim {losses['next_elim'].item():6.4f} "
             print(
                 f"[epoch {epoch}] batch {batch_idx + 1} | "
-                f"policy {losses['policy'].item():6.4f} "
-                f"value {losses['value'].item():6.4f} "
-                f"pass {losses['pass'].item():6.4f} "
-                f"{elim_str}"
-                f"total {losses['total'].item():6.4f} | "
+                f"policy {losses.policy.item():6.4f} "
+                f"value {losses.value.item():6.4f} "
+                f"pass {losses.pass_loss.item():6.4f} "
+                f"{aux_str}"
+                f"total {losses.total.item():6.4f} | "
                 f"{rate:.0f} samples/sec"
             )
             window_start = time.perf_counter()

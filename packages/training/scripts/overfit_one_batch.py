@@ -156,7 +156,7 @@ def main() -> None:
         # fp32 model, no autocast → upcast the (fp16-default) obs to match.
         out = model(batch["obs"].float(), batch["valid_mask"])
         losses = bc_loss(out, batch)
-        losses["total"].backward()
+        losses.total.backward()
         optim.step()
         last_loss = losses
 
@@ -164,16 +164,16 @@ def main() -> None:
             t_elapsed = time.perf_counter() - t_start
             print(
                 f"{step:>6} "
-                f"{losses['total'].item():>10.4f} "
-                f"{losses['policy'].item():>10.4f} "
-                f"{losses['value'].item():>10.4f} "
-                f"{losses['pass'].item():>10.4f} "
+                f"{losses.total.item():>10.4f} "
+                f"{losses.policy.item():>10.4f} "
+                f"{losses.value.item():>10.4f} "
+                f"{losses.pass_loss.item():>10.4f} "
                 f"{t_elapsed:>8.1f}"
             )
     print("-" * 60)
 
     assert last_loss is not None
-    total = last_loss["total"].item()
+    total = last_loss.total.item()
     print()
     if total < 0.1:
         print(f"OVERFIT SUCCESS: final total loss = {total:.4f}")
