@@ -1,18 +1,29 @@
 # generals-ai
 
+> **Editing this file:** `AGENTS.md` is the real file; `CLAUDE.md` is a symlink to it. Edit `AGENTS.md` directly — writing through the `CLAUDE.md` symlink is refused.
+
 Building an AI bot to play the [generals.io](https://generals.io) strategy game in FFA mode.
 
 Always check [`README.md`](./README.md) — it carries current material this file doesn't duplicate (e.g. the frozen-representation probe tooling). It's known to be partly out of date and is being brought back into sync over time, so prefer the docs it links and this file where they conflict, but read it for anything not covered here.
 
 ## Code comments and docstrings cleanup
 
-This is the project's addition to the global "Finishing pass", alongside read-clean / plainly-written / well-calibrated. It is an ongoing effort to clean up existing code comments and docstrings, as well as  ensure that new ones don't inadvertently inherit the problematic styles (see below).
+This is the project's addition to the global "Finishing pass", alongside read-clean / plainly-written / well-calibrated. It is an ongoing effort to clean up existing code comments and docstrings, as well as ensure that new ones don't inadvertently inherit the problematic styles (see below).
 
 Existing comments and docstrings are uneven — written fast and agent-authored without much oversight. Two past workflow issues pushed the prose in opposite directions: a semicolon style-contagion made it overly terse and cramped, and a since-corrected memory rule that demanded long docstrings across the training code made it overly verbose. Beyond those, plenty is simply low-value or misplaced. Recent comments are generally better. We're in an open-ended fix-as-we-go phase: apply the keep-or-drop test below to the comments and docstrings on code you touch, rather than trusting them on sight.
 
-The keep-or-drop test: a comment or docstring should exist only if it (1) makes sense in this specific location, (2) carries its own weight, and (3) isn't repeating something already expressed well enough by the code or nearby docs. When it passes, write it as clear, legible prose at a length matched to its importance. Otherwise drop it, or move it to where it belongs.
+The keep-or-drop test: a comment or docstring should exist only if it —
 
-A crammed trailing comment (`# X; default Y`) is a common tell: prose squeezed into too small a slot. Usually it wants to become a full leading comment, or to be dropped.
+1. makes sense in this specific location,
+2. carries its own weight, and
+3. isn't repeating something already expressed well enough by the code or nearby docs.
+
+When it passes, write it as clear, legible prose at a length matched to its importance. Otherwise drop it, or move it to where it belongs.
+
+Two common tells:
+
+- **Singling out one of several uniformly-handled things** (check 2): e.g. a docstring noting the function "reads MFU from `summary['mfu']`" when it reads ten `summary` keys the same way. The test: would the same statement be equally true of the siblings it doesn't name? If so it isn't carrying weight — cut it, or, if there's a real pattern, describe the pattern instead of the instance. This tends to slip in because the named item was the salient one when the line was written, and later edits extend the inherited prose instead of re-reading it critically.
+- **A crammed trailing comment** (`# X; default Y`): prose squeezed into too small a slot. Usually it wants to become a full leading comment, or to be dropped.
 
 One carve-out for ML, training, and RL code: a brief note on a genuine ML concept (a standard trick, a literature pattern, the reason behind a design choice) can earn its place even when the code itself is clear. This project doubles as an ML-skills-building exercise for its author, so a concept a learner might not know is worth a sentence or two. Lean toward adding one when a topic has been discussed in depth and the author has been asking learning-type questions — those mark the spots where a concise concept note pays off. Keep it measured and calibrated to the complexity of the topic and length of the discussion triggering the comment.
 

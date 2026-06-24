@@ -34,6 +34,7 @@ import time
 import torch
 from torch.utils.data import DataLoader
 
+from training.bc.aux_heads import AuxHeadSpec
 from training.bc.checkpoint import ckpt_name
 from training.bc.constants import H_PADDED, W_PADDED
 from training.bc.dataset import IterableDataset, assert_safe_loader, timed_collate
@@ -66,6 +67,22 @@ def _fmt_metric(x: float | None, prec: int = 4) -> str:
     """Format a metric for console output, with `n/a` fallback for `None`.
     `run_val` returns `None` for accuracies whose denominators are 0."""
     return f"{x:.{prec}f}" if x is not None else "n/a"
+
+
+def _print_label_aligned_rows(rows: list[tuple[str, str]], prefix: str = "") -> None:
+    """Print `(label, content)` rows with labels right-padded to a common width."""
+    width = max(len(label) for label, _ in rows)
+    for label, content in rows:
+        print(f"{prefix}{label:<{width}} : {content}")
+
+
+# TODO: Short-lived hack. The real fix is a data-model fix (e.g. config-derived
+# metric set, one metric at τ=0, two at τ>0). See the aux-spec metric-roles seam.
+def _aux_keys_without_tau0_dup(spec: AuxHeadSpec, values: dict) -> tuple[str, ...]:
+    """Hack to not show duplicate numbers when both the hard and soft loss values
+    are identical for a head (e.g. for elim-head, when τ=0)."""
+    hard, soft = spec.metric_keys
+    return (hard,) if values[hard] == values[soft] else spec.metric_keys
 
 
 def _measure_model_flops_per_sample(model: BCModel, device: torch.device) -> int:
@@ -232,25 +249,20 @@ def train_one_epoch(
 
         if (batch_idx + 1) % log_every == 0:
             rate = window_samples / (time.perf_counter() - window_start)
-            # TODO: with soft targets disabled (tau=0) a head's hard and soft
-            # metrics are equal, so this prints the same number twice (e.g.
-            # "elim X elim_soft X"). A later cleanup that makes the aux-spec
-            # metric roles (reporting vs. trained) first-class will fix this.
-            # For now, we simply print every declared metric (rather than encode a
-            # positional which-one-to-show convention or some other brittle hack).
-            aux_str = "".join(
-                f"{k} {losses.aux[k].item():6.4f} "
-                for spec in model.active_aux_specs
-                for k in spec.metric_keys
-            )
+            aux_parts = []
+            for spec in model.active_aux_specs:
+                vals = {k: losses.aux[k].item() for k in spec.metric_keys}
+                # TODO: Short-lived hack. See comment above.
+                for k in _aux_keys_without_tau0_dup(spec, vals):
+                    aux_parts.append(f"{k} {vals[k]:6.4f}")
             print(
-                f"[epoch {epoch}] batch {batch_idx + 1} | "
-                f"policy {losses.policy.item():6.4f} "
-                f"value {losses.value.item():6.4f} "
-                f"pass {losses.pass_loss.item():6.4f} "
-                f"{aux_str}"
-                f"total {losses.total.item():6.4f} | "
-                f"{rate:.0f} samples/sec"
+                f"[epoch {epoch}] batch {batch_idx + 1} |",
+                f"policy {losses.policy.item():6.4f}",
+                f"value {losses.value.item():6.4f}",
+                f"pass {losses.pass_loss.item():6.4f}",
+                " ".join(aux_parts),
+                f"total {losses.total.item():6.4f} |",
+                f"{rate:.0f} sps",
             )
             window_start = time.perf_counter()
             window_samples = 0
@@ -442,78 +454,96 @@ def run_training(
         train_loop(state, config, loader, ds, val_samples, device, artifacts)
 
 
-def print_epoch_summary(epoch: int, summary: dict, val_summary: dict | None) -> None:
-    """Print the end-of-epoch console block: train means + throughput,
-    then the val block (or a skip notice). Reads MFU from `summary["mfu"]`
-    (already computed by the caller); omits the MFU clause when it's `None`
-    (unknown device peak)."""
+def print_epoch_summary(
+    epoch: int,
+    summary: dict,
+    val_summary: dict | None,
+    active_aux_specs: tuple[AuxHeadSpec, ...],
+) -> None:
+    """End-of-epoch console blocks: a Train block, then a Val block (or "skipped").
+    Each block is a header line plus labeled, width-aligned metric rows."""
     print()
-    mfu_str = (
-        f" | MFU {summary['mfu'] * 100:.1f}%"
-        if summary["mfu"] is not None else ""
-    )
-    print(
-        f"[epoch {epoch}] complete | "
-        f"{summary['n_samples']:,} frames ({summary['n_non_pass']:,} non-pass) "
-        f"in {summary['duration_sec']:.1f}s | "
-        f"{summary['samples_per_sec']:.0f} samples/sec"
-        f"{mfu_str} ({summary['n_batches']} batches)"
-    )
-    if "elim" in summary:
-        elim_mean = f"  elim {summary['elim']:.4f}"
-    elif "next_elim" in summary:
-        elim_mean = f"  next_elim {summary['next_elim']:.4f}"
-    else:
-        elim_mean = ""
-    print(
-        f"[epoch {epoch}] mean: "
-        f"policy {summary['policy']:.4f}  "
-        f"value {summary['value']:.4f}  "
-        f"pass {summary['pass']:.4f}"
-        f"{elim_mean}  |  "
-        f"total {summary['total']:.4f}"
-    )
-    if val_summary is not None:
-        print(
-            f"[epoch {epoch}] val | "
-            f"{val_summary['n_samples']:,} frames ({val_summary['n_non_pass']:,} non-pass) "
-            f"in {val_summary['duration_sec']:.1f}s | "
-            f"{val_summary['samples_per_sec']:.0f} samples/sec | "
-            f"policy {val_summary['policy']:.4f}  "
-            f"value {val_summary['value']:.4f}  "
-            f"pass {val_summary['pass']:.4f}  |  "
-            f"total {val_summary['total']:.4f}"
-        )
-        ent = val_summary["policy_entropy"]
-        ent_str = f"H {ent:.3f} (e^H {math.exp(ent):.1f})" if ent is not None else "H n/a"
-        print(
-            f"[epoch {epoch}] val | "
-            f"top1 {_fmt_metric(val_summary['top1'])}  "
-            f"top3 {_fmt_metric(val_summary['top3'])}  "
-            f"pass_acc {_fmt_metric(val_summary['pass_acc'])}  "
-            f"pass_frac {_fmt_metric(val_summary['pass_frac'])}  "
-            f"{ent_str}"
-        )
-        # Elim head health: soft CE vs its soft-marginal floor (positive margin
-        # = beats the constant-predictor baseline), top-1 bin acc, and the
-        # prediction-entropy collapse alarm. Present only when the head is on.
-        if val_summary.get("elim_soft") is not None:
-            floor = val_summary["elim_soft_floor"]
-            print(
-                f"[epoch {epoch}] val | elim "
-                f"soft {val_summary['elim_soft']:.4f} "
-                f"(floor {floor:.4f}, margin {floor - val_summary['elim_soft']:+.4f})  "
-                f"top1 {_fmt_metric(val_summary['elim_top1'])}  "
-                f"H {val_summary['elim_pred_entropy']:.3f}"
-            )
-        # who-dies-next: only the loss is surfaced in-loop (accuracy / ramp /
-        # horizon reads are offline from the dump).
-        if val_summary.get("next_elim") is not None:
-            print(
-                f"[epoch {epoch}] val | next_elim CE {val_summary['next_elim']:.4f}"
-            )
-    else:
-        print(f"[epoch {epoch}] val skipped (--skip-val)")
+
+    # --- Train block ---
+    train_stats = [
+        f"{summary['n_samples']:,} frames",
+        f"{summary['n_non_pass']:,} non-pass",
+        f"{summary['samples_per_sec']:.0f} sps",
+        f"{summary['n_batches']} batches",
+    ]
+    if summary["mfu"] is not None:
+        train_stats.append(f"MFU {summary['mfu'] * 100:.1f}%")
+    rows = [
+        ("Core", " | ".join([
+            f"policy {summary['policy']:.4f}",
+            f"value {summary['value']:.4f}",
+            f"pass {summary['pass']:.4f}",
+        ])),
+    ]
+    aux_parts = []
+    for spec in active_aux_specs:
+        # A bit hacky, but good enough for now. `count_key` is the "presence signal".
+        # If it's absent, the head saw no countable frames (valid targets) this epoch,
+        # so we show "n/a".
+        if spec.count_key not in summary:
+            aux_parts.append(f"{spec.metric_keys[0]} n/a")
+            continue
+        # TODO: Short-lived hack. See comment above.
+        for k in _aux_keys_without_tau0_dup(spec, summary):
+            aux_parts.append(f"{k} {summary[k]:.4f}")
+    if aux_parts:
+        rows.append(("Aux", " | ".join(aux_parts)))
+    rows.append(("Total", f"{summary['total']:.4f}"))
+    rows.append(("Stats", " | ".join(train_stats)))
+    print(f"[epoch {epoch}] Train complete (ran for {summary['duration_sec']:.1f}s)")
+    _print_label_aligned_rows(rows, prefix=" " * 4)
+
+    # --- Val block ---
+    if val_summary is None:
+        print(f"[epoch {epoch}] Val skipped (--skip-val)")
+        return
+
+    ent = val_summary["policy_entropy"]
+    ent_str = f"H {ent:.3f} (e^H {math.exp(ent):.1f})" if ent is not None else "H n/a"
+    val_rows = [
+        ("Core", " | ".join([
+            f"policy {val_summary['policy']:.4f}",
+            f"value {val_summary['value']:.4f}",
+            f"pass {val_summary['pass']:.4f}",
+        ])),
+        ("Acc", " | ".join([
+            f"top1 {_fmt_metric(val_summary['top1'])}",
+            f"top3 {_fmt_metric(val_summary['top3'])}",
+            f"pass_acc {_fmt_metric(val_summary['pass_acc'])}",
+            f"pass_frac {_fmt_metric(val_summary['pass_frac'])}",
+            ent_str,
+        ])),
+    ]
+    # Aux-head val diagnostics are bespoke per head, not a uniform metric dump:
+    # time_bin reports soft CE vs its soft-marginal floor (positive margin =
+    # beats the constant-predictor baseline), top-1 bin acc, and a prediction-
+    # entropy collapse alarm. next_death surfaces only the CE (accuracy / ramp /
+    # horizon reads are offline from the dump). The two heads are mutually
+    # exclusive, so at most one row is appended.
+    if val_summary.get("elim_soft") is not None:
+        floor = val_summary["elim_soft_floor"]
+        val_rows.append((
+            "Aux",
+            f"elim soft {val_summary['elim_soft']:.4f} "
+            f"(floor {floor:.4f}, margin {floor - val_summary['elim_soft']:+.4f}) | "
+            f"top1 {_fmt_metric(val_summary['elim_top1'])} | "
+            f"H {val_summary['elim_pred_entropy']:.3f}"
+        ))
+    if val_summary.get("next_elim") is not None:
+        val_rows.append(("Aux", f"next_elim CE {val_summary['next_elim']:.4f}"))
+    val_rows.append(("Total", f"{val_summary['total']:.4f}"))
+    val_rows.append(("Stats", " | ".join([
+        f"{val_summary['n_samples']:,} frames",
+        f"{val_summary['n_non_pass']:,} non-pass",
+        f"{val_summary['samples_per_sec']:.0f} sps",
+    ])))
+    print(f"[epoch {epoch}] Val complete (ran for {val_summary['duration_sec']:.1f}s)")
+    _print_label_aligned_rows(val_rows, prefix=" " * 4)
 
 
 def write_val_dump(
@@ -681,7 +711,7 @@ def train_loop(
                 "val": val_summary,
                 "ckpt": ckpt_file,
             })
-            print_epoch_summary(epoch, summary, val_summary)
+            print_epoch_summary(epoch, summary, val_summary, state.model.active_aux_specs)
 
             # Commit the epoch: bump `state.epoch` to the just-completed value,
             # then save. The bump happens only after the epoch's work + metrics
