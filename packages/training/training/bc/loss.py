@@ -7,7 +7,7 @@ Supervision signals, combined per `LossConfig` weights:
     total = policy_ce + λ · value_soft + μ · pass_bce  [+ λ_elim · elim_soft]
 
 The bracketed elim term is present only when the model emits `elim_logits` (the
-next-elimination head is built); otherwise the loss is exactly the three-signal
+next-elimination head is built). Otherwise, the loss is exactly the three-signal
 form above.
 
 Each component is mean-reduced over its eligible samples in the batch:
@@ -27,11 +27,11 @@ The value head has two CE readings, both always computed:
   - `value_soft` — CE against soft ordinal targets (`value_target_tau`),
     the *trained* objective. Equal to `value` at τ=0.
 
-Layout coupling: the policy head produces NCHW `[B, 8, H, W]`; the action
-target is in the cell-major flat layout (`flat_idx = cell_padded * 8 + sub`,
-sub = dir·2+split). The transform between the two is owned by the model's
-output contract (`flatten_policy_logits` in `model/heads/policy.py`); the
-policy CE here applies it.
+Layout coupling: the policy head produces NCHW `[B, 8, H, W]`.
+The action target is in the cell-major flat layout:
+    `flat_idx = cell_padded * 8 + sub; sub = dir * 2 + split`
+The transform between the two is owned by the model's output contract
+(`flatten_policy_logits` in `model/heads/policy.py`).  The policy CE here applies it.
 """
 
 from __future__ import annotations
@@ -47,6 +47,16 @@ from training.bc.actions import _PASS_FLAT_IDX
 from training.bc.aux_heads import AuxHeadSpec
 from training.bc.model import ModelOut, flatten_policy_logits
 from training.bc.soft_target import _soft_target_kernel
+
+
+def _divide_safe(val: float, divisor: int) -> float:
+    """Return 0.0 if divisor is zero"""
+    return val / divisor if divisor > 0 else 0.0
+
+
+def _assert_non_negative(num: float, name: str) -> None:
+    if num < 0:
+        raise ValueError(f"{name} must be >= 0, got {num}")
 
 
 @dataclass(frozen=True)
@@ -70,15 +80,14 @@ class LossConfig:
     # row-softmax of -|k - k*|/τ. Partial credit for near-miss placements
     # densifies the value gradient (coarse "winning vs losing" signal earns
     # loss reduction without nailing the exact rank) and caps the payoff of
-    # memorizing exact labels. τ=0 means one-hot (exact current behavior);
-    # the mass an adjacent rank gets relative to the peak is exp(-1/τ)
-    # (e.g. τ=0.6 → ~0.19).
+    # memorizing exact labels. τ=0 means one-hot. The mass an adjacent rank
+    # gets relative to the peak is exp(-1/τ) (e.g. τ=0.6 → ~0.19).
     value_target_tau: float = 0.0
     # Next-elimination aux-head knobs (6.13-5). `lambda_elim` weights the elim
-    # term in the total (0 = no elim gradient); `elim_target_tau` is its soft-
+    # term in the total (0 = no elim gradient). `elim_target_tau` is its soft-
     # ordinal smoothing (tau=0 is one-hot, same family as `value_target_tau`).
     # `elim_bin_weights` is optional per-bin CE weights for the class imbalance
-    # measured in 6.13-6 (None = unweighted; Stage 1 runs unweighted, weights
+    # measured in 6.13-6 (None = unweighted. Stage 1 runs unweighted, weights
     # are the pre-registered floor-miss remedy). When set, the weight applies to
     # both the hard reporting CE and the soft objective, so `elim == elim_soft`
     # still holds at tau=0. The elim term is a no-op unless the model emits
@@ -93,35 +102,22 @@ class LossConfig:
     # ordinal `elim_target_tau` (time_bin bins), this is a per-frame data-dependent
     # distribution over nominal player channels, built in the loss from the
     # per-channel `next_elim_removal_dt`. τ=0 keeps the hard label (current
-    # behavior). The near-tie relief auto-adapts to game phase (crowded boards
-    # have tight removal gaps → softer; sparse late boards → near one-hot).
+    # behavior). The near-tie relief auto-adapts to game phase: crowded boards
+    # have tight removal gaps → softer, sparse late boards → near one-hot.
     next_elim_target_tau: float = 0.0
 
     def __post_init__(self) -> None:
-        if self.lambda_value < 0:
-            raise ValueError(f"lambda_value must be >= 0; got {self.lambda_value}")
-        if self.mu_pass < 0:
-            raise ValueError(f"mu_pass must be >= 0; got {self.mu_pass}")
-        if self.value_target_tau < 0:
-            raise ValueError(
-                f"value_target_tau must be >= 0; got {self.value_target_tau}"
-            )
-        if self.lambda_elim < 0:
-            raise ValueError(f"lambda_elim must be >= 0; got {self.lambda_elim}")
-        if self.elim_target_tau < 0:
-            raise ValueError(
-                f"elim_target_tau must be >= 0; got {self.elim_target_tau}"
-            )
-        if self.next_elim_target_tau < 0:
-            raise ValueError(
-                f"next_elim_target_tau must be >= 0; got {self.next_elim_target_tau}"
-            )
+        _assert_non_negative(self.lambda_value, "lambda_value")
+        _assert_non_negative(self.mu_pass, "mu_pass")
+        _assert_non_negative(self.value_target_tau, "value_target_tau")
+        _assert_non_negative(self.lambda_elim, "lambda_elim")
+        _assert_non_negative(self.elim_target_tau, "elim_target_tau")
+        _assert_non_negative(self.next_elim_target_tau, "next_elim_target_tau")
+
         if self.elim_bin_weights is not None:
             weights = tuple(float(w) for w in self.elim_bin_weights)
             if any(w < 0 for w in weights):
-                raise ValueError(
-                    f"elim_bin_weights must be non-negative; got {weights}"
-                )
+                raise ValueError(f"elim_bin_weights must be non-negative, got {weights}")
             # Coerce to tuple (a config JSON hands a list) so the frozen
             # dataclass stays hashable and the @cache weight-tensor key is stable.
             object.__setattr__(self, "elim_bin_weights", weights)
@@ -129,8 +125,8 @@ class LossConfig:
     @classmethod
     def validate_partial(cls, d: dict) -> list[str]:
         """Pre-flight check of a config-file `loss:` block: flag unknown knobs.
-        Mirrors `ObsConfig.validate_partial` — value ranges are enforced by
-        `__post_init__` at construction; this only catches typo'd field names."""
+        Value ranges are enforced by `__post_init__` at construction.
+        This only catches field names typos."""
         valid = {f.name for f in fields(cls)}
         return [f"unknown LossConfig field: {k!r}" for k in d if k not in valid]
 
@@ -183,7 +179,7 @@ def bc_loss(
     Inputs
     ------
     model_out (a `ModelOut`)
-        - `policy_logits`: `[B, 8, H, W]` (NCHW; from `PolicyHead`)
+        - `policy_logits`: `[B, 8, H, W]` (NCHW, from `PolicyHead`)
         - `pass_logit`:    `[B]`         (pre-sigmoid)
         - `value_logits`:  `[B, 8]`
         - `aux`:               active aux-head logits, keyed by `output_key`
@@ -191,13 +187,13 @@ def bc_loss(
 
     targets (collated from `dataset.encode_frame`)
         - `mask`:          `[B, H, W, 8]` bool, per-cell legality
-        - `action_target`: `[B]` int64; flat cell-major index or `-1` for pass
+        - `action_target`: `[B]` int64. flat cell-major index or `-1` for pass
         - `is_pass`:       `[B]` bool
         - `value_target`:  `[B]` int64 (placement class 0..7)
 
     Returns a `LossOut` (core fields, always present):
         - `total`:      scalar loss for `.backward()`
-        - `policy`:     policy CE (mean over non-pass frames; 0 if batch is all pass)
+        - `policy`:     policy CE (mean over non-pass frames)
         - `value`:      hard value CE (mean over batch) — the reporting metric
         - `value_soft`: soft-target value CE, the trained objective
         - `pass_loss`:  pass BCE (mean over batch)
@@ -237,9 +233,9 @@ def bc_loss(
     _B = policy_logits.shape[0]
 
     # --- Policy CE ---
-    # F.cross_entropy applies log-softmax internally; the flatten helper's
-    # MASK_NEG fill is equivalent to a multiplicative mask on the
-    # probability simplex (masked positions → prob ≈ 0).
+    # F.cross_entropy applies log-softmax internally. The flatten helper's
+    # MASK_NEG fill is equivalent to a multiplicative mask on the probability
+    # simplex (masked positions → prob ≈ 0).
     policy_logits_masked = flatten_policy_logits(policy_logits, mask)
 
     # Cross-entropy with ignore_index=-1 to skip pass frames.
@@ -274,7 +270,7 @@ def bc_loss(
         value_soft = value_ce
 
     # --- Pass BCE ---
-    # `pass_logit` is pre-sigmoid; the `_with_logits` variant fuses sigmoid
+    # `pass_logit` is pre-sigmoid. The `_with_logits` variant fuses sigmoid
     # + BCE for numerical stability. Target needs to be float for BCE.
     pass_bce = F.binary_cross_entropy_with_logits(
         pass_logit, is_pass.float(), reduction="mean"
@@ -373,7 +369,7 @@ class LossAccumulator:
     sum_value: float = 0.0       # weighted by batch_size per batch
     sum_value_soft: float = 0.0  # weighted by batch_size per batch
     sum_pass: float = 0.0        # weighted by batch_size per batch
-    # Per-aux-spec running sums, keyed by spec.name; one entry per active head,
+    # Per-aux-spec running sums, keyed by spec.name. One entry per active head,
     # built in __post_init__ from `active_aux_specs`. Empty for non-aux runs.
     aux: dict[str, _AuxAccum] = field(default_factory=dict)
 
@@ -424,7 +420,7 @@ class LossAccumulator:
             "n_non_pass": self.n_non_pass,
             "n_samples": self.n_samples,
         }
-        # Reconstruct each active head's mean metrics; collect the ones that
+        # Reconstruct each active head's mean metrics. Collect the ones that
         # contributed so `_assemble_total` folds exactly those into `total`.
         contributing: list[AuxHeadSpec] = []
         for spec in self.active_aux_specs:
@@ -435,7 +431,7 @@ class LossAccumulator:
                 # Throwing an error in the middle of a run should be done very cautiously.
                 warnings.warn(
                     f"aux head {spec.name!r} saw zero countable frames "
-                    f"({spec.count_key}=0) across the epoch; skipping its metrics"
+                    f"({spec.count_key}=0) across the epoch. Skipping its metrics."
                 )
                 continue
             for k in spec.metric_keys:
@@ -454,8 +450,8 @@ def _assemble_total(
     """The one definition of how `total` is composed from component metrics — shared
     by `bc_loss` (live tensors) and `LossAccumulator.summary` (epoch-mean floats), so
     the per-batch and epoch totals can't drift. Reads `policy`/`value_soft`/`pass`
-    plus each spec's `term_key` from `metrics` (the caller must have populated them);
-    polymorphic over tensor/float via the shared `+`/`*`."""
+    plus each spec's `term_key` from `metrics` (the caller must have populated them).
+    Polymorphic over tensor/float via the shared `+`/`*`."""
     total = (
         metrics["policy"]
         + cfg.lambda_value * metrics["value_soft"]
@@ -464,8 +460,3 @@ def _assemble_total(
     for spec in specs:
         total = total + getattr(cfg, spec.weight_attr) * metrics[spec.term_key]
     return total
-
-
-def _divide_safe(val: float, divisor: int) -> float:
-    """Return 0.0 if divisor is zero"""
-    return val / divisor if divisor > 0 else 0.0
