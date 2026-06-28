@@ -13,9 +13,11 @@ import torch
 from training.bc.checkpoint import (
     LEGACY_ARCH,
     LEGACY_OBS_CFG,
+    is_arch_bearing,
     is_legacy_checkpoint,
 )
 from training.bc.config import CONFIG_VERSION
+from training.bc.inference import BCModelHandle
 from training.bc.model import BCModel
 from training.bc.model_config import MODEL_CONFIG_DEFAULTS, build_model_cfg
 from training.bc.obs_config import OBS_CONFIG_DEFAULTS
@@ -293,3 +295,42 @@ def test_v1_in_ch_mismatch_raises(tmp_path):
 
     with pytest.raises(ValueError, match="contradicts obs"):
         load_checkpoint(ckpt, torch.device("cpu"))
+
+
+def test_is_arch_bearing_across_formats(tmp_path):
+    """A v0 combined checkpoint (top-level `arch`) and a v1 checkpoint (arch nested
+    in `config`) both record their arch; a v0 bare state_dict does not. The v0
+    answers must stay fixed across the v1 addition — they feed the inference
+    model_key."""
+    device = torch.device("cpu")
+    config = _v1_config(tmp_path)
+    state = TrainingState.fresh(config, device)
+
+    v0_combined = tmp_path / "v0_combined.pt"
+    torch.save(
+        {"model": state.model.state_dict(), "arch": asdict(config.arch), "epoch": 1},
+        v0_combined,
+    )
+    v0_bare = tmp_path / "v0_bare.pt"
+    torch.save(state.model.state_dict(), v0_bare)
+    v1 = tmp_path / "v1.pt"
+    torch.save(serialize_checkpoint(_runtime(state), config, code_sha="x"), v1)
+
+    assert is_arch_bearing(v0_combined) is True
+    assert is_arch_bearing(v0_bare) is False
+    assert is_arch_bearing(v1) is True
+
+
+def test_v1_model_key_ignores_variant(tmp_path):
+    """A v1 checkpoint is arch-bearing, so its model_key drops the load-time
+    value_head_variant: two handle loads under different fallback variants get the
+    same key and share a forward. This is what the is_arch_bearing v1 arm protects."""
+    device = torch.device("cpu")
+    config = _v1_config(tmp_path)
+    state = TrainingState.fresh(config, device)
+    ckpt = tmp_path / "epoch_000.pt"
+    torch.save(serialize_checkpoint(_runtime(state), config, code_sha="x"), ckpt)
+
+    direct = BCModelHandle.load(ckpt, device, value_head_variant="direct")
+    pyramid = BCModelHandle.load(ckpt, device, value_head_variant="pyramid")
+    assert direct.model_key == pyramid.model_key
