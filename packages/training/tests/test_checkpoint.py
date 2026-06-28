@@ -15,10 +15,13 @@ from training.bc.checkpoint import (
     LEGACY_OBS_CFG,
     is_legacy_checkpoint,
 )
+from training.bc.config import CONFIG_VERSION
 from training.bc.model import BCModel
 from training.bc.model_config import MODEL_CONFIG_DEFAULTS, build_model_cfg
 from training.bc.obs_config import OBS_CONFIG_DEFAULTS
-from training.bc.storage.checkpoint import load_checkpoint
+from training.bc.state import TrainingState
+from training.bc.storage.checkpoint import load_checkpoint, serialize_checkpoint
+from training.bc.train_config import TrainConfig
 
 
 # TODO(refactor-note): We need to rewrite these tests at some point.
@@ -220,3 +223,73 @@ def test_fresh_partial_obs_uses_live_default(monkeypatch):
     )
     cfg = build_model_cfg(obs={"dense_history_n": 5})
     assert cfg.obs.obs_dtype == "fp16"  # live default, not legacy fp32
+
+
+# --- v1 versioned format: serialize_checkpoint -> load_checkpoint round-trip ----
+
+
+def _v1_config(tmp_path) -> TrainConfig:
+    """A non-default config; dummy paths (not existence-checked at construction)."""
+    return TrainConfig(
+        manifest=tmp_path / "m.json",
+        intermediate=tmp_path / "i",
+        run_dir=tmp_path / "run",
+        arch=build_model_cfg(outer_width=64, middle_width=64, inner_width=96),
+    )
+
+
+def _runtime(state: TrainingState) -> dict:
+    """The runtime-state portion of a checkpoint, as serialize_checkpoint expects."""
+    return {
+        "model": state.model.state_dict(),
+        "optim": state.optim.state_dict(),
+        "scaler": state.scaler.state_dict(),
+        "epoch": state.epoch,
+    }
+
+
+def test_v1_round_trip(tmp_path):
+    """A v1 checkpoint serializes and loads back: the full config (Paths included),
+    arch, and weights all survive the weights_only load."""
+    device = torch.device("cpu")
+    config = _v1_config(tmp_path)
+    state = TrainingState.fresh(config, device)
+    obj = serialize_checkpoint(_runtime(state), config, code_sha="test-sha")
+    ckpt = tmp_path / "epoch_000.pt"
+    torch.save(obj, ckpt)
+
+    loaded = load_checkpoint(ckpt, device)
+    assert loaded.config == config
+    assert loaded.cfg == config.arch
+    src_sd, loaded_sd = state.model.state_dict(), loaded.model.state_dict()
+    assert src_sd.keys() == loaded_sd.keys()
+    for k in src_sd:
+        assert torch.equal(src_sd[k], loaded_sd[k].cpu()), f"param mismatch: {k}"
+
+
+def test_v1_serialized_shape(tmp_path):
+    """serialize_checkpoint produces the v1 top-level layout: runtime keys plus the
+    config block, in_ch checksum, and code_sha, with config-block Paths stringified."""
+    config = _v1_config(tmp_path)
+    state = TrainingState.fresh(config, torch.device("cpu"))
+    obj = serialize_checkpoint(_runtime(state), config, code_sha="abc123")
+
+    assert set(obj) == {"model", "optim", "scaler", "epoch", "in_ch", "config", "code_sha"}
+    assert obj["config"]["config_version"] == CONFIG_VERSION
+    assert obj["in_ch"] == config.arch.in_ch
+    assert obj["code_sha"] == "abc123"
+    assert isinstance(obj["config"]["run_dir"], str)
+
+
+def test_v1_in_ch_mismatch_raises(tmp_path):
+    """A recorded in_ch contradicting the obs channel count raises a clear error on
+    load (before the cryptic state_dict shape mismatch)."""
+    config = _v1_config(tmp_path)
+    state = TrainingState.fresh(config, torch.device("cpu"))
+    obj = serialize_checkpoint(_runtime(state), config, code_sha="x")
+    obj["in_ch"] += 1
+    ckpt = tmp_path / "epoch_000.pt"
+    torch.save(obj, ckpt)
+
+    with pytest.raises(ValueError, match="contradicts obs"):
+        load_checkpoint(ckpt, torch.device("cpu"))
