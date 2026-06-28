@@ -14,7 +14,6 @@ from typing import Any, TypeGuard
 
 import torch
 
-from training.bc.model import BCModel
 from training.bc.model_config import ModelConfig, build_model_cfg
 from training.bc.obs_config import ObsConfig
 
@@ -156,31 +155,3 @@ def arch_for_load(obj: object, value_head_variant: str) -> ModelConfig:
             )
         return cfg
     return replace(LEGACY_ARCH, value_head_variant=value_head_variant)
-
-
-def load_bc_model(
-    path: str | Path,
-    device: torch.device,
-    value_head_variant: str = "direct",
-) -> BCModel:
-    """Construct a BCModel and load weights from a `.pt` checkpoint.
-
-    Handles both checkpoint layouts: the combined dict written by
-    `TrainingState.save` (`{"model": ..., "arch": ..., ...}`) and the legacy
-    bare `state_dict` (a flat map of parameter tensors). The two are
-    distinguished by the presence of a top-level `"model"` key — a bare
-    state_dict's keys are parameter names like `trunk.0.weight`.
-
-    Architecture comes from the checkpoint's `arch` key when present; otherwise
-    `LEGACY_ARCH` + the `value_head_variant` arg (a legacy-only fallback,
-    ignored for arch-bearing checkpoints). `load_state_dict(strict=True)`
-    remains the backstop: any arch↔weights drift still raises on mismatched
-    keys. Returns the model on `device` in eval mode.
-    """
-    obj = torch.load(path, map_location=device, weights_only=True)
-    model = BCModel(arch_for_load(obj, value_head_variant))
-    state_dict = obj["model"] if is_combined_checkpoint(obj) else obj
-    model.load_state_dict(state_dict)
-    model.to(device)
-    model.eval()
-    return model

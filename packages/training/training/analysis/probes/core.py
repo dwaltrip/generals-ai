@@ -43,10 +43,10 @@ from typing import Protocol
 import torch
 import torch.nn as nn
 
-from training.bc.checkpoint import load_bc_model
 from training.bc.dataset import IterableDataset
 from training.bc.model.bc_model import BCModel
 from training.bc.obs_config import ObsConfig
+from training.bc.storage.checkpoint import load_checkpoint
 
 
 # ---------------------------------------------------------------------------
@@ -152,11 +152,11 @@ def load_frozen_model(ckpt_path: Path, device: torch.device) -> BCModel:
     fp32 for stable CPU/MPS forward passes.
 
     Architecture (width, value/elim variant, obs config) comes from the
-    checkpoint's `arch` key — `load_bc_model` makes the `state_dict` load
+    checkpoint's `arch` key — `load_checkpoint` makes the `state_dict` load
     strict, so any arch↔weights drift raises loudly here rather than producing
     silently-wrong features.
     """
-    model = load_bc_model(ckpt_path, device)
+    model = load_checkpoint(ckpt_path, device).model
     model.float()
     for p in model.parameters():
         p.requires_grad = False

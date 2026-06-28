@@ -35,12 +35,14 @@ from training.bc import actions, visibility
 from training.bc import bfs as bc_bfs
 from training.bc import mask as bc_mask
 from training.bc import obs as bc_obs
-from training.bc.checkpoint import is_arch_bearing, load_bc_model
+from training.bc.checkpoint import is_arch_bearing
 from training.bc.constants import H_PADDED, W_PADDED
 from training.bc.model import BCModel, ModelOut, flatten_policy_logits
+from training.bc.model_builder import ConfiguredModel
 from training.bc.obs import pad_initial_generals
 from training.bc.obs_config import ObsConfig
 from training.bc.player_status import precompute_player_status
+from training.bc.storage.checkpoint import load_checkpoint
 
 
 # Fixed slot count the model + obs encoder were trained on (8-player FFA).
@@ -86,10 +88,14 @@ class BCModelHandle:
     share one forward.
     """
 
-    def __init__(self, model: BCModel, device: torch.device, model_key: str):
-        self.model = model
+    def __init__(self, cm: ConfiguredModel, device: torch.device, model_key: str):
+        self.cm = cm
         self.device = device
         self.model_key = model_key
+
+    @property
+    def model(self) -> BCModel:
+        return self.cm.model
 
     @classmethod
     def load(
@@ -107,12 +113,15 @@ class BCModelHandle:
         Legacy checkpoints keep the variant: the same path loaded under different
         fallback variants is a different model, and the keys must not collide.
         """
-        model = load_bc_model(path, device, value_head_variant)
+        cm = load_checkpoint(path, device, value_head_variant)
+        # NOTE(refactor-note): model_key re-reads the file via is_arch_bearing.
+        # Deferred: fold this onto the held ConfiguredModel once it carries the
+        # arch-bearing signal (config is None for every legacy checkpoint today).
         if is_arch_bearing(path, device):
             model_key = f"{path}|{device}"
         else:
             model_key = f"{path}|{device}|{value_head_variant}"
-        return cls(model, device, model_key=model_key)
+        return cls(cm, device, model_key=model_key)
 
     def forward_batch(
         self,

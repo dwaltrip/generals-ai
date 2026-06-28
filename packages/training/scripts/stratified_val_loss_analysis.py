@@ -62,9 +62,9 @@ from training.analysis.run_metrics import (
     resolve_epochs,
     resolve_val_samples,
 )
-from training.bc.checkpoint import load_bc_model
 from training.bc.eval import capture_val_frames, dump_path, save_dump
 from training.bc.eval.dump_compat import read_alive_mask
+from training.bc.storage.checkpoint import load_checkpoint
 from training.shared.device import disable_mps_fallback, pick_device
 from utils.format import format_count, format_loss, format_pct, md_table
 
@@ -96,7 +96,7 @@ def run_dump(args: argparse.Namespace) -> None:
     for epoch in epochs:
         ckpt = run_dir / "checkpoints" / f"epoch_{epoch:03d}.pt"
         print(f"epoch {epoch}: {ckpt.name}", flush=True)
-        model = load_bc_model(ckpt, device, value_head_variant=args.value_head_variant)
+        model = load_checkpoint(ckpt, device, value_head_variant=args.value_head_variant).model
         # `persp_index_map` maps dataset-local sample_idx back to the position
         # in the full val list, so dumps with different fracs join on a stable id.
         records = capture_val_frames(

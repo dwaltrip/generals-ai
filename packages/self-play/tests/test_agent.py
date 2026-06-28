@@ -8,9 +8,9 @@ import pytest
 import torch
 
 from settings import RUNS_CLOUD_DIR
-from training.bc.checkpoint import load_bc_model
 from training.bc.constants import H_PADDED, W_PADDED
 from training.bc.inference import default_device
+from training.bc.storage.checkpoint import load_checkpoint
 
 
 _CHECKPOINT = RUNS_CLOUD_DIR / "2026-05-23T23-40-14Z" / "checkpoints" / "epoch_005.pt"
@@ -20,7 +20,7 @@ def test_load_checkpoint_smoke():
     if not _CHECKPOINT.exists():
         pytest.skip(f"checkpoint not present at {_CHECKPOINT}")
     device = default_device()
-    model = load_bc_model(_CHECKPOINT, device)
+    model = load_checkpoint(_CHECKPOINT, device).model
     assert isinstance(model, torch.nn.Module)
 
     # Forward a zero obs to confirm the loaded weights produce the expected

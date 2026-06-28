@@ -1,4 +1,4 @@
-"""`load_bc_model` reconstructs a model's architecture from the checkpoint:
+"""`load_checkpoint` reconstructs a model's architecture from the checkpoint:
 the `arch` key when present (authoritative), `LEGACY_ARCH` + the load-time
 variant arg for legacy bare-state_dict checkpoints. Plus the combined-vs-legacy
 format detection used by the resume path."""
@@ -14,12 +14,15 @@ from training.bc.checkpoint import (
     LEGACY_ARCH,
     LEGACY_OBS_CFG,
     is_legacy_checkpoint,
-    load_bc_model,
 )
 from training.bc.model import BCModel
 from training.bc.model_config import MODEL_CONFIG_DEFAULTS, build_model_cfg
 from training.bc.obs_config import OBS_CONFIG_DEFAULTS
+from training.bc.storage.checkpoint import load_checkpoint
 
+
+# TODO(refactor-note): We need to rewrite these tests at some point.
+# Revisit later in the ckpt-config refactor (or after).
 
 def test_load_bc_model_bare_state_dict(tmp_path):
     """A legacy bare state_dict (no `arch` key) reconstructs via LEGACY_ARCH."""
@@ -31,7 +34,7 @@ def test_load_bc_model_bare_state_dict(tmp_path):
     ckpt = tmp_path / "epoch_001.pt"
     torch.save(src.state_dict(), ckpt)
 
-    loaded = load_bc_model(ckpt, device)
+    loaded = load_checkpoint(ckpt, device).model
 
     assert isinstance(loaded, BCModel)
     assert loaded.cfg == LEGACY_ARCH       # legacy fallback, default variant
@@ -51,7 +54,7 @@ def test_load_legacy_honors_value_head_variant_arg(tmp_path):
     ckpt = tmp_path / "epoch_001.pt"
     torch.save(src.state_dict(), ckpt)  # bare state_dict — legacy
 
-    loaded = load_bc_model(ckpt, device, value_head_variant="pyramid")
+    loaded = load_checkpoint(ckpt, device, value_head_variant="pyramid").model
     assert loaded.cfg == replace(LEGACY_ARCH, value_head_variant="pyramid")
 
 
@@ -66,7 +69,7 @@ def test_arch_bearing_checkpoint_reconstructs_nondefault(tmp_path):
     # Mimic TrainingState.save's combined format (model + arch).
     torch.save({"model": src.state_dict(), "arch": asdict(cfg), "epoch": 2}, ckpt)
 
-    loaded = load_bc_model(ckpt, device, value_head_variant="direct")
+    loaded = load_checkpoint(ckpt, device, value_head_variant="direct").model
     assert loaded.cfg == cfg               # arch key authoritative
     src_sd, loaded_sd = src.state_dict(), loaded.state_dict()
     assert src_sd.keys() == loaded_sd.keys()
@@ -84,7 +87,7 @@ def test_arch_in_ch_checksum_mismatch_raises(tmp_path):
     torch.save({"model": src.state_dict(), "arch": arch, "epoch": 1}, ckpt)
 
     with pytest.raises(ValueError, match="contradicts obs"):
-        load_bc_model(ckpt, torch.device("cpu"))
+        load_checkpoint(ckpt, torch.device("cpu"))
 
 
 def test_default_arch_is_no_op_against_bare_model(tmp_path):
@@ -129,7 +132,7 @@ def test_load_missing_obs_dtype_uses_legacy(tmp_path, monkeypatch):
     ckpt = tmp_path / "epoch_001.pt"
     torch.save({"model": src.state_dict(), "arch": arch, "epoch": 1}, ckpt)
 
-    loaded = load_bc_model(ckpt, torch.device("cpu"))
+    loaded = load_checkpoint(ckpt, torch.device("cpu")).model
     assert loaded.cfg.obs.obs_dtype == LEGACY_OBS_CFG.obs_dtype  # legacy, not the fp16 default
 
 
@@ -143,7 +146,7 @@ def test_load_preserves_explicit_obs_dtype(tmp_path):
     ckpt = tmp_path / "epoch_001.pt"
     torch.save({"model": src.state_dict(), "arch": arch, "epoch": 1}, ckpt)
 
-    loaded = load_bc_model(ckpt, torch.device("cpu"))
+    loaded = load_checkpoint(ckpt, torch.device("cpu")).model
     assert loaded.cfg.obs.obs_dtype == "fp16"
 
 
@@ -163,7 +166,7 @@ def test_load_missing_toplevel_key_uses_legacy(tmp_path, monkeypatch):
     ckpt = tmp_path / "epoch_001.pt"
     torch.save({"model": src.state_dict(), "arch": arch, "epoch": 1}, ckpt)
 
-    loaded = load_bc_model(ckpt, torch.device("cpu"))
+    loaded = load_checkpoint(ckpt, torch.device("cpu")).model
     assert loaded.cfg.value_head_dropout == LEGACY_ARCH.value_head_dropout  # 0.0, not 0.5
 
 
@@ -180,11 +183,11 @@ def test_load_pre_elim_checkpoint_backfills_disabled(tmp_path):
     ckpt = tmp_path / "epoch_001.pt"
     torch.save({"model": src.state_dict(), "arch": arch, "epoch": 1}, ckpt)
 
-    loaded = load_bc_model(ckpt, torch.device("cpu"))
+    loaded = load_checkpoint(ckpt, torch.device("cpu")).model
     assert loaded.cfg.elim_head_variant is None
     assert loaded.cfg.elim_bin_edges == LEGACY_ARCH.elim_bin_edges
     # No elim params on either side, and strict load already passed in
-    # load_bc_model — assert key parity explicitly as the backstop.
+    # load_checkpoint — assert key parity explicitly as the backstop.
     assert src.state_dict().keys() == loaded.state_dict().keys()
     assert not any("elim" in k for k in loaded.state_dict())
 
@@ -192,7 +195,7 @@ def test_load_pre_elim_checkpoint_backfills_disabled(tmp_path):
 def test_load_checkpoint_migrates_retired_elim_head_enabled(tmp_path):
     """A checkpoint from the `elim_head_enabled` era (recorded the now-retired
     bool, no `elim_head_variant`) migrates: `enabled=True` → `"time_bin"`. Guards
-    the `_arch_for_load` translation shim that keeps those checkpoints loadable
+    the `arch_for_load` translation shim that keeps those checkpoints loadable
     after the field was folded into `elim_head_variant`."""
     cfg = build_model_cfg(elim_head_variant="time_bin")
     src = BCModel(cfg)
@@ -202,7 +205,7 @@ def test_load_checkpoint_migrates_retired_elim_head_enabled(tmp_path):
     ckpt = tmp_path / "epoch_001.pt"
     torch.save({"model": src.state_dict(), "arch": arch, "epoch": 1}, ckpt)
 
-    loaded = load_bc_model(ckpt, torch.device("cpu"))
+    loaded = load_checkpoint(ckpt, torch.device("cpu")).model
     assert loaded.cfg.elim_head_variant == "time_bin"
     assert src.state_dict().keys() == loaded.state_dict().keys()
 

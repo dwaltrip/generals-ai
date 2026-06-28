@@ -48,7 +48,10 @@ def _load_legacy_checkpoint(
     device: torch.device,
     value_head_variant: str,
 ) -> ConfiguredModel:
-    """Reconstruct a model from a legacy checkpoint."""
+    """Reconstruct a model from a legacy checkpoint.
+
+     Returns the model on `device` in eval mode.
+    """
     model = build_model(arch_for_load(obj, value_head_variant))
     state_dict = obj["model"] if is_combined_checkpoint(obj) else obj
     model.load_state_dict(state_dict)

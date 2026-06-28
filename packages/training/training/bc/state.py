@@ -18,9 +18,11 @@ from pathlib import Path
 
 import torch
 
-from training.bc.checkpoint import ckpt_name, is_combined_checkpoint, load_bc_model
+from training.bc.checkpoint import ckpt_name, is_combined_checkpoint
 from training.bc.model import BCModel
+from training.bc.model_builder import build_model
 from training.bc.resume_warmup import WarmupSchedule
+from training.bc.storage.checkpoint import load_checkpoint
 from training.bc.train_config import TrainConfig
 from training.shared.device import resolve_precision
 
@@ -64,7 +66,7 @@ class TrainingState:
     @classmethod
     def fresh(cls, config: TrainConfig, device: torch.device) -> TrainingState:
         """Build a brand-new state: fresh model/optim/scaler, epoch 0."""
-        model = BCModel(config.arch).to(device)
+        model = build_model(config.arch).to(device)
         return cls(
             model=model,
             optim=_build_optim(model, config),
@@ -82,7 +84,7 @@ class TrainingState:
     ) -> TrainingState:
         """Restore a state from a checkpoint, for resuming a run.
 
-        The model loads via `load_bc_model`. Optim/scaler state is restored
+        The model loads via `load_checkpoint`. Optim/scaler state is restored
         only when present in the combined format — a legacy bare-state_dict
         checkpoint yields fresh optim/scaler shells (a cold optimizer restart),
         which is why legacy resume pairs with `--legacy-lr-warmup-batches`.
@@ -93,13 +95,13 @@ class TrainingState:
         (`epoch_NNN.pt`), so numbering stays monotonic across the resume.
 
         Re-reads the file once for the optim/scaler/epoch payload after
-        `load_bc_model` reads it for the weights — a one-time cost paid
+        `load_checkpoint` reads it for the weights — a one-time cost paid
         only at resume startup.
         """
         # Arch comes from the checkpoint (you can't reshape restored weights);
         # `config.arch.value_head_variant` is only the legacy fallback, used
         # when the checkpoint has no `arch` key.
-        model = load_bc_model(path, device, config.arch.value_head_variant)
+        model = load_checkpoint(path, device, config.arch.value_head_variant).model
         optim = _build_optim(model, config)
         scaler = _build_scaler(config, device)
         epoch = fallback_epoch
