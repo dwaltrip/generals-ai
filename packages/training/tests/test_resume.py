@@ -211,11 +211,13 @@ def test_bc_resume_aborts_on_legacy_without_flag(tmp_path: Path) -> None:
     run = _gate_run(tmp_path)
     with pytest.raises(SystemExit, match="legacy"):
         bc_resume(run, _info(run, legacy=True), overlay={}, operational={},
-                  force_config_mismatch=False, legacy_lr_warmup_batches=None)
+                  force_config_mismatch=False, code_sha="test-sha",
+                  legacy_lr_warmup_batches=None)
 
 
 def test_bc_resume_aborts_on_combined_with_flag(tmp_path: Path) -> None:
     run = _gate_run(tmp_path)
     with pytest.raises(SystemExit, match="combined-format"):
         bc_resume(run, _info(run, legacy=False), overlay={}, operational={},
-                  force_config_mismatch=False, legacy_lr_warmup_batches=500)
+                  force_config_mismatch=False, code_sha="test-sha",
+                  legacy_lr_warmup_batches=500)

@@ -40,18 +40,19 @@ def test_training_state_round_trip(tmp_path):
     ckpt_dir = tmp_path / "checkpoints"
     ckpt_dir.mkdir()
 
-    src = TrainingState.fresh(config, device)
+    src = TrainingState.fresh(config, device, "test-sha")
     _one_step(src, device)  # non-trivial optim state before saving
     src.epoch = 3
     path = src.save(ckpt_dir)
 
-    # On-disk combined format — self-describing via the `arch` key.
+    # On-disk v1 format — self-describing via the `config` block.
     raw = torch.load(path, weights_only=True)
-    assert set(raw) >= {"model", "arch", "optim", "scaler", "epoch"}
+    assert set(raw) == {"model", "optim", "scaler", "epoch", "in_ch", "config", "code_sha"}
     assert raw["epoch"] == 3
+    assert raw["code_sha"] == "test-sha"
     assert path.name == "epoch_003.pt"
 
-    restored = TrainingState.from_checkpoint(path, config, device)
+    restored = TrainingState.from_checkpoint(path, config, device, "test-sha")
     assert restored.epoch == 3
     assert restored.model.cfg == src.model.cfg  # arch round-trips
 
@@ -80,7 +81,7 @@ def test_from_checkpoint_legacy_uses_fallback_epoch(tmp_path):
     # Legacy-shaped bare state_dict (the LEGACY_ARCH fallback reconstructs it).
     torch.save(BCModel(LEGACY_ARCH).state_dict(), ckpt)
 
-    restored = TrainingState.from_checkpoint(ckpt, config, device, fallback_epoch=7)
+    restored = TrainingState.from_checkpoint(ckpt, config, device, "test-sha", fallback_epoch=7)
     assert restored.epoch == 7      # from the filename, not the 0 default
     assert restored.warmup is None
 
@@ -91,9 +92,9 @@ def test_from_checkpoint_combined_ignores_fallback_epoch(tmp_path):
     config = _config(tmp_path)
     ckpt_dir = tmp_path / "checkpoints"
     ckpt_dir.mkdir()
-    src = TrainingState.fresh(config, device)
+    src = TrainingState.fresh(config, device, "test-sha")
     src.epoch = 4
     path = src.save(ckpt_dir)
 
-    restored = TrainingState.from_checkpoint(path, config, device, fallback_epoch=99)
+    restored = TrainingState.from_checkpoint(path, config, device, "test-sha", fallback_epoch=99)
     assert restored.epoch == 4      # the checkpoint's own epoch wins

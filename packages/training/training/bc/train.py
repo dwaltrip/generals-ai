@@ -339,7 +339,7 @@ def build_dataloader(
     return ds, loader
 
 
-def bc_run(config: TrainConfig) -> None:
+def bc_run(config: TrainConfig, code_sha: str) -> None:
     """Drive a fresh BC training run end-to-end from a validated config.
 
     The fresh entry point: builds a new `TrainingState` and runs all
@@ -347,8 +347,16 @@ def bc_run(config: TrainConfig) -> None:
     both share `run_training`. Precondition: `config.run_dir` exists. Callable
     from a notebook or test by constructing a `TrainConfig` directly (after
     initializing the run dir).
+
+    `code_sha` is the training-code provenance recorded into each checkpoint;
+    capture it at the launch site (`utils.git.git_sha`) so it reflects the local
+    source, not the remote where `.git` may be absent.
     """
-    run_training(config, suffix="", make_state=lambda dev: TrainingState.fresh(config, dev))
+    run_training(
+        config,
+        suffix="",
+        make_state=lambda dev: TrainingState.fresh(config, dev, code_sha),
+    )
 
 
 def run_training(
@@ -403,7 +411,7 @@ def run_training(
         val_samples = samples_for_split(manifest, "val", config.intermediate)
         print(
             f"  filter_version={manifest['filter_version']}  "
-            f"git_sha={manifest['git_sha']}  "
+            f"data_manifest_sha={manifest['git_sha']}  "
             f"kept_pairs={manifest['kept_pairs']:,}  "
             f"train_pairs={len(train_samples):,}  "
             f"val_pairs={len(val_samples):,}"
@@ -414,6 +422,7 @@ def run_training(
         # --- Model + optimizer ---
         print(f"building model on {device} (value_head={config.arch.value_head_variant})")
         state = make_state(device)
+        print(f"  code_sha: {state.code_sha}")
         n_params = sum(p.numel() for p in state.model.parameters())
         print(f"  params: {n_params:,}")
 

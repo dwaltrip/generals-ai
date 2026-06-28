@@ -28,23 +28,25 @@ from training.bc.train_cli import (
     resume_run_dir,
 )
 from training.settings import RUNS_DIR
+from utils.git import git_sha
 
 
 def main() -> None:
     parser = build_arg_parser()
     parser.set_defaults(out_dir=RUNS_DIR, device="mps")
     args = parser.parse_args()
+    code_sha = git_sha()
     if args.resume:
         run_dir = resume_run_dir(args)
         info = prepare_resume(run_dir)
         with instrumented_run(run_dir, args.profile):
             bc_resume(run_dir, info, load_config_overlay(args), operational_overrides(args),
-                      args.force_config_mismatch, args.legacy_lr_warmup_batches)
+                      args.force_config_mismatch, code_sha, args.legacy_lr_warmup_batches)
     else:
         config = config_from_args(args)
         initialize_run_dir(config, Path(args.config).read_text())
         with instrumented_run(config.run_dir, args.profile):
-            bc_run(config)
+            bc_run(config, code_sha)
 
 
 if __name__ == "__main__":

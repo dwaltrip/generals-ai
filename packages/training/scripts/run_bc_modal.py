@@ -35,6 +35,7 @@ from training.bc.train_cli import (
 )
 from training.bc.train_config import TrainConfig
 from training.settings import TRAINING_REQS
+from utils.git import git_sha
 
 
 image = (
@@ -76,6 +77,7 @@ def train_remote(
     force_config_mismatch: bool,
     legacy_lr_warmup_batches: int | None,
     profile: bool,
+    code_sha: str,
 ) -> None:
     """Run a fresh or resumed BC training segment on a Modal GPU.
 
@@ -104,7 +106,7 @@ def train_remote(
         _write_args_cloud(run_dir, gpu, suffix=info.next_suffix)
         with instrumented_run(run_dir, profile):
             bc_resume(run_dir, info, overlay, operational, force_config_mismatch,
-                      legacy_lr_warmup_batches)
+                      code_sha, legacy_lr_warmup_batches)
     else:
         assert fresh_config is not None
         # `initialize_run_dir` must precede `instrumented_run`: it mkdirs the run
@@ -113,7 +115,7 @@ def train_remote(
         initialize_run_dir(fresh_config, config_input_text)
         _write_args_cloud(fresh_config.run_dir, gpu)
         with instrumented_run(fresh_config.run_dir, profile):
-            bc_run(fresh_config)
+            bc_run(fresh_config, code_sha)
 
 
 def _write_args_cloud(run_dir: Path, gpu: str, suffix: str = "") -> None:
@@ -185,10 +187,13 @@ def train(*arglist: str) -> None:
         f"/{run_dir.name} {RUNS_CLOUD_DIR.relative_to(PROJECT_ROOT)}",
     )
 
+    # Capture the training-code SHA locally — the remote has no `.git`, so it
+    # must be stamped here where the source checkout is reachable.
+    code_sha = git_sha()
     train_remote.with_options(gpu=gpu).spawn(
         fresh_config, config_input_text, resume_run_dir_arg,
         overlay, operational, gpu, args.force_config_mismatch,
-        args.legacy_lr_warmup_batches, args.profile,
+        args.legacy_lr_warmup_batches, args.profile, code_sha,
     )
 
     print()

@@ -255,7 +255,7 @@ def test_v1_round_trip(tmp_path):
     arch, and weights all survive the weights_only load."""
     device = torch.device("cpu")
     config = _v1_config(tmp_path)
-    state = TrainingState.fresh(config, device)
+    state = TrainingState.fresh(config, device, "test-sha")
     obj = serialize_checkpoint(_runtime(state), config, code_sha="test-sha")
     ckpt = tmp_path / "epoch_000.pt"
     torch.save(obj, ckpt)
@@ -273,7 +273,7 @@ def test_v1_serialized_shape(tmp_path):
     """serialize_checkpoint produces the v1 top-level layout: runtime keys plus the
     config block, in_ch checksum, and code_sha, with config-block Paths stringified."""
     config = _v1_config(tmp_path)
-    state = TrainingState.fresh(config, torch.device("cpu"))
+    state = TrainingState.fresh(config, torch.device("cpu"), "test-sha")
     obj = serialize_checkpoint(_runtime(state), config, code_sha="abc123")
 
     assert set(obj) == {"model", "optim", "scaler", "epoch", "in_ch", "config", "code_sha"}
@@ -287,7 +287,7 @@ def test_v1_in_ch_mismatch_raises(tmp_path):
     """A recorded in_ch contradicting the obs channel count raises a clear error on
     load (before the cryptic state_dict shape mismatch)."""
     config = _v1_config(tmp_path)
-    state = TrainingState.fresh(config, torch.device("cpu"))
+    state = TrainingState.fresh(config, torch.device("cpu"), "test-sha")
     obj = serialize_checkpoint(_runtime(state), config, code_sha="x")
     obj["in_ch"] += 1
     ckpt = tmp_path / "epoch_000.pt"
@@ -304,7 +304,7 @@ def test_is_arch_bearing_across_formats(tmp_path):
     model_key."""
     device = torch.device("cpu")
     config = _v1_config(tmp_path)
-    state = TrainingState.fresh(config, device)
+    state = TrainingState.fresh(config, device, "test-sha")
 
     v0_combined = tmp_path / "v0_combined.pt"
     torch.save(
@@ -327,7 +327,7 @@ def test_v1_model_key_ignores_variant(tmp_path):
     same key and share a forward. This is what the is_arch_bearing v1 arm protects."""
     device = torch.device("cpu")
     config = _v1_config(tmp_path)
-    state = TrainingState.fresh(config, device)
+    state = TrainingState.fresh(config, device, "test-sha")
     ckpt = tmp_path / "epoch_000.pt"
     torch.save(serialize_checkpoint(_runtime(state), config, code_sha="x"), ckpt)
 

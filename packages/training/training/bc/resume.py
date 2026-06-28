@@ -77,6 +77,7 @@ def bc_resume(
     overlay: dict,
     operational: dict[str, Any],
     force_config_mismatch: bool,
+    code_sha: str,
     legacy_lr_warmup_batches: int | None = None,
 ) -> None:
     """Resume the run at `run_dir` from its latest checkpoint.
@@ -85,9 +86,10 @@ def bc_resume(
     `--config` file (`overlay`) and the explicit operational CLI flags
     (`operational`). `info` is the precomputed `prepare_resume` result (both
     wrappers compute it; the Modal wrapper additionally writes segment-suffixed
-    cloud provenance off the same suffix). `legacy_lr_warmup_batches` is the
-    cold-restart opt-in: required to resume a legacy bare-state_dict checkpoint,
-    and rejected on a combined one.
+    cloud provenance off the same suffix). `code_sha` is the resuming code's
+    provenance, recorded into this segment's checkpoints (see `bc_run`).
+    `legacy_lr_warmup_batches` is the cold-restart opt-in: required to resume a
+    legacy bare-state_dict checkpoint, and rejected on a combined one.
     """
     parent = load_parent_config(info.parent_args_path)
     effective = _resume_config(run_dir, parent, overlay, operational)
@@ -122,7 +124,8 @@ def bc_resume(
 
     def make_state(dev):
         state = TrainingState.from_checkpoint(
-            info.latest_checkpoint, effective, dev, fallback_epoch=info.parent_epoch
+            info.latest_checkpoint, effective, dev, code_sha,
+            fallback_epoch=info.parent_epoch,
         )
         if legacy_lr_warmup_batches is not None:
             state.warmup = WarmupSchedule(effective.lr, legacy_lr_warmup_batches)
