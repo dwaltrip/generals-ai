@@ -48,7 +48,6 @@ import datetime
 import json
 from pathlib import Path
 import random
-import subprocess
 
 from settings import (
     CURATED_LISTS_MANIFEST,
@@ -59,6 +58,7 @@ from settings import (
 from training.bc.filters import DROP_REASONS, FILTER_VERSION, eligible_perspectives
 from training.bc.utils import list_sim_paths, meta_path_for
 from utils.docstring import doc_summary
+from utils.git import git_sha
 from utils.json_io import write_json
 from utils.player_name_lists import load_union
 
@@ -99,20 +99,6 @@ def load_eval_map_ids(
         for bucket in manifest["buckets"].values():
             ids.update(entry[0] for entry in bucket)
     return ids, names
-
-
-def _git_sha() -> str:
-    """Best-effort short git SHA; 'unknown' if git can't answer."""
-    try:
-        out = subprocess.check_output(
-            ["git", "rev-parse", "--short", "HEAD"],
-            cwd=Path(__file__).resolve().parent,
-            stderr=subprocess.DEVNULL,
-            text=True,
-        )
-        return out.strip()
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        return "unknown"
 
 
 def build_manifest(
@@ -222,7 +208,7 @@ def build_manifest(
         "built_at": datetime.datetime.now(datetime.UTC).isoformat(timespec="seconds"),
         "intermediate_root": str(intermediate_root),
         "filter_version": FILTER_VERSION,
-        "git_sha": _git_sha(),
+        "git_sha": git_sha(),
         "corpus_size": n_total,
         "dropped_games": dropped_games,
         "kept_pairs": len(pairs),
