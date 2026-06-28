@@ -135,7 +135,7 @@ class ModelConfig:
         Derived from `obs`, not a dataclass field: it enters the network only at
         the trunk's first conv, so `obs` fully determines it. Checkpoints still
         record it as a checksum (`TrainingState.save`) and validate it on load
-        (`checkpoint._arch_for_load`), turning an obs-channel-formula change into
+        (`checkpoint.arch_for_load`), turning an obs-channel-formula change into
         a clear error rather than a cryptic state_dict shape mismatch.
         """
         return self.obs.obs_channels
@@ -269,6 +269,6 @@ def build_model_cfg(**overrides: Any) -> ModelConfig:
     """
     # in_ch is a derived property, not a field — but checkpoint arch dicts carry
     # it as a recorded checksum, so drop it rather than letting it hit replace().
-    # The checksum is validated in checkpoint._arch_for_load, not here.
+    # The checksum is validated in checkpoint.arch_for_load, not here.
     overrides.pop("in_ch", None)
     return replace(MODEL_CONFIG_DEFAULTS, **overrides)

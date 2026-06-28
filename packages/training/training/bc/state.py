@@ -130,7 +130,7 @@ class TrainingState:
         path = ckpt_dir / ckpt_name(self.epoch)
         # `arch` self-describes the architecture. in_ch is a derived property (not
         # an asdict field) — record it as a checksum so a later obs-channel-formula
-        # change is caught on load (see checkpoint._arch_for_load).
+        # change is caught on load (see checkpoint.arch_for_load).
         arch = {**asdict(self.model.cfg), "in_ch": self.model.cfg.in_ch}
         torch.save(
             {

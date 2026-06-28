@@ -28,7 +28,7 @@ from training.bc.obs_config import ObsConfig
 # LEGACY_OBS_CFG is the single home for the historical obs contract: the
 # pre-`obs`-key dense-history depth AND the pre-`obs_dtype`-field element dtype
 # (always fp32 before that field existed). It backs LEGACY_ARCH.obs (pre-`arch`
-# checkpoints), the `_arch_for_load` whole-`obs` fill (arch-bearing-but-pre-`obs`
+# checkpoints), the `arch_for_load` whole-`obs` fill (arch-bearing-but-pre-`obs`
 # checkpoints), and the per-sub-key back-fill (checkpoints with `obs` but missing
 # newer keys like `obs_dtype`). `obs_dtype="fp32"` and `player_status_channels=
 # False` here diverge from the live defaults — recording history (pre-status
@@ -53,7 +53,7 @@ LEGACY_ARCH = ModelConfig(
     # and reconstructs as "no elim head" (`elim_head_variant=None`), so
     # `load_state_dict(strict=True)` still passes. Checkpoints from the
     # `elim_head_enabled` era record that removed key instead of
-    # `elim_head_variant`; `_arch_for_load` migrates them before this back-fill
+    # `elim_head_variant`; `arch_for_load` migrates them before this back-fill
     # runs.
     elim_head_variant=None,
     elim_bin_edges=(10, 20, 40, 80, 160, 320, 640),
@@ -107,7 +107,7 @@ def is_arch_bearing(path: str | Path, device: str | torch.device = "cpu") -> boo
     return is_combined_checkpoint(obj) and "arch" in obj
 
 
-def _arch_for_load(obj: object, value_head_variant: str) -> ModelConfig:
+def arch_for_load(obj: object, value_head_variant: str) -> ModelConfig:
     """The `ModelConfig` to reconstruct a loaded checkpoint with.
 
     `arch` present → authoritative (the load-time `value_head_variant` arg is
@@ -178,7 +178,7 @@ def load_bc_model(
     keys. Returns the model on `device` in eval mode.
     """
     obj = torch.load(path, map_location=device, weights_only=True)
-    model = BCModel(_arch_for_load(obj, value_head_variant))
+    model = BCModel(arch_for_load(obj, value_head_variant))
     state_dict = obj["model"] if is_combined_checkpoint(obj) else obj
     model.load_state_dict(state_dict)
     model.to(device)
