@@ -104,9 +104,8 @@ def _measure_model_flops_per_sample(model: BCModel, device: torch.device) -> int
         # grid (worst-case FLOPs through the heads).
         valid_mask = torch.ones(1, 1, H_PADDED, W_PADDED, dtype=torch.bool, device=device)
         out = model(x, valid_mask)
-        # Sum across all three heads so the backward graph touches every
-        # path — matches the structure (not the value) of `bc_loss`.
-        return out["policy_logits"].sum() + out["pass_logit"].sum() + out["value_logits"].sum()
+        # Sum across all three heads so the backward graph touches every path
+        return out.policy_logits.sum() + out.pass_logit.sum() + out.value_logits.sum()
 
     flops = measure_total_flops(fwd_bwd)
     model.zero_grad()
