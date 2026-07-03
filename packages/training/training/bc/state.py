@@ -1,15 +1,8 @@
-"""The domain training state: model, optimizer, GradScaler, epoch, plus the
-config and code SHA the run was initialized from.
+"""The domain training state — what the training loop mutates and checkpoints.
 
-`TrainingState` bundles the pieces the training loop mutates and owns
-serializing them — together with its config and code SHA — into a checkpoint
-(`save` → `serialize_checkpoint`). The runner advances `epoch` in place and
-saves at each epoch boundary; `from_checkpoint` restores the runtime state for a
-resume.
-
-A legacy-checkpoint resume also attaches a transient `WarmupSchedule` (the
-`warmup` field) — it drives the optimizer, so it lives with the optimizer, but
-it is deliberately not part of the checkpoint.
+`TrainingState` bundles the model, optimizer, scaler, and epoch counter, and
+owns their round trip through a checkpoint (`save` / `from_checkpoint`). The
+runner mutates the state in place and saves it at each epoch boundary.
 """
 
 from __future__ import annotations
@@ -39,7 +32,7 @@ def _build_optim(model: BCModel, config: TrainConfig) -> torch.optim.Optimizer:
 
 
 def _build_scaler(config: TrainConfig, device: torch.device) -> torch.amp.GradScaler:
-    # fp16 is the only AMP mode that needs loss scaling; the scaler is a
+    # fp16 is the only AMP mode that needs loss scaling. The scaler is a
     # near-no-op when disabled, so the fp32 path stays unchanged.
     amp_enabled = resolve_precision(config.precision, device) == "fp16"
     return torch.amp.GradScaler(device.type, enabled=amp_enabled)
@@ -47,13 +40,16 @@ def _build_scaler(config: TrainConfig, device: torch.device) -> torch.amp.GradSc
 
 @dataclass
 class TrainingState:
-    """The model/optimizer/scaler/epoch the loop mutates, plus the `config` and
-    `code_sha` the run was initialized from.
+    """A training run's full state — the runtime state it updates, and the
+    fixed facts it started from.
 
-    `epoch` is the last *successfully completed* epoch — resume continues at
-    `epoch + 1`, and a mid-epoch crash leaves it one behind (which is what
-    resume expects). `config` and `code_sha` are immutable initialization facts,
-    recorded into each checkpoint so it self-describes.
+    The runtime state is the core state held and updated during the run: the
+    model, optimizer, scaler, and `epoch`. `epoch` is the last *successfully
+    completed* epoch (resume continues at `epoch + 1`).
+
+    The fixed facts are `config` and `code_sha`. They are set at init, never
+    change, and are written into every checkpoint — which is what makes a
+    checkpoint self-describing.
 
     Unfrozen: PyTorch modules are inherently mutable, and `epoch` is advanced in
     place by the runner.
@@ -66,9 +62,10 @@ class TrainingState:
     config: TrainConfig
     code_sha: str
     # Transient: a legacy-checkpoint resume attaches a WarmupSchedule here to
-    # ramp the LR while AdamW's variance estimate re-warms. NOT written to the
-    # checkpoint (`to_dict` hand-picks the runtime keys) — the resume path
-    # rebuilds it per-process. None on fresh runs and combined-format resumes.
+    # ramp the LR while AdamW's variance estimate re-warms. It lives on the
+    # state because it drives the optimizer. NOT written to the checkpoint
+    # (`to_dict` hand-picks the runtime keys) — the resume path rebuilds it
+    # per-process. None on fresh runs and combined-format resumes.
     warmup: WarmupSchedule | None = None
 
     @classmethod
@@ -144,10 +141,7 @@ class TrainingState:
         )
 
     def to_dict(self) -> dict[str, Any]:
-        """The runtime-state portion of a checkpoint: the model/optim/scaler
-        state_dicts plus `epoch`. `save` wraps this with the config and
-        provenance via `serialize_checkpoint`.
-        """
+        """The runtime-state portion of a checkpoint."""
         return {
             "model": self.model.state_dict(),
             "optim": self.optim.state_dict(),
@@ -156,10 +150,10 @@ class TrainingState:
         }
 
     def save(self, ckpt_dir: Path) -> Path:
-        """Write the checkpoint for the current epoch; return its path.
+        """Write the checkpoint for the current epoch and return its path.
 
-        One `torch.save` — the load either returns the whole dict or raises;
-        partial writes aren't handled (operator cleans up).
+        One `torch.save` — a load either returns the whole dict or raises.
+        Partial writes aren't handled (the operator cleans up).
         """
         path = ckpt_dir / ckpt_name(self.epoch)
         torch.save(serialize_checkpoint(self.to_dict(), self.config, self.code_sha), path)

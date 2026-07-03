@@ -1,13 +1,13 @@
 """Resume a BC training run from its latest checkpoint.
 
-The resume entry point, sibling to `bc.train.bc_run`. Owns the resume
-bookkeeping — overlaying the `--config` file over the parent's resolved config,
-gating config drift, gating the legacy cold-restart, writing the
-`args_resume_NN.json` provenance — then hands off to the shared
-`bc.train.run_training` core. The caller supplies the resume `run_dir` and a
-precomputed `ResumeInfo` (from `prepare_resume`); keeping that inspection at the
-wrapper boundary lets the Modal wrapper write segment-suffixed provenance with
-the same suffix. Keeping resume logic here lets `bc.train` stay ignorant of it.
+`bc_resume` is the resume counterpart to `bc.train.bc_run`: it re-derives the
+config from the parent run plus operator overrides, gates unsafe resumes,
+writes the segment's provenance, and then drives the same `bc.train.run_training`
+core as a fresh run. The module exists so `bc.train` stays free of resume logic.
+
+The caller inspects the run dir (`prepare_resume`) and passes the resulting
+`ResumeInfo` in. The Modal wrapper relies on this split: it needs the segment
+suffix before the run starts, to name its cloud provenance to match.
 """
 
 from __future__ import annotations
@@ -33,26 +33,20 @@ from utils.log import abort
 def _resume_config(
     run_dir: Path, parent: dict, overlay: dict, operational: dict[str, Any]
 ) -> TrainConfig:
-    """Build the effective resume config.
+    """Build the resume config by merging three layers: the parent's config,
+    then the `--config` file, then the explicit CLI flags.
 
-    Start from the parent's resolved config (recipe + arch + data paths all
-    carry over), overlay the operator's `--config` file (arch + recipe), then the
-    explicit operational CLI flags — so an unchanged knob continues the parent's
-    value instead of resetting to a default. `run_dir` is the resume target.
-    Arch and loss are deep-merged (overlay over parent), so an overlay that sets
-    one loss knob continues the parent's other knobs rather than resetting them to
-    defaults; any *net* arch change is rejected downstream by `check_drift` (arch
-    is checkpoint-owned).
-
-    Note the asymmetry with a fresh run: a fresh `--config` merges over
-    *defaults*; resume's merges over the *parent*.
+    Later layers take precedence over earlier ones. Defaults are only applied
+    to fields not set by either the parent config or the resume overrides.
+    A fresh run is different: there, `--config` merges over the defaults.
     """
     parent = dict(parent)
     parent.pop("run_dir", None)
     parent_arch = parent.pop("arch", None)
-    # A pre-`arch` parent recorded its variant as a top-level field; fold it into
-    # the arch so it isn't a stray key (and isn't lost). Other removed/renamed
-    # fields don't exist, so this is the only legacy-key translation needed.
+    # Some older runs recorded `value_head_variant` as a top-level config field.
+    # If present, merge it into `arch`, matching the current TrainConfig shape.
+    # No other field has ever moved, so this is the only translation needed.
+    # NOTE(ckpt-cfg-refactor-note): this would become part of the v0 -> v1 normalizer.
     legacy_variant = parent.pop("value_head_variant", None)
     if parent_arch is None:
         parent_arch = {} if legacy_variant is None else {"value_head_variant": legacy_variant}
@@ -82,14 +76,13 @@ def bc_resume(
 ) -> None:
     """Resume the run at `run_dir` from its latest checkpoint.
 
-    The effective config is the parent's resolved config overlaid with the
-    `--config` file (`overlay`) and the explicit operational CLI flags
-    (`operational`). `info` is the precomputed `prepare_resume` result (both
-    wrappers compute it; the Modal wrapper additionally writes segment-suffixed
-    cloud provenance off the same suffix). `code_sha` is the resuming code's
-    provenance, recorded into this segment's checkpoints (see `bc_run`).
-    `legacy_lr_warmup_batches` is the cold-restart opt-in: required to resume a
-    legacy bare-state_dict checkpoint, and rejected on a combined one.
+    - `info`: the precomputed `prepare_resume` result.
+    - `overlay` and `operational`: the parsed `--config` file and the explicit
+      CLI flags. `_resume_config` merges them into the effective config.
+    - `code_sha`: recorded into this segment's checkpoints — `bc_run` covers
+      how to capture it.
+    - `legacy_lr_warmup_batches`: the legacy cold-restart opt-in. Required for
+      a bare-state_dict checkpoint, rejected otherwise.
     """
     parent = load_parent_config(info.parent_args_path)
     effective = _resume_config(run_dir, parent, overlay, operational)

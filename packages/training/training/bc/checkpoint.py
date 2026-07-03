@@ -95,15 +95,10 @@ def is_legacy_checkpoint(path: str | Path, device: str | torch.device = "cpu") -
 
 
 def is_arch_bearing(path: str | Path, device: str | torch.device = "cpu") -> bool:
-    """True if the checkpoint records its own architecture.
-
-    When it does, the arch is authoritative and the load-time `value_head_variant`
-    is ignored — so it must not enter the inference `model_key`. A legacy
-    checkpoint that records no arch keeps the variant in the key.
-    """
+    """True if the checkpoint records its own architecture config."""
     obj = torch.load(path, map_location=device, weights_only=True)
-    # v1 nests the arch in its `config` block; the older combined format stored it
-    # under a top-level `arch` key. Either counts.
+    # v1 stores the entire TrainConfig in `config` (which includes `arch`)
+    # older format stores it in a top-level `arch` key (without parent TrainConfig)
     return is_combined_checkpoint(obj) and ("config" in obj or "arch" in obj)
 
 

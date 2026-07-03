@@ -1,13 +1,8 @@
 """Versioned config resolution for checkpoints.
 
-`resolve_config` is the migrate-once seam on the read path: a stored config
-block of any past version is migrated to the current shape and constructed into a
-`TrainConfig`, so no other code branches on a config version.
-
-`stringify_paths` / `rewrap_paths` are the matched serialization pair for
-`TrainConfig`'s `Path` fields. Checkpoints load with `weights_only=True`, which
-rejects `Path` objects, so the paths are stored on disk as plain strings and
-re-wrapped on read.
+This module owns the stored config block: its shape (`StoredConfigBlock`),
+version migration on the read path, and the `Path` serde that keeps blocks
+`weights_only`-safe.
 """
 
 from __future__ import annotations
@@ -23,22 +18,32 @@ from training.bc.train_config import TrainConfig
 
 CONFIG_VERSION = 1
 
-MIGRATIONS: dict[int, Callable[[dict[str, Any]], dict[str, Any]]] = {}
+# A checkpoint's stored config block: `asdict(TrainConfig)` plus `config_version`,
+# with `Path` fields stringified (written by `serialize_checkpoint`). If this seam
+# ever needs more than a named alias — live migrations, tooling that passes blocks
+# around — the upgrade is a wrapper dataclass (`config_version: int` plus
+# `data: dict[str, Any]`).
+# We looked into a PEP 728 TypedDict (`extra_items=Any`), but found the ergonomics
+# poor: the block's copy/spread-heavy flow forces a cast at every step.
+# Regardless, the dataclass wrapper approach would create a cleaner boundary.
+StoredConfigBlock = dict[str, Any]
+
+MIGRATIONS: dict[int, Callable[[StoredConfigBlock], StoredConfigBlock]] = {}
 
 
-def migrate(config: dict[str, Any]) -> dict[str, Any]:
-    """Step a stored config dict up to `CONFIG_VERSION`.
+def migrate(config: StoredConfigBlock) -> StoredConfigBlock:
+    """Step a stored config block up to `CONFIG_VERSION` via the registered migrations.
 
-    Applies each registered migration in order — a no-op while none are
-    registered. A config written by newer code (a version above `CONFIG_VERSION`)
-    is rejected rather than silently mis-read. Returns a fresh dict; the input is
-    untouched.
+    A version above `CONFIG_VERSION` raises `ValueError`: the config was written
+    by newer code or the block was mis-edited. Either way, it can't be trusted.
+
+    Returns a new dict, leaving the input untouched.
     """
     version = config["config_version"]
     if version > CONFIG_VERSION:
         raise ValueError(
             f"config_version {version} exceeds supported {CONFIG_VERSION} "
-            "(checkpoint written by newer code)"
+            "(checkpoint with an unknown version)"
         )
     data = dict(config)
     for v in range(version, CONFIG_VERSION):
@@ -46,12 +51,14 @@ def migrate(config: dict[str, Any]) -> dict[str, Any]:
     return data
 
 
-def resolve_config(config: dict[str, Any]) -> TrainConfig:
-    """Build a `TrainConfig` from a stored config block.
+def resolve_config(config: StoredConfigBlock) -> TrainConfig:
+    """Build a `TrainConfig` from a stored config block of any supported version.
 
-    `config` is a checkpoint's config block: an `asdict(TrainConfig)` plus
-    `config_version`. Migrate the dict to the current version's shape, then
-    construct the `TrainConfig` from it.
+    The migrate-once seam on the read path: older blocks are migrated to a shape
+    the current code supports, and downstream code can ignore that complexity.
+    Currently, the only shape is `TrainConfig`. Later, there may be dedicated
+    back-compat shapes that enable certain older checkpoints to load while cleanly
+    separating the current model and training code from "legacy" paths.
     """
     data = migrate(config)
     data.pop("config_version")
@@ -61,6 +68,9 @@ def resolve_config(config: dict[str, Any]) -> TrainConfig:
     return TrainConfig(arch=arch, loss=loss, **data)
 
 
+# Checkpoints load with `weights_only=True`, which rejects `Path` objects, so
+# `Path` fields are stored on disk as plain strings and re-wrapped on read.
+#
 # TrainConfig's Path-typed fields, found once at import so the serde pair picks
 # up a new Path field without a hardcoded name list.
 _PATH_FIELDS: tuple[str, ...] = tuple(

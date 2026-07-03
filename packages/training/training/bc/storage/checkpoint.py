@@ -1,9 +1,7 @@
 """Read and write BC model checkpoints — the `.pt` format adapter.
 
-`load_checkpoint` reads a `.pt`, discriminates the on-disk layout (versioned vs.
-legacy), reconstructs the `BCModel`, and returns it wrapped in a
-`ConfiguredModel`. `serialize_checkpoint` builds the v1 dict from runtime state
-and config.
+This module owns the on-disk format: it reads both layouts (versioned and
+legacy) into a `ConfiguredModel`, and assembles the v1 dict that gets written.
 """
 
 from __future__ import annotations
@@ -15,7 +13,12 @@ from typing import Any
 import torch
 
 from training.bc.checkpoint import arch_for_load, is_combined_checkpoint
-from training.bc.config import CONFIG_VERSION, resolve_config, stringify_paths
+from training.bc.config import (
+    CONFIG_VERSION,
+    StoredConfigBlock,
+    resolve_config,
+    stringify_paths,
+)
 from training.bc.model_builder import ConfiguredModel, build_model
 from training.bc.model_config import ModelConfig
 from training.bc.train_config import TrainConfig
@@ -29,8 +32,7 @@ def load_checkpoint(
 ) -> ConfiguredModel:
     """Load a checkpoint file into a `ConfiguredModel`.
 
-    Discriminate if it contains a post-refactor "stamped, versioned config" or not,
-    and pass to the appropriate handler.
+    Determine whether it is a versioned or legacy checkpoint and handle accordingly.
     `value_head_variant` is a legacy-only fallback (see $LEGACY_EXPLAINER).
     """
     obj = torch.load(path, map_location=device, weights_only=True)
@@ -40,12 +42,12 @@ def load_checkpoint(
 
 
 def is_versioned_checkpoint(obj: object) -> bool:
-    """True if a loaded checkpoint carries a self-describing versioned config block."""
+    """True if a loaded checkpoint carries a versioned config block."""
     return isinstance(obj, dict) and "config" in obj
 
 
 def _load_versioned_checkpoint(obj: Any, device: torch.device) -> ConfiguredModel:
-    """Reconstruct a model from a versioned (v1+) checkpoint, paired with its config.
+    """Reconstruct a model from a versioned (v1+) checkpoint.
 
     Returns the model on `device` in eval mode.
     """
@@ -94,14 +96,8 @@ def validate_in_ch(stored_in_ch: int, cfg: ModelConfig) -> None:
 def serialize_checkpoint(
     runtime: dict[str, Any], config: TrainConfig, code_sha: str
 ) -> dict[str, Any]:
-    """Assemble a v1 checkpoint dict from runtime state, config, and provenance.
-
-    `runtime` carries the runtime-state keys — `model`/`optim`/`scaler` state_dicts
-    and `epoch`. This adds the format layer: the self-describing `config` block
-    (`config_version` included, Paths stringified for the `weights_only` load),
-    the `in_ch` checksum, and the `code_sha` stamp.
-    """
-    block = {**asdict(config), "config_version": CONFIG_VERSION}
+    """Assemble a v1 checkpoint dict from runtime state, config, and provenance."""
+    block: StoredConfigBlock = {**asdict(config), "config_version": CONFIG_VERSION}
     stringify_paths(block)
     return {
         **runtime,

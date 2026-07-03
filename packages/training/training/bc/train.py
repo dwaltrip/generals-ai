@@ -104,7 +104,7 @@ def _measure_model_flops_per_sample(model: BCModel, device: torch.device) -> int
         # grid (worst-case FLOPs through the heads).
         valid_mask = torch.ones(1, 1, H_PADDED, W_PADDED, dtype=torch.bool, device=device)
         out = model(x, valid_mask)
-        # Sum across all three heads so the backward graph touches every path
+        # Sum across all three heads so the backward graph touches every path.
         return out.policy_logits.sum() + out.pass_logit.sum() + out.value_logits.sum()
 
     flops = measure_total_flops(fwd_bwd)
@@ -347,9 +347,7 @@ def bc_run(config: TrainConfig, code_sha: str) -> None:
     from a notebook or test by constructing a `TrainConfig` directly (after
     initializing the run dir).
 
-    `code_sha` is the training-code provenance recorded into each checkpoint;
-    capture it at the launch site (`utils.git.git_sha`) so it reflects the local
-    source, not the remote where `.git` may be absent.
+    `code_sha` records the code provenance into each checkpoint.
     """
     run_training(
         config,

@@ -133,10 +133,7 @@ class ModelConfig:
         """The trunk's input channel count = the obs channel count.
 
         Derived from `obs`, not a dataclass field: it enters the network only at
-        the trunk's first conv, so `obs` fully determines it. Checkpoints still
-        record it as a checksum (`TrainingState.save`) and validate it on load
-        (`checkpoint.arch_for_load`), turning an obs-channel-formula change into
-        a clear error rather than a cryptic state_dict shape mismatch.
+        the trunk's first conv, so `obs` fully determines it.
         """
         return self.obs.obs_channels
 
@@ -153,7 +150,8 @@ class ModelConfig:
     @classmethod
     def validate_partial(cls, d: dict) -> list[str]:
         valid = {f.name for f in fields(cls)}
-        # in_ch appears in checkpoint arch dicts; build_model_cfg pops it.
+        # NOTE(ckpt-cfg-refactor-note): `in_ch` is a legacy key that can be found
+        # in older arch dicts.
         valid.add("in_ch")
         errors = []
         for key in d:
@@ -267,8 +265,10 @@ def build_model_cfg(**overrides: Any) -> ModelConfig:
     (`build_model_cfg(value_head_variant=...)`) and dict-bearing loaders (config
     files, checkpoint arch dicts, resume overlays) alike.
     """
-    # in_ch is a derived property, not a field — but checkpoint arch dicts carry
-    # it as a recorded checksum, so drop it rather than letting it hit replace().
-    # The checksum is validated in checkpoint.arch_for_load, not here.
+    # NOTE(ckpt-cfg-refactor-note): in_ch is a derived property, not a field.
+    # Legacy checkpoints recorded it inside their arch dict, so pop this known
+    # legacy key before `replace()` rejects it as an unexpected kwarg (TypeError).
+    # No current producer emits it — remove this (and validate_partial's
+    # allowance) when legacy checkpoint support goes.
     overrides.pop("in_ch", None)
     return replace(MODEL_CONFIG_DEFAULTS, **overrides)

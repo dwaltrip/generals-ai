@@ -1,4 +1,4 @@
-"""Tests for bc/config: resolve_config, migrate, and the Path serde helpers."""
+"""Tests for bc/config's stored-config-block serde."""
 
 from __future__ import annotations
 
@@ -14,13 +14,12 @@ from training.bc.config import (
     rewrap_paths,
     stringify_paths,
 )
-from training.bc.model_config import build_model_cfg
+from training.bc.model_config import MODEL_CONFIG_DEFAULTS, ModelConfig, build_model_cfg
 from training.bc.obs_config import OBS_CONFIG_DEFAULTS
 from training.bc.train_config import TrainConfig
 
 
-def _config(tmp_path) -> TrainConfig:
-    """A non-default TrainConfig touching arch, nested obs, loss, and all paths."""
+def _config(tmp_path, arch: ModelConfig = MODEL_CONFIG_DEFAULTS) -> TrainConfig:
     return TrainConfig(
         manifest=tmp_path / "m.json",
         intermediate=tmp_path / "i",
@@ -28,27 +27,22 @@ def _config(tmp_path) -> TrainConfig:
         epochs=3,
         lr=1e-3,
         seed=42,
-        arch=build_model_cfg(
-            value_head_variant="pyramid",
-            value_head_skip_dropout2d=0.1,
-            obs=replace(OBS_CONFIG_DEFAULTS, dense_history_n=10),
-        ),
+        arch=arch,
     )
 
 
-def _stored_block(config: TrainConfig) -> dict:
-    """Mimic the on-disk config block: asdict + version, paths stringified, then a
-    JSON round-trip. The round-trip turns tuples into lists, exercising the
-    list->tuple coercion that needs to happen when rebuilding the config.
-    """
+def test_resolve_config_json_round_trip(tmp_path):
+    # Non-default arch, so equality can't pass by refilling from defaults.
+    arch = build_model_cfg(
+        value_head_variant="pyramid",
+        value_head_skip_dropout2d=0.1,
+        obs=replace(OBS_CONFIG_DEFAULTS, dense_history_n=10),
+    )
+    config = _config(tmp_path, arch=arch)
     raw = {**asdict(config), "config_version": CONFIG_VERSION}
     stringify_paths(raw)
-    return json.loads(json.dumps(raw))
-
-
-def test_resolve_config_round_trip(tmp_path):
-    config = _config(tmp_path)
-    assert resolve_config(_stored_block(config)) == config
+    json_round_tripped = json.loads(json.dumps(raw))
+    assert resolve_config(json_round_tripped) == config
 
 
 def test_migrate_rejects_future_version():

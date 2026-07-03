@@ -1,10 +1,9 @@
 """Construct live model objects from resolved config.
 
-The seam between a `ModelConfig` and the `BCModel` it specifies, shared by the
-checkpoint loader and fresh-training construction. Isolating construction here
-gives a future configurable builder — reconstructing historical model/obs/loss
-behavior from config — one home, instead of scattering `BCModel(...)` calls
-across loaders.
+`build_model` is the one place a `ModelConfig` becomes a `BCModel`. Checkpoint
+loading and fresh-training construction both go through it.
+This module is also the named home for a future configurable builder — one that
+could reconstruct historical model/obs/loss behavior from config.
 """
 
 from __future__ import annotations
@@ -25,16 +24,18 @@ class ConfiguredModel:
     """A built model paired with the config it was constructed from."""
 
     model: BCModel
-    # NOTE(ckpt-cfg-refactor-note): None for legacy checkpoints — a v0 .pt records only the
-    # arch (reachable via `cfg`), not the full TrainConfig (the recipe lived in the
-    # run-dir sidecar). A later v0->v1 normalizer may reconstruct one.
-    # Whether `None` goes away depends on running it on every load ("uniform") vs. only
-    # on demand like the "checkpoint resume" path ("graded" — None stays). Open fork.
+    # NOTE(ckpt-cfg-refactor-note): Currently, config is None when a model comes
+    # from a legacy checkpoint. A v0 .pt records only the "arch", while the full
+    # TrainConfig was recorded in the `args.json` sidecar file.
+    # A v0->v1 normalizer (not yet implemented) could reconstruct the TrainConfig.
+    # But whether that normalizer would run on every load, or only on the paths
+    # that need a config (like checkpoint resume), is still undecided. Only the
+    # "run-on-every-load" option would let us remove `None` here.
     config: TrainConfig | None = None
 
     @property
     def cfg(self) -> ModelConfig:
         """Pass-through to the `ModelConfig` on `self.model`."""
-        # NOTE(ckpt-cfg-refactor-note): The current plan is to remove `.cfg` from BCModel
-        # and have `ConfiguredModel` own it instead. We are deferring that for now.
+        # NOTE(ckpt-cfg-refactor-note): the plan — deferred for now — is for
+        # `ConfiguredModel` to own the `ModelConfig` and for `BCModel.cfg` to go away.
         return self.model.cfg
