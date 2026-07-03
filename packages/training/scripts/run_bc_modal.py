@@ -105,8 +105,15 @@ def train_remote(
         info = prepare_resume(run_dir)
         _write_args_cloud(run_dir, gpu, suffix=info.next_suffix)
         with instrumented_run(run_dir, profile):
-            bc_resume(run_dir, info, overlay, operational, force_config_mismatch,
-                      code_sha, legacy_lr_warmup_batches)
+            bc_resume(
+                run_dir,
+                info,
+                overlay,
+                operational,
+                force_config_mismatch,
+                code_sha,
+                legacy_lr_warmup_batches,
+            )
     else:
         assert fresh_config is not None
         # `initialize_run_dir` must precede `instrumented_run`: it mkdirs the run
@@ -187,9 +194,8 @@ def train(*arglist: str) -> None:
         f"/{run_dir.name} {RUNS_CLOUD_DIR.relative_to(PROJECT_ROOT)}",
     )
 
-    # Capture the training-code SHA locally — the remote has no `.git`, so it
-    # must be stamped here where the source checkout is reachable.
-    code_sha = git_sha()
+    # Capture the git SHA locally as `.git` is not is not present on Modal.
+    code_sha = git_sha("unknown")
     train_remote.with_options(gpu=gpu).spawn(
         fresh_config, config_input_text, resume_run_dir_arg,
         overlay, operational, gpu, args.force_config_mismatch,

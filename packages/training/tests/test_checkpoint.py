@@ -251,8 +251,8 @@ def _runtime(state: TrainingState) -> dict:
 
 
 def test_v1_round_trip(tmp_path):
-    """A v1 checkpoint serializes and loads back: the full config (Paths included),
-    arch, and weights all survive the weights_only load."""
+    """Test v1 config round trip: serialize, save, load, and deserialize.
+    Config values (Paths included), arch, and weights should match."""
     device = torch.device("cpu")
     config = _v1_config(tmp_path)
     state = TrainingState.fresh(config, device, "test-sha")

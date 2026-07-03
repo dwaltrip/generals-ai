@@ -1,18 +1,18 @@
-"""Git provenance helpers."""
-
 from __future__ import annotations
 
 from pathlib import Path
 import subprocess
+from typing import overload
 
 
-def git_sha() -> str:
-    """Short git SHA of HEAD, or 'unknown' if git can't answer.
+@overload
+def git_sha(default: str) -> str: ...
 
-    Resolved against this module's location, not the process cwd. Returns
-    'unknown' rather than raising when there's no reachable `.git` (e.g. source
-    shipped to a remote without it).
-    """
+@overload
+def git_sha(default: None = None) -> str | None: ...
+
+def git_sha(default: str | None  = None) -> str | None:
+    """Short git SHA of HEAD for the repository."""
     try:
         out = subprocess.check_output(
             ["git", "rev-parse", "--short", "HEAD"],
@@ -22,4 +22,4 @@ def git_sha() -> str:
         )
         return out.strip()
     except (subprocess.CalledProcessError, FileNotFoundError):
-        return "unknown"
+        return default

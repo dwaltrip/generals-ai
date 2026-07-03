@@ -1,4 +1,4 @@
-"""git_sha returns a SHA in a checkout and 'unknown' when git can't answer."""
+"""git_sha returns a SHA in a checkout and 'unknown' if `git` fails."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ def test_git_sha_in_checkout():
 
 
 def test_git_sha_unknown_on_failure(monkeypatch):
-    """The contract is never-raise: a git failure resolves to 'unknown'."""
+    """The contract: return 'unknown' on git failure (don't raise)."""
 
     def boom(*args, **kwargs):
         raise FileNotFoundError
