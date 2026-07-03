@@ -1,7 +1,9 @@
-"""`load_checkpoint` reconstructs a model's architecture from the checkpoint:
-the `arch` key when present (authoritative), `LEGACY_ARCH` + the load-time
-variant arg for legacy bare-state_dict checkpoints. Plus the combined-vs-legacy
-format detection used by the resume path."""
+"""Checkpoint read/write tests. A few notable cases:
+
+    - Legacy (v0) arch reconstruction
+    - The v1 versioned format
+    - The on-disk format discriminators
+"""
 
 from __future__ import annotations
 
@@ -19,14 +21,14 @@ from training.bc.checkpoint import (
 from training.bc.config import CONFIG_VERSION
 from training.bc.inference import BCModelHandle
 from training.bc.model import BCModel
-from training.bc.model_config import MODEL_CONFIG_DEFAULTS, build_model_cfg
+from training.bc.model_config import MODEL_CONFIG_DEFAULTS, ModelConfig, build_model_cfg
 from training.bc.obs_config import OBS_CONFIG_DEFAULTS
 from training.bc.state import TrainingState
 from training.bc.storage.checkpoint import load_checkpoint, serialize_checkpoint
 from training.bc.train_config import TrainConfig
 
 
-# TODO(refactor-note): We need to rewrite these tests at some point.
+# TODO(ckpt-cfg-refactor-note): We need to rewrite these tests at some point.
 # Revisit later in the ckpt-config refactor (or after).
 
 def test_load_bc_model_bare_state_dict(tmp_path):
@@ -113,7 +115,7 @@ def test_is_legacy_checkpoint_detection(tmp_path):
     assert is_legacy_checkpoint(combined) is False
 
 
-# --- obs sub-config back-fill: load → legacy, fresh → live default ---------
+# --- obs sub-config back-fill: load → legacy, fresh → live default ---
 #
 # When a new ObsConfig field is added (obs_dtype is the first), a checkpoint's
 # `obs` block predates it. The load path must back-fill the missing key from the
@@ -227,16 +229,16 @@ def test_fresh_partial_obs_uses_live_default(monkeypatch):
     assert cfg.obs.obs_dtype == "fp16"  # live default, not legacy fp32
 
 
-# --- v1 versioned format: serialize_checkpoint -> load_checkpoint round-trip ----
+# --- v1 versioned format: serialize_checkpoint / load_checkpoint ---
 
 
-def _v1_config(tmp_path) -> TrainConfig:
-    """A non-default config; dummy paths (not existence-checked at construction)."""
+def _v1_config(tmp_path, arch: ModelConfig | None = None) -> TrainConfig:
+    """A valid TrainConfig with paths under tmp_path."""
     return TrainConfig(
         manifest=tmp_path / "m.json",
         intermediate=tmp_path / "i",
         run_dir=tmp_path / "run",
-        arch=build_model_cfg(outer_width=64, middle_width=64, inner_width=96),
+        arch=arch if arch is not None else build_model_cfg(),
     )
 
 
@@ -254,7 +256,12 @@ def test_v1_round_trip(tmp_path):
     """Test v1 config round trip: serialize, save, load, and deserialize.
     Config values (Paths included), arch, and weights should match."""
     device = torch.device("cpu")
-    config = _v1_config(tmp_path)
+    # Use a non-default arch: if the loader ignored the stored arch and built
+    # the model from current defaults, a default arch here would hide that bug.
+    config = _v1_config(
+        tmp_path,
+        arch=build_model_cfg(outer_width=64, middle_width=64, inner_width=96),
+    )
     state = TrainingState.fresh(config, device, "test-sha")
     obj = serialize_checkpoint(_runtime(state), config, code_sha="test-sha")
     ckpt = tmp_path / "epoch_000.pt"
@@ -269,9 +276,10 @@ def test_v1_round_trip(tmp_path):
         assert torch.equal(src_sd[k], loaded_sd[k].cpu()), f"param mismatch: {k}"
 
 
+# TODO(ckpt-cfg-refactor-note): old docstring described the v1 layout in detail.
+# It should just be documented in one location that we can point to from here.
 def test_v1_serialized_shape(tmp_path):
-    """serialize_checkpoint produces the v1 top-level layout: runtime keys plus the
-    config block, in_ch checksum, and code_sha, with config-block Paths stringified."""
+    """serialize_checkpoint emits the v1 top-level layout."""
     config = _v1_config(tmp_path)
     state = TrainingState.fresh(config, torch.device("cpu"), "test-sha")
     obj = serialize_checkpoint(_runtime(state), config, code_sha="abc123")
@@ -280,12 +288,13 @@ def test_v1_serialized_shape(tmp_path):
     assert obj["config"]["config_version"] == CONFIG_VERSION
     assert obj["in_ch"] == config.arch.in_ch
     assert obj["code_sha"] == "abc123"
+    # paths should be stringified
     assert isinstance(obj["config"]["run_dir"], str)
 
 
 def test_v1_in_ch_mismatch_raises(tmp_path):
-    """A recorded in_ch contradicting the obs channel count raises a clear error on
-    load (before the cryptic state_dict shape mismatch)."""
+    """A v1 checkpoint whose recorded in_ch contradicts its arch's obs channel
+    count raises a clear error on load."""
     config = _v1_config(tmp_path)
     state = TrainingState.fresh(config, torch.device("cpu"), "test-sha")
     obj = serialize_checkpoint(_runtime(state), config, code_sha="x")
@@ -298,10 +307,8 @@ def test_v1_in_ch_mismatch_raises(tmp_path):
 
 
 def test_is_arch_bearing_across_formats(tmp_path):
-    """A v0 combined checkpoint (top-level `arch`) and a v1 checkpoint (arch nested
-    in `config`) both record their arch; a v0 bare state_dict does not. The v0
-    answers must stay fixed across the v1 addition — they feed the inference
-    model_key."""
+    """is_arch_bearing across all three layouts: v0 combined (top-level arch) and
+    v1 (arch nested in config) are arch-bearing; a v0 bare state_dict is not."""
     device = torch.device("cpu")
     config = _v1_config(tmp_path)
     state = TrainingState.fresh(config, device, "test-sha")
@@ -321,10 +328,10 @@ def test_is_arch_bearing_across_formats(tmp_path):
     assert is_arch_bearing(v1) is True
 
 
-def test_v1_model_key_ignores_variant(tmp_path):
-    """A v1 checkpoint is arch-bearing, so its model_key drops the load-time
-    value_head_variant: two handle loads under different fallback variants get the
-    same key and share a forward. This is what the is_arch_bearing v1 arm protects."""
+def test_v1_model_key_ignores_legacy_variant_kwarg(tmp_path):
+    """The value_head_variant arg only applies to legacy checkpoints — a v1 load
+    ignores it, so it must not appear in model_key either: the same v1 file
+    loaded under different variant args is one model and gets one key."""
     device = torch.device("cpu")
     config = _v1_config(tmp_path)
     state = TrainingState.fresh(config, device, "test-sha")

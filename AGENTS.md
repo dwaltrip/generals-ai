@@ -20,14 +20,30 @@ The keep-or-drop test: a comment or docstring should exist only if it —
 
 When it passes, write it as clear, legible prose at a length matched to its importance. Otherwise drop it, or move it to where it belongs.
 
+The test is easy to state and hard to apply, because prose gets written — and judged — with the full design context loaded. At write time that context leaks in: each function's docstring picks up a half-relevant slice of it — a consumer mention, a contract paraphrase, a rationale clause. The same facts repeat partially across a subsystem, no copy is authoritative, and every copy drifts. At review time the same context works against you: every sentence reads as relevant, so "is this too verbose?" can't be answered by feel. Three working rules:
+
+- **Keep it concise by default. A sentence must earn its keep.**
+
+  Check 2 in practice: invert the burden of proof. Include a line of prose only if you can clearly articulate why *this* fact deserves mention here, above all the related facts currently in context. The test: what would a reader get wrong, or do differently, without it? That purpose must be specific to the code in question, and it must hold for a fresh reader — a purpose that only makes sense mid-iteration isn't one.
+
+  A missing sentence is recoverable — the reader asks the agent, or reads the code. Vague, verbose prose is not: it distracts and confuses, and it buries the details that actually matter.
+
+- **One authoritative home per fact** (check 3 in practice). For every sentence past the one-line "what", ask: does this fact have (or deserve) an authoritative home elsewhere — the contract at its definition, the consumer relationship at the consumer, the rationale in a doc? If yes, point to it or cut the sentence. A test docstring never paraphrases the format or contract it exercises. Detail that does survive goes next to the exact line it explains, not aggregated up into the docstring.
+
+- **Structure before prose.** If a docstring resists a plain one-liner, suspect the code before writing anything — a hard-to-describe function is often a mis-shaped one (e.g. a test case posing as a shared helper). Flag the structural problem instead of writing prose that accommodates it.
+
 Two common tells:
 
-- **Singling out one of several uniformly-handled things** (check 2): e.g. a docstring noting the function "reads MFU from `summary['mfu']`" when it reads ten `summary` keys the same way. The test: would the same statement be equally true of the siblings it doesn't name? If so it isn't carrying weight — cut it, or, if there's a real pattern, describe the pattern instead of the instance. This tends to slip in because the named item was the salient one when the line was written, and later edits extend the inherited prose instead of re-reading it critically.
+- **Singling out one of several uniformly-handled things** (check 2): e.g. a docstring noting the function "reads MFU from `summary['mfu']`" when it reads ten `summary` keys the same way. The test: would the same statement be equally true of the siblings it doesn't name? If so it isn't carrying weight — cut it, or, if there's a real pattern, describe the pattern instead of the instance. It slips in because the named item was the salient one when the line was written, and later edits extend the inherited prose instead of re-reading it.
 - **A crammed trailing comment** (`# X; default Y`): prose squeezed into too small a slot. Usually it wants to become a full leading comment, or to be dropped.
 
-One carve-out for ML, training, and RL code: a brief note on a genuine ML concept (a standard trick, a literature pattern, the reason behind a design choice) can earn its place even when the code itself is clear. This project doubles as an ML-skills-building exercise for its author, so a concept a learner might not know is worth a sentence or two. Lean toward adding one when a topic has been discussed in depth and the author has been asking learning-type questions — those mark the spots where a concise concept note pays off. Keep it measured and calibrated to the complexity of the topic and length of the discussion triggering the comment.
+Soft, cautious carve-out for ML, training, and RL code:
 
-Note (2026-06-23): The guidelines above are new. We will likely need to calibrate them over time. One route for that: `scripts/one_offs/dump_prose_semi.py` is a prototype that flags semicolon-chain tells in comments and docstrings — a starting point if we later want a detector hook or a cleanup sweep.
+- A brief note on a genuine ML concept (a standard trick, a literature pattern, the reason behind a design choice) can earn its place even when the code itself is clear. This project doubles as an ML-skills-building exercise for its author, so a concept a learner might not know is worth a sentence or two. Lean toward adding one when a topic has been discussed in depth and the author has been asking learning-type questions — those mark the spots where a concise concept note pays off.
+- Keep it measured and calibrated to the complexity of the topic and length of the discussion triggering the comment. Importantly, this carve-out is NOT an excuse to let verbose, vague comments stand.
+
+
+Note (2026-06-23, extended 2026-07-03): The guidelines above are new. We will likely need to calibrate them over time. One route for that: `scripts/one_offs/dump_prose_semi.py` is a prototype that flags semicolon-chain tells in comments and docstrings — a starting point if we later want a detector hook or a cleanup sweep.
 
 ## Sub-projects
 

@@ -57,7 +57,7 @@ def _load_versioned_checkpoint(obj: Any, device: torch.device) -> ConfiguredMode
     return ConfiguredModel(model=model, config=config)
 
 
-# NOTE(refactor-note): This is mostly just a "copy" of the old `load_bc_model`
+# NOTE(ckpt-cfg-refactor-note): This is mostly just a "copy" of the old `load_bc_model`
 # from the pre-refactor `checkpoint.py` (in top-level `bc`).
 # When we implement the proper v0 -> v1 normalizer this will shift to use that —
 # or be dropped, if old checkpoints become unsupported (route-1).

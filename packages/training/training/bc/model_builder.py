@@ -25,7 +25,7 @@ class ConfiguredModel:
     """A built model paired with the config it was constructed from."""
 
     model: BCModel
-    # NOTE(refactor-note): None for legacy checkpoints — a v0 .pt records only the
+    # NOTE(ckpt-cfg-refactor-note): None for legacy checkpoints — a v0 .pt records only the
     # arch (reachable via `cfg`), not the full TrainConfig (the recipe lived in the
     # run-dir sidecar). A later v0->v1 normalizer may reconstruct one.
     # Whether `None` goes away depends on running it on every load ("uniform") vs. only
@@ -35,6 +35,6 @@ class ConfiguredModel:
     @property
     def cfg(self) -> ModelConfig:
         """Pass-through to the `ModelConfig` on `self.model`."""
-        # NOTE(refactor-note): The current plan is to remove `.cfg` from BCModel
+        # NOTE(ckpt-cfg-refactor-note): The current plan is to remove `.cfg` from BCModel
         # and have `ConfiguredModel` own it instead. We are deferring that for now.
         return self.model.cfg

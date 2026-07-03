@@ -114,7 +114,7 @@ class BCModelHandle:
         fallback variants is a different model, and the keys must not collide.
         """
         cm = load_checkpoint(path, device, value_head_variant)
-        # NOTE(refactor-note): model_key re-reads the file via is_arch_bearing.
+        # NOTE(ckpt-cfg-refactor-note): model_key re-reads the file via is_arch_bearing.
         # Deferred: fold this onto the held ConfiguredModel once it carries the
         # arch-bearing signal (config is None for every legacy checkpoint today).
         if is_arch_bearing(path, device):
