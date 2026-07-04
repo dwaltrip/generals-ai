@@ -15,7 +15,6 @@ import torch
 from training.bc.checkpoint import (
     LEGACY_ARCH,
     LEGACY_OBS_CFG,
-    is_arch_bearing,
     is_legacy_checkpoint,
 )
 from training.bc.config import CONFIG_VERSION
@@ -24,7 +23,11 @@ from training.bc.model import BCModel
 from training.bc.model_config import MODEL_CONFIG_DEFAULTS, ModelConfig, build_model_cfg
 from training.bc.obs_config import OBS_CONFIG_DEFAULTS
 from training.bc.state import TrainingState
-from training.bc.storage.checkpoint import load_checkpoint, serialize_checkpoint
+from training.bc.storage.checkpoint import (
+    is_arch_bearing,
+    load_checkpoint,
+    serialize_checkpoint,
+)
 from training.bc.train_config import TrainConfig
 
 

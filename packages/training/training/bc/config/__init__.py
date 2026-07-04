@@ -1,8 +1,8 @@
-"""Versioned config resolution for checkpoints.
+"""The checkpoint's stored config block — shape, versioning, and serde.
 
-This module owns the stored config block: its shape (`StoredConfigBlock`),
-version migration on the read path, and the `Path` serde that keeps blocks
-`weights_only`-safe.
+This module owns the block's contents in both directions
+(`serialize_config` / `resolve_config`). Nothing here touches the checkpoint
+envelope — the `.pt` layout belongs to `bc.storage.checkpoint`.
 """
 
 # NOTE(ckpt-cfg-refactor-note): This package will likely absorb the rest of the
@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 import copy
+from dataclasses import asdict
 from pathlib import Path
 from typing import Any, get_type_hints
 
@@ -25,7 +26,7 @@ from training.bc.train_config import TrainConfig
 CONFIG_VERSION = 1
 
 # A checkpoint's stored config block: `asdict(TrainConfig)` plus `config_version`,
-# with `Path` fields stringified (written by `serialize_checkpoint`). If this seam
+# with `Path` fields stringified (built by `serialize_config`). If this seam
 # ever needs more than a named alias — live migrations, tooling that passes blocks
 # around — the upgrade is a wrapper dataclass (`config_version: int` plus
 # `data: dict[str, Any]`).
@@ -73,6 +74,14 @@ def resolve_config(config: StoredConfigBlock) -> TrainConfig:
     loss = LossConfig(**data.pop("loss"))
     rewrap_paths(data)
     return TrainConfig(arch=arch, loss=loss, **data)
+
+
+def serialize_config(config: TrainConfig) -> StoredConfigBlock:
+    """Build a stored config block from a `TrainConfig` — the write-side
+    counterpart of `resolve_config`."""
+    block: StoredConfigBlock = {**asdict(config), "config_version": CONFIG_VERSION}
+    stringify_paths(block)
+    return block
 
 
 # Checkpoints load with `weights_only=True`, which rejects `Path` objects, so

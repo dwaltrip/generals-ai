@@ -12,6 +12,7 @@ from training.bc.config import (
     migrate,
     resolve_config,
     rewrap_paths,
+    serialize_config,
     stringify_paths,
 )
 from training.bc.model_config import MODEL_CONFIG_DEFAULTS, ModelConfig, build_model_cfg
@@ -39,8 +40,7 @@ def test_resolve_config_json_round_trip(tmp_path):
         obs=replace(OBS_CONFIG_DEFAULTS, dense_history_n=10),
     )
     config = _config(tmp_path, arch=arch)
-    raw = {**asdict(config), "config_version": CONFIG_VERSION}
-    stringify_paths(raw)
+    raw = serialize_config(config)
     json_round_tripped = json.loads(json.dumps(raw))
     assert resolve_config(json_round_tripped) == config
 

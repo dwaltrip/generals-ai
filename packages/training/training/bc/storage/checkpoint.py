@@ -1,24 +1,19 @@
 """Read and write BC model checkpoints — the `.pt` format adapter.
 
-This module owns the on-disk format: it reads both layouts (versioned and
-legacy) into a `ConfiguredModel`, and assembles the v1 dict that gets written.
+This module owns the checkpoint *envelope*: the `.pt`'s top-level key layout.
+Anything that must know that layout lives here. The stored `config` block is
+opaque at this layer: `bc.config` owns its contents.
 """
 
 from __future__ import annotations
 
-from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
 import torch
 
 from training.bc.checkpoint import arch_for_load, is_combined_checkpoint
-from training.bc.config import (
-    CONFIG_VERSION,
-    StoredConfigBlock,
-    resolve_config,
-    stringify_paths,
-)
+from training.bc.config import resolve_config, serialize_config
 from training.bc.model_builder import ConfiguredModel, build_model
 from training.bc.model_config import ModelConfig
 from training.bc.train_config import TrainConfig
@@ -44,6 +39,14 @@ def load_checkpoint(
 def is_versioned_checkpoint(obj: object) -> bool:
     """True if a loaded checkpoint carries a versioned config block."""
     return isinstance(obj, dict) and "config" in obj
+
+
+def is_arch_bearing(path: str | Path, device: str | torch.device = "cpu") -> bool:
+    """True if the checkpoint records its own architecture config."""
+    obj = torch.load(path, map_location=device, weights_only=True)
+    # A versioned checkpoint always records its arch (at `config.arch`). A v0
+    # combined checkpoint records it under a top-level `arch` key, if at all.
+    return is_combined_checkpoint(obj) and (is_versioned_checkpoint(obj) or "arch" in obj)
 
 
 def _load_versioned_checkpoint(obj: Any, device: torch.device) -> ConfiguredModel:
@@ -97,11 +100,9 @@ def serialize_checkpoint(
     runtime: dict[str, Any], config: TrainConfig, code_sha: str
 ) -> dict[str, Any]:
     """Assemble a v1 checkpoint dict from runtime state, config, and provenance."""
-    block: StoredConfigBlock = {**asdict(config), "config_version": CONFIG_VERSION}
-    stringify_paths(block)
     return {
         **runtime,
         "in_ch": config.arch.in_ch,
-        "config": block,
+        "config": serialize_config(config),
         "code_sha": code_sha,
     }

@@ -1,9 +1,9 @@
-"""Checkpoint I/O for BC models.
+"""Legacy checkpoint reconstruction and shared `.pt` helpers.
 
-The single place inference and probe code loads model weights from a
-`.pt` file, and the home for the on-disk checkpoint format knowledge
-(filename scheme + the combined-vs-legacy layout), so that knowledge
-lives in one module rather than being duplicated across call sites.
+Holds the knowledge that keeps pre-versioned checkpoints loadable: the frozen
+historical pins and the v0 arch reconstruction. Also home to the
+combined/legacy discriminators and the filename scheme. `bc.storage.checkpoint`
+delegates here for its legacy read path.
 """
 
 # NOTE(ckpt-cfg-refactor-note): This module is superseded by
@@ -98,14 +98,6 @@ def is_legacy_checkpoint(path: str | Path, device: str | torch.device = "cpu") -
     """
     obj = torch.load(path, map_location=device, weights_only=True)
     return not is_combined_checkpoint(obj)
-
-
-def is_arch_bearing(path: str | Path, device: str | torch.device = "cpu") -> bool:
-    """True if the checkpoint records its own architecture config."""
-    obj = torch.load(path, map_location=device, weights_only=True)
-    # v1 stores the entire TrainConfig in `config` (which includes `arch`).
-    # The older combined format stores just the arch, under a top-level `arch` key.
-    return is_combined_checkpoint(obj) and ("config" in obj or "arch" in obj)
 
 
 def arch_for_load(obj: object, value_head_variant: str) -> ModelConfig:

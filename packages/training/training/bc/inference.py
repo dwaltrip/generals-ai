@@ -35,14 +35,13 @@ from training.bc import actions, visibility
 from training.bc import bfs as bc_bfs
 from training.bc import mask as bc_mask
 from training.bc import obs as bc_obs
-from training.bc.checkpoint import is_arch_bearing
 from training.bc.constants import H_PADDED, W_PADDED
 from training.bc.model import BCModel, ModelOut, flatten_policy_logits
 from training.bc.model_builder import ConfiguredModel
 from training.bc.obs import pad_initial_generals
 from training.bc.obs_config import ObsConfig
 from training.bc.player_status import precompute_player_status
-from training.bc.storage.checkpoint import load_checkpoint
+from training.bc.storage.checkpoint import is_arch_bearing, load_checkpoint
 
 
 # Fixed slot count the model + obs encoder were trained on (8-player FFA).
