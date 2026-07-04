@@ -89,7 +89,7 @@ def validate_in_ch(stored_in_ch: int, cfg: ModelConfig) -> None:
     if stored_in_ch != cfg.in_ch:
         raise ValueError(
             f"checkpoint in_ch={stored_in_ch} contradicts obs "
-            f"(dense_history_n={cfg.obs.dense_history_n} → {cfg.in_ch} channels)"
+            f"(resolved obs config implies {cfg.in_ch} channels)"
         )
 
 

@@ -103,10 +103,6 @@ class TrainingState:
         checkpoint has no epoch of its own, so it falls back to `fallback_epoch`
         — the resume path passes the parent epoch parsed from the filename
         (`epoch_NNN.pt`), so numbering stays monotonic across the resume.
-
-        Re-reads the file once for the optim/scaler/epoch payload after
-        `load_checkpoint` reads it for the weights — a one-time cost paid
-        only at resume startup.
         """
         # Arch comes from the checkpoint (you can't reshape restored weights);
         # `config.arch.value_head_variant` is only the legacy fallback, used
@@ -116,12 +112,16 @@ class TrainingState:
         scaler = _build_scaler(config, device)
         epoch = fallback_epoch
 
+        # NOTE(ckpt-cfg-refactor-note): second full read — load_checkpoint already
+        # read the file for the weights. Fold out with the resume rewiring.
         obj = torch.load(path, map_location=device, weights_only=True)
         if is_combined_checkpoint(obj):
             if "arch" in obj:
                 # Redundant second guard — the real gate is run_dir.check_drift
-                # (arch is checkpoint-owned). An arch-bearing checkpoint's
-                # recorded arch must match the resume config's arch.
+                # (arch is checkpoint-owned).
+                # NOTE(ckpt-cfg-refactor-note): keys on the v0 top-level `arch`, so
+                # the assert never runs for a v1 checkpoint (arch lives at
+                # config.arch). Extend or drop with the resume rewiring.
                 assert model.cfg == config.arch, (
                     f"checkpoint arch {model.cfg} != resume config arch {config.arch}"
                 )

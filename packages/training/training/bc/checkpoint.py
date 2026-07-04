@@ -153,7 +153,7 @@ def arch_for_load(obj: object, value_head_variant: str) -> ModelConfig:
         if stored_in_ch is not None and stored_in_ch != cfg.in_ch:
             raise ValueError(
                 f"checkpoint in_ch={stored_in_ch} contradicts obs "
-                f"(dense_history_n={cfg.obs.dense_history_n} → {cfg.in_ch} channels)"
+                f"(resolved obs config implies {cfg.in_ch} channels)"
             )
         return cfg
     return replace(LEGACY_ARCH, value_head_variant=value_head_variant)

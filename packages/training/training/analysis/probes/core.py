@@ -152,7 +152,7 @@ def load_frozen_model(ckpt_path: Path, device: torch.device) -> BCModel:
     fp32 for stable CPU/MPS forward passes.
 
     Architecture (width, value/elim variant, obs config) comes from the
-    checkpoint's `arch` key — `load_checkpoint` makes the `state_dict` load
+    checkpoint's recorded arch — `load_checkpoint` makes the `state_dict` load
     strict, so any arch↔weights drift raises loudly here rather than producing
     silently-wrong features.
     """

@@ -242,16 +242,6 @@ def _v1_config(tmp_path, arch: ModelConfig | None = None) -> TrainConfig:
     )
 
 
-def _runtime(state: TrainingState) -> dict:
-    """The runtime-state portion of a checkpoint, as serialize_checkpoint expects."""
-    return {
-        "model": state.model.state_dict(),
-        "optim": state.optim.state_dict(),
-        "scaler": state.scaler.state_dict(),
-        "epoch": state.epoch,
-    }
-
-
 def test_v1_round_trip(tmp_path):
     """Test v1 config round trip: serialize, save, load, and deserialize.
     Config values (Paths included), arch, and weights should match."""
@@ -263,7 +253,7 @@ def test_v1_round_trip(tmp_path):
         arch=build_model_cfg(outer_width=64, middle_width=64, inner_width=96),
     )
     state = TrainingState.fresh(config, device, "test-sha")
-    obj = serialize_checkpoint(_runtime(state), config, code_sha="test-sha")
+    obj = serialize_checkpoint(state.to_dict(), config, code_sha="test-sha")
     ckpt = tmp_path / "epoch_000.pt"
     torch.save(obj, ckpt)
 
@@ -282,7 +272,7 @@ def test_v1_serialized_shape(tmp_path):
     """serialize_checkpoint emits the v1 top-level layout."""
     config = _v1_config(tmp_path)
     state = TrainingState.fresh(config, torch.device("cpu"), "test-sha")
-    obj = serialize_checkpoint(_runtime(state), config, code_sha="abc123")
+    obj = serialize_checkpoint(state.to_dict(), config, code_sha="abc123")
 
     assert set(obj) == {"model", "optim", "scaler", "epoch", "in_ch", "config", "code_sha"}
     assert obj["config"]["config_version"] == CONFIG_VERSION
@@ -297,7 +287,7 @@ def test_v1_in_ch_mismatch_raises(tmp_path):
     count raises a clear error on load."""
     config = _v1_config(tmp_path)
     state = TrainingState.fresh(config, torch.device("cpu"), "test-sha")
-    obj = serialize_checkpoint(_runtime(state), config, code_sha="x")
+    obj = serialize_checkpoint(state.to_dict(), config, code_sha="x")
     obj["in_ch"] += 1
     ckpt = tmp_path / "epoch_000.pt"
     torch.save(obj, ckpt)
@@ -321,7 +311,7 @@ def test_is_arch_bearing_across_formats(tmp_path):
     v0_bare = tmp_path / "v0_bare.pt"
     torch.save(state.model.state_dict(), v0_bare)
     v1 = tmp_path / "v1.pt"
-    torch.save(serialize_checkpoint(_runtime(state), config, code_sha="x"), v1)
+    torch.save(serialize_checkpoint(state.to_dict(), config, code_sha="x"), v1)
 
     assert is_arch_bearing(v0_combined) is True
     assert is_arch_bearing(v0_bare) is False
@@ -336,7 +326,7 @@ def test_v1_model_key_ignores_legacy_variant_kwarg(tmp_path):
     config = _v1_config(tmp_path)
     state = TrainingState.fresh(config, device, "test-sha")
     ckpt = tmp_path / "epoch_000.pt"
-    torch.save(serialize_checkpoint(_runtime(state), config, code_sha="x"), ckpt)
+    torch.save(serialize_checkpoint(state.to_dict(), config, code_sha="x"), ckpt)
 
     direct = BCModelHandle.load(ckpt, device, value_head_variant="direct")
     pyramid = BCModelHandle.load(ckpt, device, value_head_variant="pyramid")

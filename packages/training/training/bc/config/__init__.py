@@ -13,6 +13,7 @@ version migration on the read path, and the `Path` serde that keeps blocks
 from __future__ import annotations
 
 from collections.abc import Callable
+import copy
 from pathlib import Path
 from typing import Any, get_type_hints
 
@@ -50,7 +51,8 @@ def migrate(config: StoredConfigBlock) -> StoredConfigBlock:
             f"config_version {version} exceeds supported {CONFIG_VERSION} "
             "(checkpoint with an unknown version)"
         )
-    data = dict(config)
+    # Deep copy so migrations may mutate nested structures freely.
+    data = copy.deepcopy(config)
     for v in range(version, CONFIG_VERSION):
         data = MIGRATIONS[v](data)
     return data

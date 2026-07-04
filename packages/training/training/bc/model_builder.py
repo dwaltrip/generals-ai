@@ -31,7 +31,7 @@ class ConfiguredModel:
     # But whether that normalizer would run on every load, or only on the paths
     # that need a config (like checkpoint resume), is still undecided. Only the
     # "run-on-every-load" option would let us remove `None` here.
-    config: TrainConfig | None = None
+    config: TrainConfig | None
 
     @property
     def cfg(self) -> ModelConfig:
