@@ -6,6 +6,12 @@ The single place inference and probe code loads model weights from a
 lives in one module rather than being duplicated across call sites.
 """
 
+# NOTE(ckpt-cfg-refactor-note): This module is superseded by
+# `bc/storage/checkpoint.py`. As the refactor proceeds, whatever is still
+# needed here moves there (or into a v0->v1 normalizer) and this file goes
+# away. Comments and docstrings here predate the refactor and haven't been
+# swept — some describe the pre-v1 world (e.g. where `in_ch` gets written).
+
 from __future__ import annotations
 
 from dataclasses import asdict, replace
@@ -97,8 +103,8 @@ def is_legacy_checkpoint(path: str | Path, device: str | torch.device = "cpu") -
 def is_arch_bearing(path: str | Path, device: str | torch.device = "cpu") -> bool:
     """True if the checkpoint records its own architecture config."""
     obj = torch.load(path, map_location=device, weights_only=True)
-    # v1 stores the entire TrainConfig in `config` (which includes `arch`)
-    # older format stores it in a top-level `arch` key (without parent TrainConfig)
+    # v1 stores the entire TrainConfig in `config` (which includes `arch`).
+    # The older combined format stores just the arch, under a top-level `arch` key.
     return is_combined_checkpoint(obj) and ("config" in obj or "arch" in obj)
 
 

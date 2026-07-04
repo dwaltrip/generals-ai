@@ -1,4 +1,4 @@
-"""Tests for bc/config's stored-config-block serde."""
+"""Tests for `bc.config`."""
 
 from __future__ import annotations
 

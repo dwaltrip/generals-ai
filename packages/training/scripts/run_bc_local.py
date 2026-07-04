@@ -35,7 +35,7 @@ def main() -> None:
     parser = build_arg_parser()
     parser.set_defaults(out_dir=RUNS_DIR, device="mps")
     args = parser.parse_args()
-    code_sha = git_sha("unknown")
+    code_sha = git_sha()
     if args.resume:
         run_dir = resume_run_dir(args)
         info = prepare_resume(run_dir)

@@ -17,7 +17,7 @@ Manifest JSON schema (v1):
   - `intermediate_root` (str): path the manifest was built from. Informational
     only — `samples_for_split` resolves rids against the caller's root.
   - `filter_version` (str): `bc.filters.FILTER_VERSION` at build time.
-  - `git_sha` (str): short git SHA when built; "unknown" if git fails.
+  - `git_sha` (str): short git SHA when built.
   - `corpus_size` (int): total sim files scanned (post-`scan_limit` if set).
   - `dropped_games` (int): games rejected by the filter (`eligible_perspectives` → []).
   - `kept_pairs` (int): total `(rid, k)` pairs after filtering.

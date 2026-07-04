@@ -194,8 +194,8 @@ def train(*arglist: str) -> None:
         f"/{run_dir.name} {RUNS_CLOUD_DIR.relative_to(PROJECT_ROOT)}",
     )
 
-    # Capture the git SHA locally as `.git` is not is not present on Modal.
-    code_sha = git_sha("unknown")
+    # Capture the git SHA locally as `.git` is not present on Modal.
+    code_sha = git_sha()
     train_remote.with_options(gpu=gpu).spawn(
         fresh_config, config_input_text, resume_run_dir_arg,
         overlay, operational, gpu, args.force_config_mismatch,

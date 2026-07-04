@@ -79,8 +79,7 @@ def bc_resume(
     - `info`: the precomputed `prepare_resume` result.
     - `overlay` and `operational`: the parsed `--config` file and the explicit
       CLI flags. `_resume_config` merges them into the effective config.
-    - `code_sha`: recorded into this segment's checkpoints — `bc_run` covers
-      how to capture it.
+    - `code_sha`: recorded into this segment's checkpoints.
     - `legacy_lr_warmup_batches`: the legacy cold-restart opt-in. Required for
       a bare-state_dict checkpoint, rejected otherwise.
     """

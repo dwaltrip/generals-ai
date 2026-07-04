@@ -5,6 +5,11 @@ version migration on the read path, and the `Path` serde that keeps blocks
 `weights_only`-safe.
 """
 
+# NOTE(ckpt-cfg-refactor-note): This package will likely absorb the rest of the
+# config family (train_config, model_config/obs_config, LossConfig from loss.py),
+# becoming the home for BC config broadly. The docstring above describes current
+# contents only.
+
 from __future__ import annotations
 
 from collections.abc import Callable
@@ -56,10 +61,10 @@ def resolve_config(config: StoredConfigBlock) -> TrainConfig:
 
     The migrate-once seam on the read path: older blocks are migrated to a shape
     the current code supports, and downstream code can ignore that complexity.
-    Currently, the only shape is `TrainConfig`. Later, there may be dedicated
-    back-compat shapes that enable certain older checkpoints to load while cleanly
-    separating the current model and training code from "legacy" paths.
     """
+    # NOTE(ckpt-cfg-refactor-note): Currently, the only shape is `TrainConfig`.
+    # Later, there may be dedicated back-compat shapes — enabling older checkpoints
+    # to keep loading while "legacy" model and training code moves out of the main paths.
     data = migrate(config)
     data.pop("config_version")
     arch = build_model_cfg(**data.pop("arch"))
