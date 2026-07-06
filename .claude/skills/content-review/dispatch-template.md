@@ -5,12 +5,17 @@ Fill the `{SLOTS}` and send as the content-reviewer dispatch prompt, verbatim. A
 ```
 Blind content review.
 
-Artifact type: {ARTIFACT_TYPE}
+Artifact description: {ARTIFACT_DESCRIPTION}
 
 Artifact set (review exactly these paths, nothing else):
 {PATHS_ONE_PER_LINE}
+
+Context set (you may read these and the prose may lean on them; do not review them):
+{CONTEXT_PATHS_ONE_PER_LINE}
 
 Write your report to: {REPORT_PATH}
 
 No further context is provided. That is deliberate — you are reading cold.
 ```
+
+The context-set section is optional — omit it entirely when there are no context files.

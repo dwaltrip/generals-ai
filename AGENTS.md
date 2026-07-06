@@ -58,6 +58,7 @@ Operates at a safe and reasonable rate to avoid placing strain on the generals.i
 - [`replay-collector/README.md`](./replay-collector/README.md) — operator guide: workflow, CLI, re-run behavior, module map.
 - [`docs/replay-format.md`](./docs/replay-format.md) — `.gior` file format reference (current at v18).
 - [`docs/generals-io-api.md`](./docs/generals-io-api.md) — generals.io HTTP + WebSocket API surface.
+- [`docs/agent-tooling/content-review/notes.md`](./docs/agent-tooling/content-review/notes.md) — maintainer notes for the content-review agent + skill (blind prose reviewer): design decisions, trial results, open questions. Read before touching that tooling. `docs/agent-tooling/` is the home for notes on in-repo agent tooling generally.
 
 The collector entry point is `replay_collector.runner.collect_many` (see `replay-collector/replay_collector/runner.py`).
 
