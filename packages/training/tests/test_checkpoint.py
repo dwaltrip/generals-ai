@@ -18,7 +18,9 @@ from training.bc.checkpoint import (
     is_legacy_checkpoint,
 )
 from training.bc.config import CONFIG_VERSION
+from training.bc.constants import H_PADDED, W_PADDED
 from training.bc.inference import BCModelHandle
+from training.bc.loss import LossConfig
 from training.bc.model import BCModel
 from training.bc.model_config import MODEL_CONFIG_DEFAULTS, ModelConfig, build_model_cfg
 from training.bc.obs_config import OBS_CONFIG_DEFAULTS
@@ -334,3 +336,57 @@ def test_v1_model_key_ignores_legacy_variant_kwarg(tmp_path):
     direct = BCModelHandle.load(ckpt, device, value_head_variant="direct")
     pyramid = BCModelHandle.load(ckpt, device, value_head_variant="pyramid")
     assert direct.model_key == pyramid.model_key
+
+
+def test_v1_round_trip_next_death_variant(tmp_path):
+    """An elim-head config (next_death variant plus its loss knobs) survives the
+    v1 round trip, and the head's params load strict."""
+    device = torch.device("cpu")
+    config = _v1_config(
+        tmp_path, arch=build_model_cfg(elim_head_variant="next_death")
+    )
+    config = replace(
+        config, loss=LossConfig(lambda_elim=0.25, next_elim_target_tau=1.5)
+    )
+    state = TrainingState.fresh(config, device, "test-sha")
+    ckpt = tmp_path / "epoch_000.pt"
+    torch.save(serialize_checkpoint(state.to_dict(), config, code_sha="x"), ckpt)
+
+    loaded = load_checkpoint(ckpt, device)
+    assert loaded.config == config
+    assert loaded.cfg.elim_head_variant == "next_death"
+    assert loaded.config.loss.lambda_elim == 0.25
+    assert any("elim" in k for k in loaded.model.state_dict())
+    assert state.model.state_dict().keys() == loaded.model.state_dict().keys()
+
+
+def test_v0_and_v1_coresident_load(tmp_path):
+    """A v0 and a v1 checkpoint loaded in one process — the shape of an eval
+    sweep pitting an old checkpoint against a new one. Each model keeps its own
+    arch, the handles get distinct model_keys, and both models forward."""
+    device = torch.device("cpu")
+    v0_cfg = build_model_cfg(outer_width=64, middle_width=64, inner_width=96)
+    v0_src = BCModel(v0_cfg)
+    v0_path = tmp_path / "v0.pt"
+    torch.save({"model": v0_src.state_dict(), "arch": asdict(v0_cfg), "epoch": 1}, v0_path)
+
+    v1_config = _v1_config(tmp_path)  # default arch — differs from v0_cfg
+    state = TrainingState.fresh(v1_config, device, "test-sha")
+    v1_path = tmp_path / "v1.pt"
+    torch.save(serialize_checkpoint(state.to_dict(), v1_config, code_sha="x"), v1_path)
+
+    v0 = BCModelHandle.load(v0_path, device)
+    v1 = BCModelHandle.load(v1_path, device)
+
+    assert v0.cm.config is None            # a v0 .pt carries no full recipe
+    assert v1.cm.config == v1_config
+    assert v0.model.cfg == v0_cfg
+    assert v1.model.cfg == v1_config.arch
+    assert v0.model_key != v1.model_key
+
+    for handle in (v0, v1):
+        obs = torch.zeros((1, handle.model.cfg.in_ch, H_PADDED, W_PADDED))
+        mask = torch.ones((1, 1, H_PADDED, W_PADDED), dtype=torch.bool)
+        with torch.no_grad():
+            out = handle.model(obs, mask)
+        assert out.policy_logits.shape == (1, 8, H_PADDED, W_PADDED)
