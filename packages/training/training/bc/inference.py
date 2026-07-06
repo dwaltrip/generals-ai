@@ -41,7 +41,7 @@ from training.bc.model_builder import ConfiguredModel
 from training.bc.obs import pad_initial_generals
 from training.bc.obs_config import ObsConfig
 from training.bc.player_status import precompute_player_status
-from training.bc.storage.checkpoint import is_arch_bearing, load_checkpoint
+from training.bc.storage.checkpoint import load_from_raw, read_checkpoint
 
 
 # Fixed slot count the model + obs encoder were trained on (8-player FFA).
@@ -104,22 +104,21 @@ class BCModelHandle:
         value_head_variant: str = "direct",
     ) -> BCModelHandle:
         """Load a checkpoint into a handle. `value_head_variant` is a legacy-only
-        fallback — used when the checkpoint has no `arch` key, ignored otherwise.
+        fallback — used when the checkpoint doesn't record its arch, ignored
+        otherwise.
 
         The `model_key` (which a batched runner groups by) drops the variant for
         arch-bearing checkpoints — the arch is authoritative, so two loads under
         different fallback variants are the same model and should share a forward.
-        Legacy checkpoints keep the variant: the same path loaded under different
-        fallback variants is a different model, and the keys must not collide.
+        A checkpoint without a recorded arch keeps the variant: the same path
+        loaded under different fallback variants is a different model, and the
+        keys must not collide.
         """
-        cm = load_checkpoint(path, device, value_head_variant)
-        # NOTE(ckpt-cfg-refactor-note): model_key re-reads the file via is_arch_bearing.
-        # Deferred: fold this onto the held ConfiguredModel once it carries the
-        # arch-bearing signal (config is None for every legacy checkpoint today).
-        if is_arch_bearing(path, device):
-            model_key = f"{path}|{device}"
-        else:
-            model_key = f"{path}|{device}|{value_head_variant}"
+        raw = read_checkpoint(path, device)
+        cm = load_from_raw(raw, device, value_head_variant)
+        model_key = f"{path}|{device}"
+        if not raw.arch_bearing:
+            model_key += f"|{value_head_variant}"
         return cls(cm, device, model_key=model_key)
 
     def forward_batch(

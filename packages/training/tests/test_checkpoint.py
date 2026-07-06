@@ -26,8 +26,8 @@ from training.bc.model_config import MODEL_CONFIG_DEFAULTS, ModelConfig, build_m
 from training.bc.obs_config import OBS_CONFIG_DEFAULTS
 from training.bc.state import TrainingState
 from training.bc.storage.checkpoint import (
-    is_arch_bearing,
     load_checkpoint,
+    read_checkpoint,
     serialize_checkpoint,
 )
 from training.bc.train_config import TrainConfig
@@ -301,9 +301,10 @@ def test_v1_in_ch_mismatch_raises(tmp_path):
         load_checkpoint(ckpt, torch.device("cpu"))
 
 
-def test_is_arch_bearing_across_formats(tmp_path):
-    """is_arch_bearing across all three layouts: v0 combined (top-level arch) and
-    v1 (arch nested in config) are arch-bearing; a v0 bare state_dict is not."""
+def test_model_key_variant_across_formats(tmp_path):
+    """model_key includes the value_head_variant only when the checkpoint does
+    not record its own arch. For the arch-bearing layouts the recorded arch is
+    authoritative, so loads under different variant args share one key."""
     device = torch.device("cpu")
     config = _v1_config(tmp_path)
     state = TrainingState.fresh(config, device, "test-sha")
@@ -313,14 +314,28 @@ def test_is_arch_bearing_across_formats(tmp_path):
         {"model": state.model.state_dict(), "arch": asdict(config.arch), "epoch": 1},
         v0_combined,
     )
-    v0_bare = tmp_path / "v0_bare.pt"
-    torch.save(state.model.state_dict(), v0_bare)
     v1 = tmp_path / "v1.pt"
     torch.save(serialize_checkpoint(state.to_dict(), config, code_sha="x"), v1)
+    v0_bare = tmp_path / "v0_bare.pt"
+    torch.save(BCModel(LEGACY_ARCH).state_dict(), v0_bare)
 
-    assert is_arch_bearing(v0_combined) is True
-    assert is_arch_bearing(v0_bare) is False
-    assert is_arch_bearing(v1) is True
+    for ckpt in (v0_combined, v1):
+        direct = BCModelHandle.load(ckpt, device, value_head_variant="direct")
+        pyramid = BCModelHandle.load(ckpt, device, value_head_variant="pyramid")
+        assert direct.model_key == pyramid.model_key == f"{ckpt}|{device}"
+
+    # A bare state_dict is reconstructed from the variant arg, so the variant
+    # qualifies the key.
+    bare = BCModelHandle.load(v0_bare, device, value_head_variant="direct")
+    assert bare.model_key == f"{v0_bare}|{device}|direct"
+
+
+def test_read_rejects_non_dict_checkpoint(tmp_path):
+    """A .pt whose top-level object is not a dict fails with a clear error."""
+    path = tmp_path / "not_a_checkpoint.pt"
+    torch.save(torch.zeros(3), path)
+    with pytest.raises(ValueError, match="expected a dict"):
+        read_checkpoint(path, torch.device("cpu"))
 
 
 def test_v1_model_key_ignores_legacy_variant_kwarg(tmp_path):
