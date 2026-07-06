@@ -10,15 +10,15 @@ Always check [`README.md`](./README.md) — it carries current material this fil
 
 This is the project's addition to the global "Finishing pass", alongside read-clean / plainly-written / well-calibrated. It is an ongoing effort to clean up existing code comments and docstrings, as well as ensure that new ones don't inadvertently inherit the problematic styles (see below).
 
-Existing comments and docstrings are uneven — written fast and agent-authored without much oversight. Two past workflow issues pushed the prose in opposite directions: a semicolon style-contagion made it overly terse and cramped, and a since-corrected memory rule that demanded long docstrings across the training code made it overly verbose. Beyond those, plenty is simply low-value or misplaced. Recent comments are generally better. We're in an open-ended fix-as-we-go phase: apply the keep-or-drop test below to the comments and docstrings on code you touch, rather than trusting them on sight.
+Existing comments and docstrings are uneven — written fast and agent-authored without much oversight. Two past workflow issues pushed the prose in opposite directions: a semicolon style-contagion made it overly terse and cramped, and a since-corrected memory rule that demanded long docstrings across the training code made it overly verbose. Beyond those, plenty is simply low-value or misplaced. Recent comments are generally better. We're in an open-ended fix-as-we-go phase: apply the rewrite-trim-drop test below to the comments and docstrings on code you touch, rather than trusting them on sight.
 
-The keep-or-drop test: a comment or docstring should exist only if it —
+The rewrite-trim-drop test, applied to each comment or docstring: rewrite it plainly, trim it to the sentences that earn their place, or drop it entirely (or move it to where it belongs). Keeping it as-is is the fourth outcome, reserved for prose that already passes. A comment — or a sentence within one — earns its place only if it —
 
 1. makes sense in this specific location,
 2. carries its own weight, and
 3. isn't repeating something already expressed well enough by the code or nearby docs.
 
-When it passes, write it as clear, legible prose at a length matched to its importance. Otherwise drop it, or move it to where it belongs.
+Whatever survives is written as clear, legible prose at a length matched to its importance.
 
 The test is easy to state and hard to apply, because prose gets written — and judged — with the full design context loaded. At write time that context leaks in: each function's docstring picks up a half-relevant slice of it — a consumer mention, a contract paraphrase, a rationale clause. The same facts repeat partially across a subsystem, no copy is authoritative, and every copy drifts. At review time the same context works against you: every sentence reads as relevant, so "is this too verbose?" can't be answered by feel. Three working rules:
 
