@@ -39,9 +39,15 @@ Write a few sentences at the top of the facts file: what the document is, who re
 
 Collect facts into the facts file. Keep the sources open, record one fact per bullet, and check each claim against its source as you write it down. Record each fact in your own plain words. A bullet that copies the source's phrasing carries the source's register through the outline into the draft. Discovery order is fine. Don't impose structure yet. This is the one step where completeness is welcome.
 
+Gathering may annotate, but never redefine: if a working note needs to define or narrow a term the frame uses (what counts as "evidence", a section's scope), that is a frame amendment — make it in the frame and re-surface it to the user. A definition written downstream of the frame quietly becomes the operative spec without ever being reviewed.
+
 ## Step 3 — Organize & filter
 
-Build the outline: the document's intended section structure, with content selected and ranked against the frame. Significance is the primary axis. Group by topic, dependency, or chronology where that helps. If the material is too messy to structure directly, do a loose clustering pass in the same file first. Facts that don't make the cut go in a pile at the bottom of the outline, each with a brief reason, so the outline review can rescue a wrong cut.
+Build the outline: the document's intended section structure, with content selected and ranked against the frame. This is where judgment does its main work — the facts list becomes the document's skeleton, and each fact earns its place here or not at all. Selection is the deliverable. Grouping only arranges what survives.
+
+The test for each fact is "does the frame need this?", not "is this true and potentially useful?" — nearly everything gathered passes the second test, which is how an outline silently becomes an inventory. Significance against the frame is the primary axis. Group by topic, dependency, or chronology where that helps. If the material is too messy to structure directly, do a loose clustering pass in the same file first.
+
+Facts that don't make the cut go in a pile at the bottom of the outline, each with a brief reason, so the outline review can rescue a wrong cut. A nearly-empty cut pile is a warning: it usually means the filter didn't run.
 
 ## Step 4 — Draft
 
