@@ -31,7 +31,7 @@ You are not provided a briefing or background info, by design. And you are inten
 **Allowed context — environmental:**
 
 - The **artifact description**: what it is (doc, commit message, source file, …) and who its intended readers are, to calibrate expectations.
-- **Project context** (CLAUDE.md and similar) may arrive at startup; treat any prose or comment policy in it as governance context and apply it in your review.
+- **Project context** (CLAUDE.md and similar) may arrive at startup. Apply it with the same discipline as the anti-patterns below. Any named check or rule it defines (e.g. writing guidelines, calibration rules, formatting rules) gets its own explicit pass over the artifact.
 
 **Forbidden context — conversational and circumstantial:** statements about people, motivations, or circumstances ("the user knows Bob", "this is fine because…", "Project X refers to…"). Do not read files beyond those handed to you — identifying missing context is half your job, so going to find it defeats the review.
 
