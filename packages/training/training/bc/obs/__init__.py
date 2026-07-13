@@ -10,13 +10,14 @@ The package owns three things, split across submodules:
     running memory, advanced once per tick, plus the step-time dense-history
     encoders and the cat-5 BFS passability policy.
   - `build` — `build_obs`: a pure read of (sim, state, vis, bfs_cache) →
-    `[obs_channel_count(n), H_PADDED, W_PADDED]`, assembled from the `channels`
-    `_cat_*` builders.
+    `[state.obs_cfg.obs_channels, H_PADDED, W_PADDED]`, assembled from the
+    `channels` `_cat_*` builders.
 
-The channel count is `obs_channel_count(state.obs_cfg.dense_history_n)`: a fixed
-base block plus a `2 * n` dense-history tail. The obs-encoder config rides on
-`MemoryState` (set at `init_memory`), so `build_obs` reads `n` off the state it
-already receives rather than taking another parameter.
+The channel count is `state.obs_cfg.obs_channels`: a fixed base block, a `2 * n`
+dense-history tail, and the enabled gated groups (110 for the default config).
+The obs-encoder config rides on `MemoryState` (set at `init_memory`), so
+`build_obs` reads it off the state it already receives rather than taking
+another parameter.
 
 This `__init__` re-exports the package's public surface; importers use
 `from training.bc.obs import build_obs, MemoryState, ...` as before.

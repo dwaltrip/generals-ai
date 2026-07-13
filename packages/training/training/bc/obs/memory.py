@@ -217,14 +217,15 @@ def init_memory_common(
 
 
 # ============================================================================
-# TODO(obs-alive-tick-seam): board-snapshot-time. This army channel reads
-# ownership[t] — the PRE-RESOLUTION board. At a capture-while-alive tick the
-# victim's tiles haven't transferred yet (they zero at t+1), so obs shows them
-# on-board with army, while alive_mask (bc/targets/elim_targets.py) uses
-# death>t (event-time) and reads them DEAD at the same frame t. The pair
-# describes opposite ends of the tick -> a 1-frame obs/target inconsistency
-# (~1% of frames). Paired site: alive_mask. Deferred to the obs/head rework.
-# See docs/2026-06/6.18-6-obs-alive-tick-seam.md.
+# Board-snapshot-time. The scoreboard reads ownership[t] / armies[t], the
+# pre-event board. At a capture-while-alive tick the victim's tiles have not
+# transferred yet (they zero at t+1), so the scoreboard still counts the
+# victim's army and land at frame t. This agrees with the board and the
+# player-status channels: alive_mask / present_mask (bc/player_status.py) use
+# `>= t`, so the victim reads alive and present at frame t too. The obs/target
+# seam documented in docs/2026-06/6.18-6-obs-alive-tick-seam.md is closed: the
+# 6.18 fix moved both masks to `>= t` (recorded in
+# docs/2026-06/6.19-1-obs-player-status-channels-landed.md).
 # ============================================================================
 def scoreboard_row(ownership_row: np.ndarray, armies_row: np.ndarray, P: int):
     """Compute (land_counts, army_counts) for a single tick."""
@@ -258,8 +259,8 @@ def init_memory(
     for p in range(P):
         owned_mask = (ownership == p)  # [T, HW]
         land_buf[:, p] = owned_mask.sum(axis=1)
-        # TODO(obs-alive-tick-seam): board-snapshot-time army (see scoreboard_row
-        # banner / docs/2026-06/6.18-6-obs-alive-tick-seam.md).
+        # board-snapshot-time army (see the scoreboard_row banner /
+        # docs/2026-06/6.18-6-obs-alive-tick-seam.md).
         army_buf[:, p] = (armies * owned_mask).sum(axis=1)
     state.land_count_history = [land_buf[t] for t in range(T)]
     state.army_count_history = [army_buf[t] for t in range(T)]
@@ -394,6 +395,15 @@ def step_memory(
     # Capture events: filter to events occurring at this tick, update
     # opp_captured_by. Global event — perspective sees all captures regardless
     # of fog (per game-mechanics: capture announcements are board-wide).
+    #
+    # opp_captured_by is event-time — an intra-obs seam. It flips at the event
+    # tick itself, so at a capture tick the same frame reads the victim as
+    # captured in opp_N_captured_by (obs cat 9, _cat_contact_capture) while the
+    # board, scoreboard, and player-status channels all still describe the
+    # pre-event board. This is deliberate for now: the behavior goldens freeze
+    # the convention as-is, and the decision on whether it's the intended
+    # semantics is deferred to after the first goldens cut
+    # (docs/2026-07/7.12-2-departures-from-7.10-2.md §2 item 4).
     events = sim["capture_events"]
     if events.size > 0:
         events_now = events[events[:, 0] == t]
@@ -537,10 +547,6 @@ def _encode_army_delta(
     the channel highlights real events.
 
     Returns float32 [H, W]: raw signed adjusted delta.
-
-    TODO: hand-coded fixtures — small boards, picked ticks exercising the
-    production cases (t%2==0 only, t%50==0 only, both, neither), assert
-    adjusted-delta values cell-by-cell.
     """
     is_owned = own_newer >= 0
     prod = np.zeros_like(armies_newer, dtype=np.float32)

@@ -1,10 +1,10 @@
 """`build_obs` — the obs-tensor assembler.
 
-Pure read of (sim, state, vis, bfs_cache) → `[obs_channel_count(n), H_PADDED,
-W_PADDED]`. The channel set is grouped by category in `channels` (one `_cat_*`
-per group); this module orchestrates them and stacks the result. The stacking
-order below is the source of truth for layout (the names in `bc.constants` are
-reference docs).
+Pure read of (sim, state, vis, bfs_cache) → `[state.obs_cfg.obs_channels,
+H_PADDED, W_PADDED]`. The channel set is grouped by category in `channels`
+(one `_cat_*` per group); this module orchestrates them and stacks the result.
+The stacking order below is the source of truth for layout (the names in
+`bc.constants` are reference docs).
 """
 
 from __future__ import annotations
@@ -50,7 +50,7 @@ def build_obs(
 ) -> np.ndarray:
     """
     Build the obs tensor for one (game, perspective, tick). Channel count is
-    `obs_channel_count(state.obs_cfg.dense_history_n)` (96 at the default n=5).
+    `state.obs_cfg.obs_channels` (110 for the default config).
 
     Channel layout: the stack order below is the source of truth (the names in
     `bc.constants` are reference docs). Each `_cat_*` helper returns its slice

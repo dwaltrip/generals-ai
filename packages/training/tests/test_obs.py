@@ -1,8 +1,8 @@
 """
 Targeted unit tests for `bc.obs` helpers — slot canonicalization plus the
 dense-history encoders (`_encode_ownership_transition`, `_encode_army_delta`).
-Full 96-channel `build_obs` is exercised end-to-end by
-`test_dataloader_smoke.py` against real-corpus data.
+Full `build_obs` is exercised end-to-end by `test_dataloader_smoke.py` against
+real-corpus data.
 """
 
 from __future__ import annotations
