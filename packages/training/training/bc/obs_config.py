@@ -3,8 +3,9 @@ tensor a model is trained on.
 
 `ObsConfig` is nested inside `ModelConfig` (so it rides into every checkpoint's
 `arch` key) and the encoder reads it off `MemoryState`. It carries the knobs
-that determine the *input contract*: the channel count (via `dense_history_n`
-→ `obs_channel_count`) and the tensor's element dtype (`obs_dtype`).
+that determine the *input contract*: the channel count (`dense_history_n` +
+the enabled gated groups → `obs_channels`) and the tensor's element dtype
+(`obs_dtype`).
 
 Defaults are policy, not structure, so they live here as a named instance
 (`OBS_CONFIG_DEFAULTS`) rather than as inline field defaults — symmetric with
@@ -23,7 +24,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass, fields
 
-from training.bc.constants import obs_channel_names
+from training.bc.constants import ungated_obs_channel_names
 
 
 # Per-opponent player-status channels (a gated group). 1-indexed `opp_N` per the
@@ -81,7 +82,7 @@ class ObsConfig:
         """The obs tensor's channel names for this config: the frozen base +
         dense-history tail + each enabled gated group's names, appended in spec
         order. The single source of truth for layout and for `obs_channels`."""
-        names = obs_channel_names(self.dense_history_n)
+        names = ungated_obs_channel_names(self.dense_history_n)
         for group in GATED_CHANNEL_GROUPS:
             if group.enabled(self):
                 names = names + group.names(self)
@@ -129,7 +130,7 @@ OBS_CONFIG_DEFAULTS = ObsConfig(
     player_status_channels=True,
 )
 
-# Default obs channel count (n=5 → 96). Convenience alias for code that builds a
-# default-config model/tensor; config-aware sites should read `model.cfg.in_ch`
-# (or `obs_cfg.obs_channels`) instead.
+# Obs channel count for the default config (110). Convenience alias for code
+# that builds a default-config model/tensor. Config-aware sites should read
+# `model.cfg.in_ch` (or `obs_cfg.obs_channels`) instead.
 OBS_CHANNELS = OBS_CONFIG_DEFAULTS.obs_channels

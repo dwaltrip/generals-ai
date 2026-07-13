@@ -56,14 +56,14 @@ def bench_pin(dense_history_n: int) -> dict:
 
     import torch
 
-    from training.bc.constants import obs_channel_count
+    from training.bc.constants import ungated_obs_channel_count
 
     assert torch.cuda.is_available()
     dev = torch.device("cuda")
     torch.zeros(1, device=dev)  # init the CUDA context before any timing
     torch.cuda.synchronize()
 
-    C = obs_channel_count(dense_history_n)
+    C = ungated_obs_channel_count(dense_history_n)
     B, H, W = 512, 32, 32
     shape = (B, C, H, W)
 
@@ -147,14 +147,14 @@ def bench_contention(dense_history_n: int, load_levels: list[int]) -> dict:
 
     import torch
 
-    from training.bc.constants import obs_channel_count
+    from training.bc.constants import ungated_obs_channel_count
 
     assert torch.cuda.is_available()
     torch.zeros(1, device="cuda")  # init CUDA context
     torch.cuda.synchronize()
     torch.set_num_threads(1)  # match the pin thread / container default
 
-    C = obs_channel_count(dense_history_n)
+    C = ungated_obs_channel_count(dense_history_n)
     shape = (512, C, 32, 32)
     src = torch.rand(shape, dtype=torch.float32)
     buf = torch.empty(shape, dtype=torch.float32).pin_memory()  # reused pinned dst

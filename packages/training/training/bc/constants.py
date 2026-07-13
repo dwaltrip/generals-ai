@@ -11,17 +11,17 @@ padded re-index in `actions.py` and the channel-assembly code both assume
 this convention.
 
 This module is purely structural: channel *names* (`_BASE_OBS_CHANNEL_NAMES`)
-and the size *formula* (`obs_channel_count`). It holds no default policy — the
-live obs-encoder defaults live in `bc.obs_config` (`OBS_CONFIG_DEFAULTS`), which
-imports from here. `_BASE_OBS_CHANNEL_NAMES` documents the fixed channels for
-human reference; it does NOT drive assembly — the real source of truth for
-layout is the stacking order in `bc.obs.build_obs`, guarded by the channel-count
-assert there.
+and the size *formula* (`ungated_obs_channel_count`). It holds no default policy.
+The live obs-encoder defaults are in `bc.obs_config` (`OBS_CONFIG_DEFAULTS`),
+which imports from here.
+
+`_BASE_OBS_CHANNEL_NAMES` documents the fixed channels for human reference.
+It does NOT drive assembly. The real source of truth for layout is the stacking
+order in `bc.obs.build_obs`.
 
 The dense-history tail (`ownership_transition[t-k]` + `army_delta[t-k]`,
 `2 * dense_history_n` channels) is appended after the base channels and sized by
-`ObsConfig.dense_history_n`, so the total count is a function of `n`, not a fixed
-constant.
+`ObsConfig.dense_history_n`, so the ungated count is a function of `n`.
 """
 
 # TODO(config): `CITY_TRAVERSABILITY_FACTOR` is the remaining obs-encoder
@@ -119,25 +119,31 @@ def dense_history_channel_names(n: int) -> list[str]:
     )
 
 
-def obs_channel_names(n: int) -> list[str]:
-    """Full ordered channel-name list for dense-history depth `n` (base + tail).
-
-    Reference/debugging only — not consumed by the encoder. `build_obs`'s
-    assembly order is authoritative; this just names the positions.
+def ungated_obs_channel_names(n: int) -> list[str]:
+    """Ordered ungated channel names (frozen base + dense-history tail) for
+    depth `n`. `ObsConfig.channel_names` appends the enabled gated groups.
+    The names are reference docs — `build_obs`'s stacking order is
+    authoritative for layout.
     """
     return _BASE_OBS_CHANNEL_NAMES + dense_history_channel_names(n)
 
 
+# NOTE: resolves ungated channel names only — a gated-group name (e.g. a
+# player-status channel) raises ValueError. Whether any caller needs gated
+# indices is an open question
+# (docs/2026-07/7.12-3-pre-build-item-1-investigation.md §2).
+# TODO: this should probably become ObsConfig-aware at some point.
 def get_obs_channel_indices(dense_history_n: int, names: list[str]) -> list[int]:
     """Indices of the named channels in the obs tensor (dense-history depth
     `dense_history_n`). Raises ValueError naming any channel that doesn't exist."""
-    idx = { name: i for i, name in enumerate(obs_channel_names(dense_history_n)) }
+    idx = { name: i for i, name in enumerate(ungated_obs_channel_names(dense_history_n)) }
     missing = [name for name in names if name not in idx]
     if missing:
         raise ValueError(f"Invalid obs channel(s): {missing}")
     return [idx[n] for n in names]
 
 
-def obs_channel_count(n: int) -> int:
-    """Total obs-tensor channel count for dense-history depth `n`."""
+def ungated_obs_channel_count(n: int) -> int:
+    """Channel count of the ungated portion (frozen base + dense-history tail)
+    for depth `n`. `ObsConfig.obs_channels` is the full obs-tensor count."""
     return _BASE_OBS_CHANNELS + 2 * n

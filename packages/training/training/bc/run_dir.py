@@ -46,6 +46,7 @@ def initialize_run_dir(config: TrainConfig, config_input_text: str | None = None
         (config.run_dir / "config.input.json").write_text(config_input_text)
 
 
+# TODO: fix the naming collision with the unrelated RunArtifacts in perf_report.py.
 @dataclass
 class RunArtifacts:
     """Per-run runtime: born at run start, released at run end.

@@ -24,7 +24,7 @@ import logging
 from pathlib import Path
 from statistics import fmean, median, pstdev
 
-from training.bc.constants import H_PADDED, W_PADDED, obs_channel_count
+from training.bc.constants import H_PADDED, W_PADDED, ungated_obs_channel_count
 from training.shared.timing import histo_bucket_midpoint_ns
 from training.shared.timing_run import _span_from_json
 from utils.format import (
@@ -55,6 +55,11 @@ _UTIL_WARMUP_SEC = 40           # leading sidecar seconds dropped for util/steal
 # --------------------------------------------------------------------------- #
 
 
+# TODO: fix the naming collision with the unrelated RunArtifacts in run_dir.py.
+# TODO: resolve args.json into a TrainConfig at load (legacy back-fill for
+# fields that postdate a run, as in checkpoint._resolve_arch) and let the
+# report builders read typed config instead of raw dicts. The obs-channel
+# and obs-bytes TODOs below would then read obs_cfg.obs_channels / .obs_dtype.
 @dataclass
 class RunArtifacts:
     """A run dir's structured artifacts, each None / empty-list when absent."""
@@ -153,7 +158,9 @@ def _compute_header(a: RunArtifacts) -> dict:
     return {
         "run_id": a.run_dir.name,
         "dense_history_n": n,
-        "obs_channels": obs_channel_count(n) if n is not None else None,
+        # TODO: ungated count only — under-reports for status-on runs (96 where
+        # the obs is 110). Fix via the resolved-TrainConfig TODO on RunArtifacts.
+        "obs_channels": ungated_obs_channel_count(n) if n is not None else None,
         "obs_dtype": obs.get("obs_dtype"),
         "batch_size": args.get("batch_size"),
         "num_workers": args.get("num_workers"),
@@ -318,7 +325,11 @@ def _compute_producer(a: RunArtifacts) -> dict | None:
     # masks/scalars are <3%). None when we can't size the obs tensor.
     args = a.args or {}
     n_dense = (args.get("arch", {}).get("obs", {}) or {}).get("dense_history_n")
-    obs_ch = obs_channel_count(n_dense) if n_dense is not None else None
+    # TODO: two stale sizing assumptions — the ungated count undersizes
+    # obs_bytes for status-on runs, and the fp32 `* 4` overstates it for fp16
+    # runs (the current default). Both skew the gib_s estimates. Fix via the
+    # resolved-TrainConfig TODO on RunArtifacts.
+    obs_ch = ungated_obs_channel_count(n_dense) if n_dense is not None else None
     obs_bytes = obs_ch * H_PADDED * W_PADDED * 4 if obs_ch else None
 
     def gib_s(name: str, us_per_sample: float) -> float | None:
