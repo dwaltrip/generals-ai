@@ -19,11 +19,11 @@ This doc classifies these changes. For any use of an old artifact (a checkpoint 
 
 Every confound is a break of one of two implicit promises.
 
-**The model contract**: a checkpoint behaves the same today as it did at training time. The contract holds as long as input construction and the forward pass still compute what they did when the checkpoint was trained. A break shows up when an old checkpoint runs on current code: the checkpoint plays below its real strength. Any head-to-head against a newer checkpoint then mixes ability with the mismatch. Re-measuring can't remove the confound, because the damage is upstream of measurement. The cures are structural: gate the old behavior, retire the checkpoint, or fine-tune it (§3).
+**The model contract**: a checkpoint behaves the same today as it did at training time. The contract holds as long as the checkpoint's **runtime path** (input construction, the forward pass, and the decode of outputs into moves) still computes what it did when the checkpoint was trained. A break shows up when an old checkpoint runs on current code: the checkpoint plays below its real strength. Any head-to-head against a newer checkpoint then mixes ability with the mismatch. Re-measuring can't remove the confound, because the damage is upstream of measurement. The cures are structural: gate the old behavior, retire the checkpoint, or fine-tune it (§3).
 
 **The measurement contract**: two recorded numbers with the same name mean the same thing. The contract holds as long as everything that produces the number is stable: metric definitions, label definitions, eval protocol, and the game itself. A break shows up when a number recorded before the change is compared with one recorded after: the models on both sides may be perfectly healthy, but the gap between the numbers mixes model difference with measurement difference. The cure is re-measurement: run the old checkpoint under current conditions and compare fresh numbers (§3 notes the limits).
 
-A change can also break neither contract: one that alters only how new checkpoints are trained (a new learning rate, a different data mix), touching neither the runtime code nor anything that produces a number. Later checkpoints are simply different models, and comparisons across the change stay valid. In §1's terms: a `recipe-change` without any other impacts.
+A change can also break neither contract: one that alters only how new checkpoints are trained (a new learning rate, a different data mix), touching neither the runtime path nor anything that produces a number. Later checkpoints are simply different models, and comparisons across the change stay valid. In §1's terms: a `recipe-change` without any other impacts.
 
 ## Artifacts: run versus read
 
@@ -37,30 +37,34 @@ A **recorded number** is a stored measurement that is only ever read back. No co
 - **Gameplay-eval numbers**: win rates, ratings, head-to-head results. Pipeline: the game sim, the live model stack, sampling and protocol, the map set, the opponent pool.
 - **Analysis numbers**: probe scores, head-vs-rule gaps, dump-derived metrics. Pipeline: dumps or fresh forward passes, label definitions, metric definitions.
 
-Every pipeline splits into two parts. The **subject** is the checkpoint and its runtime path (input construction plus the forward pass): the thing the number is about. The **apparatus** is everything else that shapes the value: label and metric definitions, protocol, the game. Together they fix the number's meaning: how does this subject score under this apparatus? A subject change moves the value, which is what the number is for. An apparatus change alters the question, and that is what breaks comparability.
+Every pipeline splits into two parts. The **subject** is the checkpoint and its runtime path: the thing the number is about. The **apparatus** is everything else that shapes the value: label and metric definitions, protocol, the game. Together they fix the number's meaning: how does this subject score under this apparatus? A subject change moves the value, which is what the number is for. An apparatus change alters the question, and that is what breaks comparability.
+
+The split cuts through the translation of outputs into a move. Output decoding mirrors the target encoding (fixed at training time), so it is part of the subject's runtime path. Move selection has no such mirror, as training doesn't choose individual moves (the loss consumes the whole scored distribution). Thus the selection policy (e.g. sampling temperature) is considered part of the apparatus. The underlying test, for any piece of inference-side code: does training have a counterpart that this code must stay consistent with? Code with such a counterpart is part of the subject, while code without one is part of the apparatus.
 
 Recorded dumps sit between the two artifact types: data that is read, but that new analysis code then executes against. Wrinkle (d), at the end of §2, covers them.
 
 ## 1. Surfaces — what changed, and which impacts follow
 
-Each surface is a kind of code or configuration that can change. The three test columns say what a change to it alters, and each column feeds one family of impacts: a change's impact set is its set of ✓s.
+Each surface is a kind of code or configuration that can change. Code changes are, of course, not limited to a single surface. In terms of the table below, the full impact of a change is the union of ✓s across the surfaces (rows) that it touches. An ungated obs-channel addition, for example, touches two rows: obs build (new channel content) and model shape (the input layer grows).
 
-- **Alters training?** Holding the replay corpus and the seed fixed, would a training run launched after the change produce different weights (systematically, not as run-to-run noise)? A ✓ means checkpoints trained after the change are different models: `recipe-change`. The test covers everything from data selection through the optimizer, and excludes code that executes during training without shaping the weight updates (logging, dump cadence).
-- **Alters the model's runtime path?** With weights held fixed, does the change alter the function from game state to network outputs (input construction plus the forward pass)? A ✓ means running a checkpoint across the boundary changes its behavior: `contract-break` or `contract-repair`, depending on direction (below). One limiting case also earns a ✓: a change that makes the old weights unloadable, leaving no function to run at all (the arch-shape row). The endpoint matters: sampling temperature turns network outputs into a chosen action, downstream of the network, so it is part of the apparatus and belongs to the third column.
-- **Alters what numbers mean?** Does the change alter the measurement apparatus of some kind of recorded number: its ruler (metric definitions, label definitions, eval protocol) or its world (game rules, or the information the game exposes to the model)? A ✓ means same-name numbers of the affected kinds stop comparing across the boundary: `metrics-change` for ruler changes, `mechanics-change` for world changes. The affected kinds are the ones whose pipeline contains the changed code (cells note them where it isn't obvious).
+The three test columns say what a change to a given surface alters:
+
+- **Test 1: Alters training?** Holding the replay corpus and the seed fixed, would a training run launched after the change produce different weights (systematically, not as run-to-run noise)? A ✓ means checkpoints trained after the change are different models: `recipe-change`. The test covers everything from data selection through the optimizer, and excludes code that executes during training without shaping the weight updates (logging, dump cadence).
+- **Test 2: Alters the model's runtime path?** With weights held fixed, does the change alter the function the runtime path computes (game state in, the model's scored moves out)? A ✓ means running a checkpoint across the boundary changes its behavior: `contract-break` or `contract-repair`, depending on direction (below). One limiting case also earns a ✓: a change that makes the old weights unloadable, leaving no function to run at all (the model-shape row).
+- **Test 3: Alters what numbers mean?** Does the change alter the measurement apparatus of some kind of recorded number: its ruler (metric definitions, label definitions, eval protocol) or its world (game rules, or the information the game exposes to the model)? A ✓ means same-name numbers of the affected kinds stop comparing across the boundary: `metrics-change` for ruler changes, `mechanics-change` for world changes. The affected kinds are the ones whose pipeline contains the changed code (cells note them where it isn't obvious).
 
 One conditional cuts across the third test: obs code is part of the subject, but it also sets how much of the world the model can see. An obs change therefore alters number meaning only when it changes the information available (a leak fix, a staleness fix), not when it re-encodes the same information. Wrinkle (a), at the end of §2, works through this case.
 
 | Surface | Alters training? | Alters the model's runtime path? | Alters what numbers mean? | Example |
 |---|---|---|---|---|
 | Obs build, shared path | ✓ | ✓ | only if information changes (wrinkle (a)) | incident 1 (§4) |
-| Obs build, live path only | – | ✓ (live path only) | only if information changes (gameplay-eval numbers) | incident 2 (§4) |
-| Forward semantics (same weight shapes) | ✓ | ✓ | – | (hypothetical: changing a normalization constant) |
+| Live inference path (obs build, action decode) | – | ✓ (live path only) | only if information changes (gameplay-eval numbers) | incident 2 (§4) |
+| Forward semantics (same model shape) | ✓ | ✓ | – | (hypothetical: changing a normalization constant) |
 | Training targets / labels | ✓ | – | ✓ (ruler: label-scored metrics and curves) | incident 3 (§4) |
 | Loss definition | ✓ | – | ✓ (ruler: loss-type metrics) | soft targets, loss-weight changes |
 | Eval protocol / metric definitions | – | – | ✓ (ruler) | new map set, sampling temperature |
-| Hyperparameters / data mix | ✓ | – | – | learning rate, data-mix change |
-| Arch shape / channel count | ✓ | ✓ (loud: fails at load) | – | ungated channel additions |
+| Training-only code/config | ✓ | – | – | learning rate, regularization (e.g. dropout), data-mix change |
+| Model shape | ✓ | ✓ (loud: fails at load) | – | trunk width or depth change |
 | The game itself | ✓ | – | ✓ (world) | sim-rule changes |
 
 Two rows are special:
@@ -70,7 +74,7 @@ Two rows are special:
 
 The two model-contract impacts differ only in direction:
 
-- **`contract-break`**: the change pushes the runtime path *away* from training conditions. Old checkpoints get inputs or computation they never trained with. In the loud case, they simply get nothing at all, as the weights refuse to load.
+- **`contract-break`**: the change pushes the runtime path *away* from training conditions. Old checkpoints run under inputs, computation, or output decoding they never trained with. In the loud case, they simply get nothing at all, as the weights refuse to load.
 - **`contract-repair`**: the change brings the runtime path back *into* line with training. The contract was broken all along, and the fix ends the breach. The damage lands on the old era's numbers instead: they measured the broken behavior.
 
 **Gating** is what makes a runtime-path change safe: the old behavior stays available behind a config switch keyed to the checkpoint, so each checkpoint's stored config selects the semantics it trained with. An in-place, ungated change is the kind that breaks the contract.
@@ -98,7 +102,7 @@ Six activities exhaust the ways artifacts get used: checkpoint vs checkpoint, a 
 
 Row 4 carries the biggest practical trap: a reproduction gap has four possible causes in this table (five if the rerun is a training run under a changed recipe), so a surprising "this doesn't reproduce" must be attributed to a known boundary before being read as a regression or as nondeterminism.
 
-For a loud break (the arch-shape row), the contract-break column's confounded cells are unreachable rather than hazardous: the old checkpoint cannot run at all, so the comparisons those cells warn about can never be performed. What remains is the support decision recorded at the boundary.
+For a loud break (the model-shape row), the contract-break column's confounded cells are unreachable rather than hazardous: the old checkpoint cannot run at all, so the comparisons those cells warn about can never be performed. What remains is the support decision recorded at the boundary.
 
 ### Wrinkles that don't fit in cells
 
@@ -108,6 +112,7 @@ For a loud break (the arch-shape row), the contract-break column's confounded ce
 - **(d) Frozen artifacts, not just frozen numbers.** Recorded dumps (e.g. per-epoch val dumps) bake the era's label definitions into *data*. Recomputing metrics on an old dump with new analysis code mixes eras inside a single pipeline — a metrics-change that hides in storage.
 - **(e) Trunk coupling.** A targets or loss change (per §1: a recipe-change plus a metrics-change, no contract impact) still moves *gameplay* across the boundary, because aux-head gradients shape the shared trunk that the policy head reads. Still not a confound, but "only the labels changed" does not imply "gameplay is identical across the boundary."
 - **(f) The mismatch is symmetric.** Running a *new* checkpoint on *old* code (e.g. checking out an old commit) breaks the same contracts in the other direction. What matters is vintage mismatch, not age.
+- **(g) Checkpoints inside the apparatus.** An opponent pool puts checkpoints on the apparatus side, and the model contract governs them there too. A contract-break then reaches gameplay-eval numbers by a hidden route: the pool's spec is unchanged, but its checkpoints play below strength on current code, so numbers recorded after the boundary are measured against weakened opponents. That is a metrics-change no surface row generates (nothing in the apparatus's code changed), the same shape as (d): an artifact of one type hiding inside the other's pipeline. Gating closes the route, because gated opponents keep the semantics they trained with. An ungated break leaves ratings incomparable across the boundary, like any other metrics-change.
 
 ## 3. Cures — one set per impact
 
@@ -141,7 +146,7 @@ The live path double-seeded tick-0 history, so every live encode saw the previou
 - What changed: a one-tick shift in the labels' definition of death.
 - Commit: "Add bc/player_status; fix the obs/alive tick seam" (`4aace8b`, 2026-06-18)
 
-On a player's death tick, the alive/present masks now mark them dead (`death > t` became `death >= t`), ungated, on the targets side only (obs channels untouched). The elim head's target derives from those masks, so its values shifted with the change.
+On a player's death tick, the alive/present masks now mark them still alive (`death > t` became `death >= t`, matching the obs's pre-event board snapshot), ungated, on the targets side only (obs channels untouched). The elim head's target derives from those masks, so its values shifted with the change.
 
 | Incident | recipe-change | model-contract impact | measurement-contract impact |
 |---|---|---|---|
