@@ -9,6 +9,9 @@ print the run path *before* the remote call kicks off, so the operator knows
 where to look on the outputs Volume.
 """
 
+# TODO(2026-07-21): this file's comments and docstrings need a full
+# rewrite-trim-drop pass (AGENTS.md "Code comments and docstrings cleanup").
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field, fields
@@ -22,17 +25,19 @@ from training.bc.loss import LossConfig
 from training.bc.model_config import ModelConfig, build_model_cfg
 
 
-# The loss knobs live in a nested `LossConfig`, but older `--config` files and
-# run-dir `args.json` carry them as flat top-level keys.
-# `_extract_loss`: shim that accepts both shapes at the parsing boundary.
+# The loss knobs live in a nested `LossConfig`, but `--config` files and
+# run-dir `args.json` from before the nesting landed (2026-06-10) carry them
+# as flat top-level keys. `_extract_loss`: shim that accepts both shapes at
+# the parsing boundary.
 #
-# Removing that shim does NOT affect loading old checkpoints — the loss config
-# isn't in the `.pt` (`TrainingState.save` writes model/arch/optim/scaler/epoch),
-# so an old checkpoint's weights + arch still load shape-agnostic. What it breaks
-# is *resuming* a pre-nesting run or re-running an old flat `--config`: both read
-# flat loss keys, which without the shim stay at the top level and make the
-# `TrainConfig` constructor raise. Safe to drop once no flat configs/args remain
-# on disk and you won't resume a pre-nesting run.
+# Removing the shim does not affect checkpoint loading: v0 checkpoints carry no
+# config block, and every v1 block postdates the nesting, so `resolve_config`
+# reads nested loss without it. What it breaks is re-running an old flat
+# `--config` or resuming a pre-nesting run (resume reads the parent segment's
+# args file, which is also flat there): without the shim the flat keys stay at
+# the top level and the `TrainConfig` constructor raises. Safe to drop once:
+#   (1) no flat configs/args remain on disk or
+#   (2) we decide that any remaining flat configs/args are no longer supported
 _LOSS_FIELDS = frozenset(f.name for f in fields(LossConfig))
 
 
@@ -60,19 +65,19 @@ class TrainConfig:
     in `bc_run` (so cloud runs check after the Volume is mounted).
 
     Fields fall into three groups that decide how they're supplied:
-      - `arch` (model design) — from the `--config` file; recorded in the
-        checkpoint's `arch` key so a checkpoint self-describes its model.
-      - recipe (`lr`, `batch_size`, `epochs`, `loss` (the nested objective
-        knobs — weights and soft-target taus), `seed`, `precision`,
-        `shuffle_buffer_size`, `gpu`, `dump_val_frames`, `manifest`,
-        `intermediate`) — from the `--config` file; the run's reproducible
-        identity, not in the checkpoint.
-      - operational / invocation-local (`run_dir`, `device`, `num_workers`,
-        `pin_memory`, `prefetch_factor`, `log_every`, `skip_val`,
-        `max_batches`) — from CLI flags; where/how this invocation runs.
-    The config-file fields (arch + recipe) and the operational CLI fields are
-    disjoint domains, so `from_file` (file) + the CLI overrides merge as a plain
-    union.
+        - `arch` — Model design and architecture. Comes from the `--config` file.
+        - Recipe
+            - Fields: lr, batch_size, epochs, loss, seed, precision, weight_decay,
+              gpu, shuffle_buffer_size, dump_val_frames, manifest, intermediate
+            - These come from the `--config` file.
+            - `loss` is the nested values from LossConfig
+        - Operational / invocation-local
+            - Fields: run_dir, device, num_workers, pin_memory, prefetch_factor,
+              log_every, skip_val, max_batches
+            - Can be passed via the `--config` file or as CLI flags.
+
+    The whole config is serialized into each checkpoint's config block
+    (`bc.config.serialize_config`), so a checkpoint self-describes its run.
     """
 
     # --- recipe: required paths (no default that makes sense across envs) ---
@@ -85,8 +90,7 @@ class TrainConfig:
     # as `<parent>/<make_run_id()>`.
     run_dir: Path
     # --- arch: model design ---
-    # Self-describing architecture. Recorded in each checkpoint's `arch` key;
-    # validated by `ModelConfig.__post_init__`.
+    # Validated by `ModelConfig.__post_init__`.
     arch: ModelConfig = field(default_factory=build_model_cfg)
     # --- recipe (optional — env-independent defaults) ---
     epochs: int = 1
@@ -251,19 +255,21 @@ class TrainConfig:
         """Build a `TrainConfig` from a `--config` JSON file plus invocation-local
         overrides.
 
-        The file supplies the arch + recipe (`arch` and `loss` as nested objects,
-        plus the remaining recipe knobs + `manifest`/`intermediate` paths) and may
-        be partial — unset recipe fields fall through to this dataclass's defaults,
-        unset arch fields to `build_model_cfg`'s (`MODEL_CONFIG_DEFAULTS`), unset
-        loss knobs to `LossConfig`'s. Loss knobs are accepted both nested under
-        `loss:` and (back-compat) flat at the top level.
-        `overrides` supplies operational (invocation-local) fields (`run_dir`,
-        `device`, `num_workers`, …). The two domains are disjoint, so this is a
-        plain union; an unknown file key or a field set in both surfaces as a
-        `TypeError` from the constructor.
+        The file may supply a partial list of fields. For unset fields:
+            - recipe fields fall through to TrainConfig defaults.
+            - arch fields default to `MODEL_CONFIG_DEFAULTS` (in `build_model_cfg`).
+            - loss fields default to `LossConfig` defaults.
+
+        `overrides` supplies operational (invocation-local) fields.
+
+        The JSON config's fields and `overrides` merge as a plain union.
+        A key that isn't a `TrainConfig` field raises a `TypeError` from the
+        constructor, as does a field set both in the file and in `overrides`.
         """
         data = json.loads(Path(path).read_text())
         arch = build_model_cfg(**data.pop("arch", {}))
+        # NOTE: `_extract_loss` is a shim for older configs/args with flat, top-level
+        # loss knobs. See the comment above that function.
         loss = LossConfig(**_extract_loss(data))
         for path_field in ("manifest", "intermediate"):
             if path_field in data:

@@ -1,17 +1,17 @@
 """CLI scaffolding for BC training.
 
-The operator supplies a run's reproducible identity — model `arch` + recipe +
-data paths — through a single `--config <json>` file; the CLI keeps only
-*operational* (invocation-local) knobs: run dir, device, DataLoader knobs,
-logging, smoke limits, plus the resume directives. The two domains are disjoint,
-so `TrainConfig.from_file` (file) and the operational CLI overrides merge as a
-plain union.
+The operator supplies a run's reproducible identity (model `arch` + recipe +
+data paths) through a single `--config <json>` file.
+CLI flags only remain for *operational* (invocation-local) knobs: run dir, device,
+DataLoader knobs, logging, smoke limits, as well as the resume directives.
+The JSON config file may also set operational fields. A field set in both fails
+loudly in the merge.
 
 Operational knob flags default to `argparse.SUPPRESS`, so a flag that isn't
 passed never lands on the namespace and falls through to the `TrainConfig` field
-default. `--out-dir` and `--device` are env-wiring the wrappers
-(`scripts/run_bc_local.py`, `scripts/run_bc_modal.py`) fill via
-`parser.set_defaults(...)` before parsing.
+default.
+The CLI wrappers (run_bc_local, run_bc_modal) can supply environment-specific
+defaults for CLI args via `parser.set_defaults(...)`.
 """
 
 from __future__ import annotations
@@ -27,12 +27,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--config", type=Path, default=None,
-        help=(
-            "JSON config file: model `arch` + recipe (lr, batch_size, epochs, "
-            "seed, precision, shuffle_buffer_size, gpu) + data paths (manifest, "
-            "intermediate). May be partial — unset fields use defaults. On "
-            "--resume, this is an overlay applied over the parent's resolved config."
-        ),
+        help="JSON config file. May be partial. See TrainConfig for details."
     )
     # `--out-dir` is a required *value*, but the parser doesn't enforce
     # `required=True` so wrappers can supply an environment default via
@@ -42,10 +37,10 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Parent dir for runs. Joined with a fresh run-id to form `TrainConfig.run_dir`.",
     )
 
-    # Operational (invocation-local) knobs. No defaults here — `TrainConfig`'s
-    # field defaults are the single source. `default=SUPPRESS` keeps an unpassed flag
-    # off the namespace, so `operational_overrides` overlays only what was passed.
-    # `--device` is env-wiring the wrappers fill via `set_defaults`.
+    # Operational (invocation-local) knobs.
+    # Defaults are handled by the config code (TrainConfig and friends).
+    # `default=SUPPRESS` keeps an unpassed flag off the namespace,
+    # so `operational_overrides` overlays only what was passed.
     parser.add_argument(
         "--device",
         choices=("auto", "cuda", "mps", "cpu"),
@@ -145,10 +140,12 @@ _OPERATIONAL_FIELDS: tuple[str, ...] = (
 
 
 def operational_overrides(args: argparse.Namespace) -> dict[str, object]:
-    """The operational (invocation-local) knobs the operator explicitly passed
-    (plus `device`, which the wrappers always set). The fresh path overlays these
-    onto the config-file values; the resume path overlays them onto the parent
-    run's config. Only `pin_memory` needs translating ('auto'/'true'/'false')."""
+    """The operational (invocation-local) knobs the operator explicitly passed,
+    as well as any the wrapper pinned via set_defaults.
+    The fresh path overlays these onto the config-file values.
+    The resume path overlays them onto the parent run's config.
+    Only `pin_memory` needs translating ('auto'/'true'/'false')."""
+
     vals = vars(args)
     return {
         field: (_PIN_MEMORY_MAP[vals[field]] if field == "pin_memory" else vals[field])
