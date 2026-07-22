@@ -70,7 +70,9 @@ One conditional cuts across the third test: obs code is part of the subject, but
 Two rows are special:
 
 - **Shape changes** are contract-breaks with a built-in safety: the break is "loud". `load_state_dict(strict=True)` refuses mismatched weights, so an old checkpoint fails at load instead of silently degrading. The break still poses the support decision (which old checkpoints stay loadable), but it cannot produce misleading numbers (§2's note on loud breaks).
-- **Game changes** are the pure world case: the game itself changed, so recorded numbers from the two eras describe different games and stay incomparable. Comparable numbers require re-measuring the old side on today's game. The row's training ✓ comes through the data path: training data is rebuilt through the sim, so a rule change reaches the weights as well.
+- **Game changes** are the pure world case: the game itself changed, so recorded numbers from the two eras describe different games and stay incomparable. Comparable numbers require re-measuring the old side on today's game. Like most impacts we expect to encounter, this mechanics-change is felt immediately.
+
+  The row's training ✓ arrives later. Training uses the on-disk output of the replay-parser module (the `intermediate` directory), and a sim change has no effect on training until that data is regenerated. Upon regeneration, the earlier code change delivers its remaining impacts: the `recipe-change` (later runs train on the corrected data), and the `mechanics-change` now also reaches the data-derived numbers (curves and analysis numbers, whose val data and dumps describe the corrected world from then on). In practice the regeneration is its own boundary event, recorded with its own date.
 
 The two model-contract impacts differ only in direction:
 
