@@ -6,10 +6,14 @@
 
 Some code changes draw a boundary in time: checkpoints and recorded numbers from before the change were produced under the old code, so their validity for any later use has to be checked rather than assumed. The code in question is whatever trains, runs, or measures the model (obs building, forward semantics, targets, loss, metric definitions, eval protocol).
 
-This doc classifies these changes. For any use of an old artifact (a checkpoint or a recorded number), the classification gives a verdict: clean, confounded, incomparable, or valid with a caption. Classifying takes two steps, one per section below:
+This doc classifies these changes. For any use of an old artifact (a checkpoint or a recorded number), the classification gives a verdict: clean, confounded, incomparable, or valid with a caption (a few cells carry close variants). Classifying takes two steps, one per section below:
 
 1. **Impacts** — what the change does to checkpoints and numbers, read off the surface table's three tests (§1).
 2. **Verdict** — cross the change's impacts with the *activity*: what is being done right now, with which artifacts (§2).
+
+## Terminology note
+
+- **`labels`** — This term is used widely in this doc to refer to the training label values and how they are applied. In the code or other docs, this is often referred to as "targets".
 
 ## The two contracts
 
@@ -19,7 +23,7 @@ Every confound is a break of one of two implicit promises.
 
 **The measurement contract**: two recorded numbers with the same name mean the same thing. The contract holds as long as everything that produces the number is stable: metric definitions, label definitions, eval protocol, and the game itself. A break shows up when a number recorded before the change is compared with one recorded after: the models on both sides may be perfectly healthy, but the gap between the numbers mixes model difference with measurement difference. The cure is re-measurement: run the old checkpoint under current conditions and compare fresh numbers (§3 notes the limits).
 
-A change can also break neither contract: one that alters only how new checkpoints are trained (a new learning rate, a different data mix), touching neither the runtime code nor anything that produces a number. Later checkpoints are simply different models, and comparisons across the change stay valid. In §1's terms: a `recipe-change` without a `contract-break`.
+A change can also break neither contract: one that alters only how new checkpoints are trained (a new learning rate, a different data mix), touching neither the runtime code nor anything that produces a number. Later checkpoints are simply different models, and comparisons across the change stay valid. In §1's terms: a `recipe-change` without any other impacts.
 
 ## Artifacts: run versus read
 
@@ -41,8 +45,8 @@ Recorded dumps sit between the two artifact types: data that is read, but that n
 
 Each surface is a kind of code or configuration that can change. The three test columns say what a change to it alters, and each column feeds one family of impacts: a change's impact set is its set of ✓s.
 
-- **Alters training?** Holding the replay corpus and the seed fixed, would a training run launched after the change produce different weights (systematically, not as run-to-run noise)? A ✓ means checkpoints trained after the change are genuinely different models: `recipe-change`. The test covers everything from data selection through the optimizer, and excludes code that executes during training without shaping the weight updates (logging, dump cadence).
-- **Alters the model's runtime path?** With weights held fixed, does the change alter the function from game state to network outputs (input construction plus the forward pass)? A ✓ means running a checkpoint across the boundary changes its behavior: `contract-break` or `contract-repair`, depending on direction (below). The endpoint matters: sampling temperature turns network outputs into a chosen action, downstream of the network, so it is part of the apparatus and belongs to the third column.
+- **Alters training?** Holding the replay corpus and the seed fixed, would a training run launched after the change produce different weights (systematically, not as run-to-run noise)? A ✓ means checkpoints trained after the change are different models: `recipe-change`. The test covers everything from data selection through the optimizer, and excludes code that executes during training without shaping the weight updates (logging, dump cadence).
+- **Alters the model's runtime path?** With weights held fixed, does the change alter the function from game state to network outputs (input construction plus the forward pass)? A ✓ means running a checkpoint across the boundary changes its behavior: `contract-break` or `contract-repair`, depending on direction (below). One limiting case also earns a ✓: a change that makes the old weights unloadable, leaving no function to run at all (the arch-shape row). The endpoint matters: sampling temperature turns network outputs into a chosen action, downstream of the network, so it is part of the apparatus and belongs to the third column.
 - **Alters what numbers mean?** Does the change alter the measurement apparatus of some kind of recorded number: its ruler (metric definitions, label definitions, eval protocol) or its world (game rules, or the information the game exposes to the model)? A ✓ means same-name numbers of the affected kinds stop comparing across the boundary: `metrics-change` for ruler changes, `mechanics-change` for world changes. The affected kinds are the ones whose pipeline contains the changed code (cells note them where it isn't obvious).
 
 One conditional cuts across the third test: obs code is part of the subject, but it also sets how much of the world the model can see. An obs change therefore alters number meaning only when it changes the information available (a leak fix, a staleness fix), not when it re-encodes the same information. Wrinkle (a), at the end of §2, works through this case.
@@ -52,32 +56,32 @@ One conditional cuts across the third test: obs code is part of the subject, but
 | Obs build, shared path | ✓ | ✓ | only if information changes (wrinkle (a)) | incident 1 (§4) |
 | Obs build, live path only | – | ✓ (live path only) | only if information changes (gameplay-eval numbers) | incident 2 (§4) |
 | Forward semantics (same weight shapes) | ✓ | ✓ | – | (hypothetical: changing a normalization constant) |
-| Targets / labels | ✓ | – | ✓ (ruler: label-scored metrics and curves) | incident 3 (§4) |
+| Training targets / labels | ✓ | – | ✓ (ruler: label-scored metrics and curves) | incident 3 (§4) |
 | Loss definition | ✓ | – | ✓ (ruler: loss-type metrics) | soft targets, loss-weight changes |
 | Eval protocol / metric definitions | – | – | ✓ (ruler) | new map set, sampling temperature |
 | Hyperparameters / data mix | ✓ | – | – | learning rate, data-mix change |
-| Arch shape / channel count | ✓ | fails loudly at load | – | ungated channel additions |
+| Arch shape / channel count | ✓ | ✓ (loud: fails at load) | – | ungated channel additions |
 | The game itself | ✓ | – | ✓ (world) | sim-rule changes |
 
 Two rows are special:
 
-- **Shape changes** fail loudly at `load_state_dict(strict=True)`. An old checkpoint cannot silently degrade on mismatched arch code, because it refuses to load at all. The change instead poses a support decision: which old checkpoints stay loadable. The rest of this doc concerns confounds of the silent kind.
-- **Game changes** are the pure world case: the game itself changed, so recorded numbers from the two eras describe different games and stay incomparable. Comparable numbers require re-measuring both sides on today's game.
+- **Shape changes** are contract-breaks with a built-in safety: the break is "loud". `load_state_dict(strict=True)` refuses mismatched weights, so an old checkpoint fails at load instead of silently degrading. The break still poses the support decision (which old checkpoints stay loadable), but it cannot produce misleading numbers (§2's note on loud breaks).
+- **Game changes** are the pure world case: the game itself changed, so recorded numbers from the two eras describe different games and stay incomparable. Comparable numbers require re-measuring the old side on today's game. The row's training ✓ comes through the data path: training data is rebuilt through the sim, so a rule change reaches the weights as well.
 
 The two model-contract impacts differ only in direction:
 
-- **`contract-break`**: the change pushes the runtime path *away* from training conditions. Old checkpoints get inputs or computation they never trained with.
+- **`contract-break`**: the change pushes the runtime path *away* from training conditions. Old checkpoints get inputs or computation they never trained with. In the loud case, they simply get nothing at all, as the weights refuse to load.
 - **`contract-repair`**: the change brings the runtime path back *into* line with training. The contract was broken all along, and the fix ends the breach. The damage lands on the old era's numbers instead: they measured the broken behavior.
 
 **Gating** is what makes a runtime-path change safe: the old behavior stays available behind a config switch keyed to the checkpoint, so each checkpoint's stored config selects the semantics it trained with. An in-place, ungated change is the kind that breaks the contract.
 
 One note on the measurement side: `mechanics-change` rarely means generals.io itself changed. More often it is our implementation of the game (a sim-rule fix, a parity correction), which changes the world the bot experiences all the same.
 
-**The row easiest to misread is targets / labels.** A label change feels like it should corrupt old checkpoints, but the tests say otherwise. Walking the three cells:
+**The row easiest to misread is training targets / labels.** A label change feels like it should corrupt old checkpoints, but the tests say otherwise. Walking the three cells:
 
-- Training ✓: checkpoints trained after the change are genuinely different models. The gradients flowed differently, including through any trunk the heads share (wrinkle (e)).
+- Training ✓: checkpoints trained after the change are different models. The gradients flowed differently, including through any trunk the heads share (wrinkle (e)).
 - Runtime path –: a frozen old checkpoint plays exactly as it always did, because label code never executes at inference. No contract-break.
-- Numbers ✓ (ruler): the label definition is part of the measurement apparatus. Scoring an old head against the new labels is valid but answers the new question (caption it), and recorded label-scored curves stop comparing across the boundary.
+- Numbers ✓ (ruler): the training label definition (targets) is part of the measurement apparatus. Scoring an old head against the new labels is valid but answers the new question (caption it), and recorded label-scored curves stop comparing across the boundary.
 
 ## 2. Activities × impacts — the verdict table
 
@@ -87,12 +91,14 @@ Six activities exhaust the ways artifacts get used: checkpoint vs checkpoint, a 
 |---|---|---|---|---|---|
 | **1. Old vs new ckpt, both run now** | clean — a genuine model difference, including the recipe change's effect | **confounded** — the old side mixes ability with mismatch | clean | clean | clean |
 | **2. Old ckpt analyzed now** | – | **confounded** if the analysis walks the changed runtime path | clean | the number is valid but measures the *new* definition — caption it | valid (today's game) |
-| **3. New number vs old recorded number** | comparable — and measures the recipe change | see wrinkle (a) | **incomparable** — the old numbers were recorded during the breach | **incomparable** — curable by re-measuring | **incomparable** — permanently; only re-measured numbers compare |
+| **3. New number vs old recorded number** | comparable — and measures the recipe change | comparable only if the input change didn't alter the information available (wrinkle (a)) | **incomparable** — the old numbers were recorded during the breach | **incomparable** — cure: re-measure the old side under the current definitions | **incomparable** — cure: re-measure the old side on today's game |
 | **4. Old ckpt rerun vs its own old number** | eval numbers reproduce; rerunning *training* is a new experiment | fails to reproduce — expected | fails — expected, and the new number is the truer one | fails — expected | fails — expected |
 | **5. Resume / fine-tune old ckpt now** | the result is a cross-recipe hybrid — legitimate, label it | starts out-of-distribution; continued training *adapts* it (a cure) | fine | its curves kink at the resume point for definition reasons, not learning reasons | trains on today's game |
 | **6. Read or deploy one artifact alone** | caption: which recipe | caption: contract status on current code | caption: that era's numbers are systematically off | caption: which definition | caption: which game era |
 
 Row 4 carries the biggest practical trap: a reproduction gap has four possible causes in this table (five if the rerun is a training run under a changed recipe), so a surprising "this doesn't reproduce" must be attributed to a known boundary before being read as a regression or as nondeterminism.
+
+For a loud break (the arch-shape row), the contract-break column's confounded cells are unreachable rather than hazardous: the old checkpoint cannot run at all, so the comparisons those cells warn about can never be performed. What remains is the support decision recorded at the boundary.
 
 ### Wrinkles that don't fit in cells
 
@@ -100,7 +106,7 @@ Row 4 carries the biggest practical trap: a reproduction gap has four possible c
 - **(b) Same-side comparisons during a shared breach.** Two old checkpoints compared today are *equally* out of contract, so the relative read plausibly survives, but only on the unverified assumption that both are equally sensitive to the mismatch. (Head-to-head evals run while incident 2's live-path bug (§4) was still in place have exactly this status: the pre-fix era of a contract-repair is such a breach.)
 - **(c) Boundary-spanning checkpoints.** A run resumed across a boundary is neither vintage. A checkpoint census needs a "hybrid" category, not just pre/post.
 - **(d) Frozen artifacts, not just frozen numbers.** Recorded dumps (e.g. per-epoch val dumps) bake the era's label definitions into *data*. Recomputing metrics on an old dump with new analysis code mixes eras inside a single pipeline — a metrics-change that hides in storage.
-- **(e) Trunk coupling.** A targets or loss change (a recipe-change with measurement-side residue only, per §1) still moves *gameplay* across the boundary, because aux-head gradients shape the shared trunk that the policy head reads. Still not a confound, but "only the labels changed" does not imply "gameplay is identical across the boundary."
+- **(e) Trunk coupling.** A targets or loss change (per §1: a recipe-change plus a metrics-change, no contract impact) still moves *gameplay* across the boundary, because aux-head gradients shape the shared trunk that the policy head reads. Still not a confound, but "only the labels changed" does not imply "gameplay is identical across the boundary."
 - **(f) The mismatch is symmetric.** Running a *new* checkpoint on *old* code (e.g. checking out an old commit) breaks the same contracts in the other direction. What matters is vintage mismatch, not age.
 
 ## 3. Cures — one set per impact
@@ -113,9 +119,29 @@ Row 4 carries the biggest practical trap: a reproduction gap has four possible c
 
 ## 4. Worked examples — three boundaries from this project (2026)
 
-1. **Obs-content fixes (2026-05-21 and 2026-05-27).** Three ungated fixes changed existing obs channel values in place, in the shared path: "Close two obs-tensor fog-of-war leaks" (`2e6b2df`) and "Subtract expected production from army_delta channels" (`5a2beb0`) on 05-21, then "Replace game_progress channel with timestep (fix future-info leak)" (`e04cad6`) on 05-27, which replaced a channel that leaked the true game length with a fixed-divisor timestep.
-2. **Stale-live-obs fix (2026-06-07).** "Fix one-tick-stale obs in live inference path" (`bc4bb19`, with same-day companion `49b335d` fixing the eval-bot's world model): the live path double-seeded tick-0 history, so every live encode saw the previous tick's board. The training-data path never had the bug.
-3. **Elim-target tick-seam fix (2026-06-18).** "Add bc/player_status; fix the obs/alive tick seam" (`4aace8b`): the alive/present masks moved from `death > t` to `death >= t`, ungated, on the targets side only (obs channels untouched). The elim head's death-frame target became `dt = 0`.
+### 1. Obs-content fixes
+
+- What changed: existing obs channel values changed in place, in the shared path (three ungated fixes).
+- Commits:
+    - "Close two obs-tensor fog-of-war leaks" (`2e6b2df`, 2026-05-21)
+    - "Subtract expected production from army_delta channels" (`5a2beb0`, 2026-05-21)
+    - "Replace game_progress channel with timestep (fix future-info leak)" (`e04cad6`, 2026-05-27)
+
+The third commit replaced a channel that leaked the true game length with a fixed-divisor timestep.
+
+### 2. Stale-live-obs fix
+
+- What changed: a staleness fix in the live-only obs path.
+- Commit: "Fix one-tick-stale obs in live inference path" (`bc4bb19`, 2026-06-07), with same-day companion `49b335d` fixing the eval-bot's world model.
+
+The live path double-seeded tick-0 history, so every live encode saw the previous tick's board. The training-data path never had the bug.
+
+### 3. Elim-head target tick-seam fix
+
+- What changed: a one-tick shift in the labels' definition of death.
+- Commit: "Add bc/player_status; fix the obs/alive tick seam" (`4aace8b`, 2026-06-18)
+
+On a player's death tick, the alive/present masks now mark them dead (`death > t` became `death >= t`), ungated, on the targets side only (obs channels untouched). The elim head's target derives from those masks, so its values shifted with the change.
 
 | Incident | recipe-change | model-contract impact | measurement-contract impact |
 |---|---|---|---|
