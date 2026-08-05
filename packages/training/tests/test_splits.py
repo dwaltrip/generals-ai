@@ -19,42 +19,36 @@ from training.bc.splits import (
 from utils.json_io import write_json
 
 
-def test_same_seed_is_deterministic(intermediate_root: Path, sim_paths: list[Path]) -> None:
+def test_same_seed_is_deterministic(make_manifest_small) -> None:
     """Two builds with the same seed produce byte-identical train/val lists."""
-    sub = sim_paths[:100]
-    m1 = build_manifest(intermediate_root, seed=42, sim_paths=sub)
-    m2 = build_manifest(intermediate_root, seed=42, sim_paths=sub)
+    m1 = make_manifest_small(seed=42)
+    m2 = make_manifest_small(seed=42)
     assert m1["train"] == m2["train"]
     assert m1["val"] == m2["val"]
 
 
-def test_different_seed_differs(intermediate_root: Path, sim_paths: list[Path]) -> None:
+def test_different_seed_differs(make_manifest_small) -> None:
     """Different seeds reshuffle the val draw."""
-    sub = sim_paths[:100]
-    m1 = build_manifest(intermediate_root, seed=42, sim_paths=sub)
-    m2 = build_manifest(intermediate_root, seed=43, sim_paths=sub)
+    m1 = make_manifest_small(seed=42)
+    m2 = make_manifest_small(seed=43)
     assert m1["val"] != m2["val"]
 
 
-def test_train_val_disjoint_and_cover_kept(
-    intermediate_root: Path, sim_paths: list[Path]
-) -> None:
-    sub = sim_paths[:100]
-    m = build_manifest(intermediate_root, seed=0, sim_paths=sub, val_frac=0.05)
+def test_train_val_disjoint_and_cover_kept(make_manifest_small) -> None:
+    frac = 0.05
+    m = make_manifest_small(seed=0, val_frac=frac)
     train = {tuple(p) for p in m["train"]}
     val = {tuple(p) for p in m["val"]}
     assert train.isdisjoint(val)
     assert len(train) + len(val) == m["kept_pairs"]
     # 5% of N rounded — within ±1 of expected for tiny N
-    expected_val = round(m["kept_pairs"] * 0.05)
+    expected_val = round(m["kept_pairs"] * frac)
     assert abs(len(val) - expected_val) <= 1
 
 
-def test_manifest_provenance_fields_present(
-    intermediate_root: Path, sim_paths: list[Path]
-) -> None:
+def test_manifest_provenance_fields_present(make_manifest_small) -> None:
     """The fields a training script needs to detect 'corpus moved under me' must exist."""
-    m = build_manifest(intermediate_root, seed=0, sim_paths=sim_paths[:50])
+    m = make_manifest_small(seed=0)
     for key in (
         "version", "seed", "built_at", "filter_version", "git_sha",
         "corpus_size", "dropped_games", "kept_pairs", "curated_names_count",
@@ -65,10 +59,12 @@ def test_manifest_provenance_fields_present(
 
 
 def test_load_and_resolve_roundtrip(
-    intermediate_root: Path, sim_paths: list[Path], tmp_path: Path
+    make_manifest_small,
+    intermediate_root,
+    tmp_path: Path,
 ) -> None:
     """Build → write → load → samples_for_split yields valid (Path, int) tuples."""
-    m = build_manifest(intermediate_root, seed=7, sim_paths=sim_paths[:50])
+    m = make_manifest_small(seed=7)
     out_path = tmp_path / "v1.json"
     write_json(out_path, m)
 
@@ -123,12 +119,20 @@ def test_samples_for_split_case_insensitive_shard_lookup(tmp_path: Path) -> None
 def test_eval_map_ids_excluded(intermediate_root: Path, sim_paths: list[Path]) -> None:
     """Games whose replay id is reserved by an eval map set never enter a manifest."""
     sub = sim_paths[:100]
-    baseline = build_manifest(intermediate_root, seed=0, sim_paths=sub, eval_map_ids=set())
+    baseline = build_manifest(
+        intermediate_root,
+        seed=0,
+        sim_paths_for_tests=sub,
+        eval_map_ids=set(),
+    )
     some_rid = baseline["train"][0][0]
 
     m = build_manifest(
-        intermediate_root, seed=0, sim_paths=sub,
-        eval_map_ids={some_rid}, eval_map_set_names=["test-set"],
+        intermediate_root,
+        seed=0,
+        sim_paths_for_tests=sub,
+        eval_map_ids={some_rid},
+        eval_map_set_names=["test-set"],
     )
     manifest_rids = {rid for rid, _ in m["train"]} | {rid for rid, _ in m["val"]}
     assert some_rid not in manifest_rids

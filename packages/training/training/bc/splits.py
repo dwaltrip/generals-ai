@@ -104,36 +104,24 @@ def load_eval_map_ids(
 def build_manifest(
     intermediate_root: Path,
     seed: int,
+    *,
     val_frac: float = DEFAULT_VAL_FRAC,
-    sim_paths: list[Path] | None = None,
     scan_limit: int | None = None,
     log_every: int | None = None,
     curated_names: set[str] | None = None,
     eval_map_ids: set[str] | None = None,
     eval_map_set_names: list[str] | None = None,
+    sim_paths_for_tests: list[Path] | None = None,
 ) -> dict:
     """
     Scan corpus, apply filters, seeded-shuffle eligible `(rid, k)` pairs, split.
 
-    `sim_paths`, if provided, bypasses `list_sim_paths(intermediate_root)` —
-    the same seam tests use to share a cached session-scoped sim list. The
-    recorded `intermediate_root` field still reflects the caller's argument
-    so the manifest is machine-portable.
-
-    `scan_limit`, if set, caps the resolved path list to the first N entries
-    — produces a smoke manifest in seconds rather than minutes. Applied after
-    `sim_paths` resolution, so the two compose.
-
-    `log_every` prints "scanned X / Y" progress every N games; useful for the
-    CLI on the full corpus. Pass `None` to silence (tests don't need it).
-
-    `curated_names`, if `None`, defaults to `load_curated_names()` — the
-    cross-list union from `curated-player-lists.txt`. Tests pass an explicit
-    set to keep fixtures small and known.
-
-    `eval_map_ids` / `eval_map_set_names`, if `None`, default to
-    `load_eval_map_ids()` — every published eval map set's ids. Same explicit
-    seam for tests.
+    scan_limit: Limit resolved paths to first N. Applied to the resolved path list.
+    log_every: Print "scanned X / Y" progress every N games. None skips printing.
+    curated_names: Defaults to `load_curated_names()`.
+    eval_map_ids / eval_map_set_names: Default to `load_eval_map_ids()`.
+    sim_paths_for_tests: Bypasses corpus scan of intermediate_root.
+        The scan takes seconds to run, and would occur for each test using the fixture.
     """
     assert 0.0 < val_frac < 1.0, f"val_frac must be in (0, 1), got {val_frac}"
 
@@ -143,7 +131,11 @@ def build_manifest(
         eval_map_ids, eval_map_set_names = load_eval_map_ids()
     eval_map_set_names = eval_map_set_names or []
 
-    paths = list(sim_paths) if sim_paths is not None else list_sim_paths(intermediate_root)
+    if sim_paths_for_tests is not None:
+        paths = list(sim_paths_for_tests)
+    else:
+        paths = list_sim_paths(intermediate_root)
+
     # Eval-map exclusion comes before the scan_limit sample so a capped scan
     # still fills its full quota from eligible games.
     n_before = len(paths)

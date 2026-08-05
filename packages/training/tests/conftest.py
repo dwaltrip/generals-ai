@@ -14,7 +14,7 @@ import pytest
 
 from settings import INTERMEDIATE_DIR
 from training.bc.filters import eligible_perspectives
-from training.bc.splits import load_curated_names
+from training.bc.splits import build_manifest, load_curated_names
 from training.bc.utils import list_sim_paths, meta_path_for
 
 
@@ -34,6 +34,36 @@ def intermediate_root() -> Path:
 def sim_paths(intermediate_root: Path) -> list[Path]:
     """Cached sim-path list — computed once per session."""
     return list_sim_paths(intermediate_root)
+
+
+# Note: If we need additional kwargs for `_make_manifest_small` we can do:
+#   class MakeManifestOpts(TypedDict):
+#       val_frac: NotRequired[float]
+#       another_kwarg: NotRequired[SomeType]
+#   # ...
+#   def _make_manifest_small(seed: int, **kwargs: Unpack[MakeManifestOpts]):
+#       # ...
+#       return build_manifest(intermediate_root, seed=seed, sim_paths_for_tests=sub, **kwargs)
+@pytest.fixture(scope="session")
+def make_manifest_small(intermediate_root: Path, sim_paths: list[Path]):
+    """Factory fixture for small subset of intermediate data"""
+
+    def _make_manifest_small(seed: int, val_frac: None | float = None):
+        sub = sim_paths[:100]
+        if val_frac is not None:
+            return build_manifest(
+                intermediate_root,
+                seed=seed,
+                sim_paths_for_tests=sub,
+                val_frac=val_frac,
+            )
+        return build_manifest(
+            intermediate_root,
+            seed=seed,
+            sim_paths_for_tests=sub,
+        )
+
+    return _make_manifest_small
 
 
 @pytest.fixture(scope="session")
