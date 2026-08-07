@@ -22,10 +22,11 @@ import sim_core
 # fog-tracking module if this coupling becomes painful.
 from training.bc import obs as bc_obs
 from training.bc import visibility
-from training.bc.obs import MemoryState, pad_initial_generals
+from training.bc.obs import MemoryState
+from training.bc.slots import MAX_PLAYERS, pad_initial_generals
 
 
-P = 8  # fixed slot count the obs encoder was trained on
+P = MAX_PLAYERS
 
 
 class ThreatEntry(NamedTuple):

@@ -36,7 +36,7 @@ def sim_paths(intermediate_root: Path) -> list[Path]:
     return list_sim_paths(intermediate_root)
 
 
-# Note: If we need additional kwargs for `_make_manifest_small` we can do:
+# Daniel's Note: If we need additional kwargs for `_make_manifest_small` we can do:
 #   class MakeManifestOpts(TypedDict):
 #       val_frac: NotRequired[float]
 #       another_kwarg: NotRequired[SomeType]

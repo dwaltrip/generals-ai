@@ -29,6 +29,7 @@ from training.bc.obs.channels import (
 )
 from training.bc.obs.memory import MemoryState
 from training.bc.obs_config import GATED_CHANNEL_GROUPS
+from training.bc.sim_types import SimFrame
 from training.shared.timing import timer
 
 
@@ -38,10 +39,7 @@ _NP_OBS_DTYPE = {"fp32": np.float32, "fp16": np.float16}
 
 
 def build_obs(
-    sim: dict[str, np.ndarray],
-    t: int,
-    perspective_slot: int,
-    opp_slots: list[int],
+    sim_frame: SimFrame,
     vis: np.ndarray,
     state: MemoryState,
     bfs_cache: bfs.BFSCache,
@@ -62,6 +60,14 @@ def build_obs(
     cache fills inside `bfs.compute_or_get`, which are idempotent).
     """
     with timer.section("prelude"):
+        assert sim_frame.slot_order.perspective == state.perspective_slot, (
+            "sim_frame/state perspective mismatch — mispaired walk inputs"
+        )
+        sim = sim_frame.sim
+        t = sim_frame.t
+        perspective_slot = sim_frame.slot_order.perspective
+        opp_slots = sim_frame.slot_order.opp_slots
+
         own = sim["ownership"][t].reshape(H, W)
         armies = sim["armies"][t].reshape(H, W)
 

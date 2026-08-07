@@ -23,11 +23,11 @@ from training.bc.constants import CITY_TRAVERSABILITY_FACTOR
 from training.bc.obs.geometry import (
     PerspectiveView,
     _moore_dilate,
-    canonical_slot_order,
     make_perspective_view,
 )
 from training.bc.obs_config import OBS_CONFIG_DEFAULTS, ObsConfig
 from training.bc.player_status import PlayerStatusCtx, precompute_player_status
+from training.bc.slots import SlotOrder
 from training.shared.timing import timer
 
 
@@ -64,8 +64,7 @@ class MemoryState:
     # transition/army-delta buffers and the dense-history channel tail.
     obs_cfg: ObsConfig
     # Raw slot id of the perspective player and the canonical 7 opponents.
-    # `opp_slots = canonical_slot_order(perspective_slot)[1:]`; pinned at init
-    # so per-frame helpers don't recompute it.
+    # Canonical slot ordering (see `SlotOrder`). Compute once per game.
     perspective_slot: int
     opp_slots: list[int]
 
@@ -189,7 +188,7 @@ def init_memory_common(
     state = MemoryState(
         obs_cfg=obs_cfg,
         perspective_slot=perspective_slot,
-        opp_slots=canonical_slot_order(perspective_slot, P)[1:],
+        opp_slots=SlotOrder.for_perspective(perspective_slot, P).opp_slots,
         is_structure=is_structure,
         general_locations=general_locations,
         land_count_history=[],

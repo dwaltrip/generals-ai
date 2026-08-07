@@ -1,7 +1,7 @@
 """The aux-head registry: variant-string → spec, the single dispatch point.
 
 `spec_for` resolves the variant string to a spec at construction.
-`BCModel` builds the head(s) and keeps the resolved spec as `active_aux_specs`. 
+`BCModel` builds the head(s) and keeps the resolved spec as `active_aux_specs`.
 The dataset workers also use `spec_for`, and the model isn't available.
 """
 

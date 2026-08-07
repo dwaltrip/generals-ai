@@ -16,13 +16,14 @@ import numpy as np
 from training.bc import bfs
 from training.bc.constants import W_PADDED
 from training.bc.mask import build_mask
-from training.bc.obs import build_obs, canonical_slot_order, init_memory, step_memory
+from training.bc.obs import build_obs, init_memory, step_memory
+from training.bc.slots import SlotOrder
 from training.bc.obs_config import ObsConfig
+from training.bc.sim_types import SimFrame
 from training.bc.targets.core_targets import policy_pass_target, value_target
 from training.bc.targets.elim_targets import (
-    ElimCtx,
+    make_elim_ctx,
     next_death_target,
-    precompute_elim,
     time_bin_targets,
 )
 from training.bc.visibility import compute_visibility
@@ -38,20 +39,6 @@ class Frame:
     obs: np.ndarray  # [C, H_PADDED, W_PADDED], obs_cfg dtype
     mask: np.ndarray  # [H_PADDED, W_PADDED, 8] bool
     targets: dict[str, np.ndarray | int | bool]
-
-
-def make_elim_ctx(
-    sim: dict[str, np.ndarray], edges: tuple[int, ...] | None
-) -> ElimCtx:
-    edges_arr = np.asarray(edges, dtype=np.int64) if edges is not None else None
-    death, removal, is_real, sentinel = precompute_elim(sim, edges_arr)
-    return ElimCtx(
-        edges=edges_arr,
-        death_by_slot=death,
-        removal_by_slot=removal,
-        is_real=is_real,
-        sentinel=sentinel,
-    )
 
 
 def walk_end_t(sim: dict[str, np.ndarray], meta: dict[str, np.ndarray], k: int) -> int:
@@ -71,8 +58,8 @@ def walk_fixture(
     H = int(sim["map_height"])
     W = int(sim["map_width"])
     perspective_slot = int(meta["perspective_player_ids"][k])
-    opp_slots = canonical_slot_order(perspective_slot)[1:]
-    raw_order = [perspective_slot, *opp_slots]
+    slot_order = SlotOrder.for_perspective(perspective_slot)
+    raw_order = list(slot_order.order)
 
     state = init_memory(sim, perspective_slot, H, W, obs_cfg)
     cache = bfs.init_bfs_cache()
@@ -84,7 +71,8 @@ def walk_fixture(
     for t in range(walk_end_t(sim, meta, k)):
         vis = compute_visibility(sim["ownership"][t], perspective_slot, H, W)
         step_memory(state, sim, t, vis, perspective_slot, H, W)
-        obs = build_obs(sim, t, perspective_slot, opp_slots, vis, state, cache, H, W)
+        sim_frame = SimFrame(sim=sim, t=t, slot_order=slot_order)
+        obs = build_obs(sim_frame, vis, state, cache, H, W)
         mask = build_mask(sim, t, perspective_slot, H, W)
 
         targets: dict[str, np.ndarray | int | bool] = {}
@@ -96,7 +84,7 @@ def walk_fixture(
             targets = {
                 "is_pass": is_pass,
                 "action_target": flat_idx,
-                "value_target": value_target(meta, k),
+                "value_target": value_target(int(meta["placement"][k])),
                 "alive_mask": alive,
                 "elim_bin_target": bins,
                 "next_elim_target": nxt,

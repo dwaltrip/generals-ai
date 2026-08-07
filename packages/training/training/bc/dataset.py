@@ -35,23 +35,12 @@ from torch.utils.data import DataLoader, default_collate
 from torch.utils.data import IterableDataset as TorchIterableDataset
 
 from training.bc import bfs
-from training.bc.aux_heads import spec_for
-from training.bc.constants import H_PADDED, W_PADDED
-from training.bc.mask import build_mask
-from training.bc.obs import (
-    MemoryState,
-    build_obs,
-    canonical_slot_order,
-    init_memory,
-    step_memory,
-)
+from training.bc.encode_frame import encode_frame
+from training.bc.obs import init_memory, step_memory
 from training.bc.obs_config import ObsConfig
-from training.bc.targets.core_targets import policy_pass_target, value_target
-from training.bc.targets.elim_targets import (
-    ElimCtx,
-    alive_mask,
-    precompute_elim,
-)
+from training.bc.sample import FrameMeta
+from training.bc.sim_types import GameMeta
+from training.bc.targets.elim_targets import make_elim_ctx
 from training.bc.visibility import compute_visibility
 from training.shared.timing import timer
 
@@ -60,18 +49,27 @@ if TYPE_CHECKING:
     from training.shared.timing_run import FileSink
 
 
-def _group_by_path(samples: list[tuple[Path, int]]) -> list[tuple[Path, tuple[int, ...]]]:
-    """
-    Collapse a flat `(path, k)` list into one `(path, ks)` entry per unique path.
+type SampleRef = tuple[Path, int]   # (sim_path, perspective_k)
 
-    Preserves first-seen order for paths and within-path order for k's
-    (Python dicts are insertion-ordered). The dataset trusts caller-supplied
-    k ordering — no internal sort.
+
+@dataclass(frozen=True)
+class PerspectivesByGame:
+    """All selected perspectives from a single game"""
+    # The sim npz path for the game
+    sim_path: Path
+    perspective_ks: tuple[int, ...]
+
+
+def _group_by_path(samples: list[SampleRef]) -> list[PerspectivesByGame]:
+    """Transform a flat `(path, k)` list into a PerspectivesByGame for each path.
+    Preserves first-seen order for paths (dicts are insertion-ordered).
+    Also preserves within-path order for each perspective `k`. This is essential
+    for keeping dataset walks deterministic.
     """
     by_path: dict[Path, list[int]] = {}
     for path, k in samples:
         by_path.setdefault(path, []).append(k)
-    return [(p, tuple(ks)) for p, ks in by_path.items()]
+    return [PerspectivesByGame(p, tuple(ks)) for p, ks in by_path.items()]
 
 
 def timed_collate(batch: list[dict[str, torch.Tensor]]) -> dict[str, torch.Tensor]:
@@ -126,108 +124,6 @@ def _shuffle_buffered[T](
     yield from buffer
 
 
-@dataclass(frozen=True)
-class SimFrame:
-    """Raw sim-domain context for one frame, attached to each yielded sample when
-    the dataset is iterated with `unsafe_attach_sim_frame=True` (an analysis-only
-    seam, default off).
-
-    Holds the per-game `sim`/`meta` dicts (shared by reference across all of that
-    game's frames — treat read-only) plus this frame's indexing, so offline
-    analysis can read raw sim ground truth alongside the encoded obs in the same
-    pass. The flag is named to look dangerous on purpose: the attached numpy dicts
-    are non-collatable, so a `unsafe_attach_sim_frame=True` dataset must be
-    iterated directly and never routed through a DataLoader.
-    """
-
-    sim: dict[str, np.ndarray]
-    meta: dict[str, np.ndarray]
-    k: int
-    t: int
-    perspective_slot: int
-    opp_slots: list[int]
-
-
-# TODO: Create a more robust return type for this.
-def encode_frame(
-    sim: dict[str, np.ndarray],
-    meta: dict[str, np.ndarray],
-    k: int,
-    t: int,
-    perspective_slot: int,
-    opp_slots: list[int],
-    vis: np.ndarray,
-    state: MemoryState,
-    bfs_cache: bfs.BFSCache,
-    H: int,
-    W: int,
-    elim: ElimCtx | None = None,
-    elim_variant: str | None = None,
-) -> dict[str, torch.Tensor]:
-    """
-    One (game, perspective, timestep) → one training sample dict.
-
-    Orchestrates `build_obs` (the obs tensor, requires state + vis + bfs cache),
-    `build_mask` (legality, stateless), `actions.encode` (action target), and
-    the value-target extraction. DataLoader's default collate stacks the
-    result keywise into batched tensors.
-
-    `elim`, when set (the precompute is built), adds the per-frame elim targets;
-    `None` leaves them off so non-elim runs carry no extra collate/transfer
-    weight. `elim_variant` selects which targets:
-      - `"time_bin"`: per-player `elim_bin_target` (over the `alive_mask` domain).
-      - `"next_death"`: who-is-removed-next over the board-*removal* event and the
-        `present_mask` domain — scalar `next_elim_target` (the next-victim
-        channel, or -1 when no future removal), `next_elim_dt` (ticks-to-next-
-        removal horizon), `next_elim_removal_dt` (per-player [8] removal horizon,
-        the soft target's input), and the per-player [8] `present_mask`.
-      - `None` (with `elim` set): no variant targets — the alive-only path.
-
-    Whenever `elim` is set, the frame carries the per-player [8] `alive_mask`
-    (the time_bin softmax/eval domain), alongside any variant targets — and as the
-    sole output of the `None`-variant path. The next_death variant additionally
-    carries `present_mask`, its own (board-removal) domain.
-
-    Pure-read of `state` + `bfs_cache`. `step_memory` must already have been
-    called for this `(t, vis)` — `__iter__` enforces this ordering.
-    """
-    obs_np = build_obs(sim, t, perspective_slot, opp_slots, vis, state, bfs_cache, H, W)
-    mask_np = build_mask(sim, t, perspective_slot, H, W)
-
-    # Mask + action target + value target + the numpy→tensor conversion. Timed
-    # as one region: it's the per-sample tail after the obs build, dominated by
-    # the `torch.from_numpy` / `torch.tensor` conversions feeding collation.
-    with timer.section("encode_tail"):
-        # Per-sample [1, H_PADDED, W_PADDED] bool, True over the unpadded board
-        # region. Consumed by PassHead (masked global pool) and ValueHead (zero
-        # padded contributions before flatten) so per-game board-size variance
-        # doesn't leak into the head outputs as a magnitude effect.
-        valid_mask_np = np.zeros((1, H_PADDED, W_PADDED), dtype=np.bool_)
-        valid_mask_np[0, :H, :W] = True
-
-        is_pass, flat_idx = policy_pass_target(sim, perspective_slot, t, W, W_PADDED)
-
-        sample = {
-            "obs": torch.from_numpy(obs_np),
-            "mask": torch.from_numpy(mask_np),
-            "valid_mask": torch.from_numpy(valid_mask_np),
-            "action_target": torch.tensor(flat_idx, dtype=torch.int64),
-            "is_pass": torch.tensor(is_pass, dtype=torch.bool),
-            "value_target": torch.tensor(value_target(meta, k), dtype=torch.int64),
-        }
-        if elim is not None:
-            raw_order = [perspective_slot, *opp_slots]
-            # Aliveness is variant-independent and is the one key every elim
-            # consumer (and the alive-only probe path) needs — emit it once here,
-            # then add the active spec's variant-specific targets.
-            sample["alive_mask"] = torch.from_numpy(alive_mask(elim, raw_order, t))
-            spec = spec_for(elim_variant)
-            if spec is not None:
-                sample.update(spec.encode_targets(elim, raw_order, t))
-            # elim_variant is None → alive-only emission (emit_alive_mask path).
-        return sample
-
-
 def assert_safe_loader(loader: DataLoader) -> None:
     """Fail fast if a DataLoader over our `IterableDataset` is misconfigured.
 
@@ -276,6 +172,10 @@ class IterableDataset(TorchIterableDataset):
         elim_bin_edges: tuple[int, ...] | None = None,
         elim_head_variant: str | None = None,
         emit_alive_mask: bool = False,
+        # Attach `SimFrame` to each yielded sample. This allows offline analysis to
+        # read raw sim ground truth alongside the encoded obs, in the same pass.
+        # This SHOULD NOT be used during training (or with DataLoader in general),
+        # as SimFrame is non-collatable (hence the `unsafe_` prefix).
         unsafe_attach_sim_frame: bool = False,
     ) -> None:
         """
@@ -292,11 +192,7 @@ class IterableDataset(TorchIterableDataset):
         sink on teardown. `None` (the default) keeps every timing seam inert.
         Wired from `train.build_dataloader` via `timing_run.active_sink()`.
 
-        `include_frame_info` adds per-frame provenance scalars to each sample
-        dict (`frame_t`, `players_alive`, `p_start`, `sample_idx`) for offline
-        stratified analysis. Off by default:
-        the training loop doesn't consume them, and the extra keys would ride
-        through collate + device transfer for nothing.
+        `include_frame_info` adds per-frame provenance data for offline analysis.
 
         `elim_head_variant`, when set, switches on an elimination head's
         per-frame targets and selects which: `"time_bin"` →
@@ -322,19 +218,12 @@ class IterableDataset(TorchIterableDataset):
         self._shuffle_buffer_size = shuffle_buffer_size
         self._epoch = 0
         self._prof_sink = prof_sink
-        self._frame_info = include_frame_info
-        # Analysis-only seam: attach the raw sim/meta + frame indexing to each
-        # yielded sample (direct iteration only — non-collatable). Off by default
-        # so the training path is untouched.
-        self._sim_frame = unsafe_attach_sim_frame
-        self._elim_edges = (
-            np.asarray(elim_bin_edges, dtype=np.int64)
-            if elim_bin_edges is not None
-            else None
-        )
+        self._include_frame_info = include_frame_info
+        self._unsafe_attach_sim_frame = unsafe_attach_sim_frame
+        self._elim_edges = elim_bin_edges
         self._elim_variant = elim_head_variant
-        # The per-game elim precompute backs both the variant targets and the
-        # standalone alive mask, so either request triggers it.
+        # The per-game elim precompute is used for both the variant targets and the
+        # standalone alive mask, so in either case _needs_elim_ctx must be True.
         self._needs_elim_ctx = elim_head_variant is not None or emit_alive_mask
         # Index of each (path, k) pair in the caller's `samples` order, so
         # `sample_idx` survives the group/epoch shuffles and lets offline
@@ -379,7 +268,7 @@ class IterableDataset(TorchIterableDataset):
         rng: random.Random,
         worker_id: int = 0,
         num_workers: int = 1,
-    ) -> list[tuple[Path, tuple[int, ...]]]:
+    ) -> list[PerspectivesByGame]:
         """Per-worker ordered list of groups to walk.
 
         Shards `self._groups` by `i % num_workers == worker_id` so each
@@ -418,7 +307,7 @@ class IterableDataset(TorchIterableDataset):
         else:
             worker_id, num_workers = worker_info.id, worker_info.num_workers
 
-        # Profiling is per-process: enable + reset this worker's own `timer` so
+        # Profiling is per-process: enable + reset this worker's own timer so
         # its flushed file holds just this epoch's walk. Inert when no sink.
         if self._prof_sink is not None:
             timer.enabled = True
@@ -439,103 +328,78 @@ class IterableDataset(TorchIterableDataset):
             if self._prof_sink is not None:
                 self._prof_sink.flush(self._epoch, worker_id, timer.snapshot())
 
-    def _walk(
-        self,
-        groups: list[tuple[Path, tuple[int, ...]]],
-    ) -> Iterator[dict[str, torch.Tensor]]:
-        for sim_path, ks in groups:
-            meta_path = sim_path.with_name(sim_path.stem + ".meta.npz")
+    def _walk(self, groups: list[PerspectivesByGame]) -> Iterator[dict[str, torch.Tensor]]:
+        for g in groups:
+            meta_path = g.sim_path.with_name(g.sim_path.stem + ".meta.npz")
 
-            # Per-game volume read + npz DEFLATE decompression. `np.load` is
-            # lazy; the dict comprehensions force the read+inflate, so the seam
-            # has to wrap them, not just the `np.load` calls.
+            # Timer: per-game volume read + npz DEFLATE decompression.
+            # `np.load` is lazy and the dict comprehensions cause the actual read+inflate.
+            # So the timer call needs to include the comprehensions (not just `load`).
             with timer.section("data_load"):
-                with np.load(sim_path) as sim_npz:
+                with np.load(g.sim_path) as sim_npz:
                     sim = {key: sim_npz[key] for key in sim_npz.files}
                 with np.load(meta_path) as meta_npz:
                     meta = {key: meta_npz[key] for key in meta_npz.files}
 
-            T = sim["ownership"].shape[0]
-            H = int(sim["map_height"])
-            W = int(sim["map_width"])
+            game_meta = GameMeta.from_npz(sim, meta)
 
-            if self._frame_info:
-                # Aliveness comes from the sim, not meta: `meta.elim_timestep`
-                # covers only the *recorded* perspectives, while `death_events`
-                # is (timestep, slot) for every eliminated player (winner
-                # absent). players_alive(t) = P_start − deaths with ts ≤ t,
-                # i.e. a player eliminated at t counts as dead in frame t.
-                deaths = (
-                    np.sort(sim["death_events"][:, 0])
-                    if sim["death_events"].size
-                    else np.zeros(0, dtype=np.int64)
-                )
-                # Owner ids are ≥ 0; -1 is neutral, -2 mountains. At t=0 each
-                # player owns exactly their general, so the distinct owner
-                # count is the starting player count.
-                p_start = int((np.unique(sim["ownership"][0]) >= 0).sum())
-
-            # Per-game elim precompute (winner-vs-phantom resolution lives here,
-            # once per game, not per perspective). Variant-independent — the ctx
-            # carries both death and removal markers, shared by both elim specs and
-            # the standalone alive-mask path. `None` unless a variant or the
-            # standalone alive mask was requested. Keyword construction: the field
-            # order of `ElimCtx` and the tuple `precompute_elim` returns must not
-            # silently desync (all arrays/ints, no type error on a swap).
             elim_ctx = None
             if self._needs_elim_ctx:
-                death, removal, is_real, sentinel = precompute_elim(
-                    sim, self._elim_edges
-                )
-                elim_ctx = ElimCtx(
-                    edges=self._elim_edges,
-                    death_by_slot=death,
-                    removal_by_slot=removal,
-                    is_real=is_real,
-                    sentinel=sentinel,
-                )
+                elim_ctx = make_elim_ctx(sim, self._elim_edges)
 
-            for k in ks:
-                perspective_slot = int(meta["perspective_player_ids"][k])
-                opp_slots = canonical_slot_order(perspective_slot)[1:]
+            for k in g.perspective_ks:
+                perspective = game_meta.perspectives[k]
 
                 with timer.section("perspective_setup"):
-                    state = init_memory(sim, perspective_slot, H, W, self._obs_cfg)
+                    state = init_memory(
+                        sim,
+                        perspective.slot,
+                        game_meta.H,
+                        game_meta.W,
+                        self._obs_cfg,
+                    )
                     bfs_cache = bfs.init_bfs_cache()
 
-                elim_t = int(meta["elim_timestep"][k])
-                end_t = T - 1 if elim_t == -1 else min(T - 1, elim_t)
+                for t in range(perspective.end_t):
+                    vis = compute_visibility(
+                        sim["ownership"][t],
+                        perspective.slot,
+                        game_meta.H,
+                        game_meta.W,
+                    )
+                    step_memory(state, sim, t, vis, perspective.slot, game_meta.H, game_meta.W)
 
-                for t in range(end_t):
-                    vis = compute_visibility(sim["ownership"][t], perspective_slot, H, W)
-                    step_memory(state, sim, t, vis, perspective_slot, H, W)
+                    frame_meta = None
+                    if self._include_frame_info:
+                        frame_meta = FrameMeta(
+                            frame_t=torch.tensor(t, dtype=torch.int64),
+                            players_alive=torch.tensor(
+                                game_meta.count_players_alive_at(t),
+                                dtype=torch.int64,
+                            ),
+                            p_start=torch.tensor(game_meta.p_start, dtype=torch.int64),
+                            sample_idx=torch.tensor(
+                                self._sample_index[(g.sim_path, k)], dtype=torch.int64
+                            ),
+                        )
 
-                    # Reference span over the build_obs/mask/tail child seams.
+                    # Timer: reference span over the build_obs/mask/tail child seams.
                     with timer.section("encode_frame", grouped=False):
                         sample = encode_frame(
-                            sim, meta, k, t,
-                            perspective_slot, opp_slots, vis,
-                            state, bfs_cache, H, W,
-                            elim=elim_ctx,
+                            sim,
+                            t,
+                            perspective,
+                            frame_meta,
+                            vis,
+                            state,
+                            bfs_cache,
+                            elim_ctx=elim_ctx,
                             elim_variant=self._elim_variant,
+                            unsafe_attach_sim_frame=self._unsafe_attach_sim_frame,
                         )
-                    if self._frame_info:
-                        sample["frame_t"] = torch.tensor(t, dtype=torch.int64)
-                        sample["players_alive"] = torch.tensor(
-                            p_start - int(np.searchsorted(deaths, t, side="right")),
-                            dtype=torch.int64,
-                        )
-                        sample["p_start"] = torch.tensor(p_start, dtype=torch.int64)
-                        sample["sample_idx"] = torch.tensor(
-                            self._sample_index[(sim_path, k)], dtype=torch.int64
-                        )
-                    if self._sim_frame:
-                        sample["sim_frame"] = SimFrame(
-                            sim=sim, meta=meta, k=k, t=t,
-                            perspective_slot=perspective_slot, opp_slots=opp_slots,
-                        )
-                    # Measures per-sample overhead plus (per batch boundary) collate, shm_copy,
-                    # and the queue put/block. Then `handoff − collate − shm_copy` should give
-                    # us the worker→main IPC/blocking blind spot.
+
+                    # Timer: measures per-sample overhead plus (per batch boundary) collate,
+                    # shm_copy, and the queue put/block. Then `handoff − collate − shm_copy`
+                    # should give us the worker→main IPC/blocking blind spot.
                     with timer.section("handoff", grouped=False):
-                        yield sample
+                        yield sample.to_dict()

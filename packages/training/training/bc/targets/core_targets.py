@@ -12,10 +12,10 @@ import numpy as np
 from training.bc import actions
 
 
-def value_target(meta: dict[str, np.ndarray], k: int) -> int:
-    """Value-head class label: placement is 1..P (1st through Pth); shift to a
-    0-indexed class label for `F.cross_entropy`."""
-    return int(meta["placement"][k]) - 1
+def value_target(placement: int) -> int:
+    """Value-head class label. Placement is 1..P (1st through Pth).
+    Shift to 0-indexed class label for cross_entropy."""
+    return placement - 1
 
 
 def policy_pass_target(

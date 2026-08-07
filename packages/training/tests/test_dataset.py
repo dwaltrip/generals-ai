@@ -16,9 +16,9 @@ from training.bc.dataset import (
 )
 from training.bc.filters import is_eligible
 from training.bc.obs_config import OBS_CONFIG_DEFAULTS
+from training.bc.player_status import make_alive_mask
 from training.bc.targets.elim_targets import (
     ElimCtx,
-    alive_mask,
     next_death_target,
     precompute_elim,
     time_bin_targets,
@@ -31,10 +31,10 @@ class _IdentityDataset(IterableDataset):
     depending on .npz fixtures or the encode_frame path."""
 
     def _walk(self, groups):
-        for sim_path, ks in groups:
-            for k in ks:
+        for g in groups:
+            for k in g.perspective_ks:
                 for t in range(3):
-                    yield (str(sim_path), k, t)
+                    yield (str(g.sim_path), k, t)
 
 
 def test_shuffle_buffered_yields_all_inputs_once_in_new_order() -> None:
@@ -89,7 +89,7 @@ def test_iter_groups_partitions_disjointly_and_completely(num_workers: int) -> N
             worker_id=wid,
             num_workers=num_workers,
         )
-        shard_paths = {p for p, _ks in shard}
+        shard_paths = {group.sim_path for group in shard}
         assert shard_paths.isdisjoint(seen_paths), (
             f"worker {wid} shard overlaps prior workers"
         )
@@ -269,7 +269,7 @@ def test_next_death_target_uses_removal_over_the_present_domain() -> None:
     # alive-domain target would have excluded it and mis-named slot 2.
     nxt, present, dt, _ = next_death_target(elim, raw_order, t=8)
     assert nxt == 1 and dt == 4
-    assert present[1] and not alive_mask(elim, raw_order, 8)[1]
+    assert present[1] and not make_alive_mask(elim, raw_order, 8)[1]
 
 
 def test_next_death_target_ties_resolve_to_lowest_channel() -> None:

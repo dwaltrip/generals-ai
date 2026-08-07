@@ -19,8 +19,9 @@ from typing import cast
 import numpy as np
 
 from training.analysis.fq.derivers import Deriver, Frame
-from training.bc.dataset import IterableDataset, SimFrame
+from training.bc.dataset import IterableDataset
 from training.bc.obs_config import OBS_CONFIG_DEFAULTS, ObsConfig
+from training.bc.sim_types import SimFrame
 
 
 # Obs config for ground-truth fq tables: default `n`, fp32, no player-status
@@ -199,9 +200,11 @@ def build_frame_table(
             obs=d["obs"],
             valid_mask=d["valid_mask"],
             alive=d["alive_mask"].numpy().astype(bool),
-            sim=sf.sim,
+            # The dataset walk only ever attaches parser-npz sims, so the
+            # narrowing from SimFrame's shared live/replay annotation is safe.
+            sim=cast(dict[str, np.ndarray], sf.sim),
             t=sf.t,
-            raw_order=[sf.perspective_slot, *sf.opp_slots],
+            raw_order=list(sf.slot_order.order),
             game_id=gid,
         )
         for src, colname in spec.emit_cols.items():

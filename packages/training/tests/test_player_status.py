@@ -10,7 +10,7 @@ from __future__ import annotations
 import numpy as np
 
 from training.bc.player_status import (
-    alive_mask,
+    make_alive_mask,
     precompute_player_status,
     present_mask,
 )
@@ -55,9 +55,9 @@ _RAW = [0, 1, 2, 3, 4, 5, 6, 7]
 def test_winner_always_alive_and_present_phantoms_never() -> None:
     ctx = precompute_player_status(_sim(T=40))
     for t in (0, 20, 39):
-        assert alive_mask(ctx, _RAW, t)[0]  # winner alive throughout
+        assert make_alive_mask(ctx, _RAW, t)[0]  # winner alive throughout
         assert present_mask(ctx, _RAW, t)[0]  # ...and on the board
-        assert not alive_mask(ctx, _RAW, t)[4:].any()  # phantoms masked
+        assert not make_alive_mask(ctx, _RAW, t)[4:].any()  # phantoms masked
         assert not present_mask(ctx, _RAW, t)[4:].any()
 
 
@@ -65,8 +65,8 @@ def test_alive_uses_ge_t_at_the_death_frame() -> None:
     # slot 1 dies at t=10: alive THROUGH frame 10 (the obs's pre-event board
     # still shows it), dead from 11.
     ctx = precompute_player_status(_sim(T=40))
-    assert alive_mask(ctx, _RAW, 10)[1]
-    assert not alive_mask(ctx, _RAW, 11)[1]
+    assert make_alive_mask(ctx, _RAW, 10)[1]
+    assert not make_alive_mask(ctx, _RAW, 11)[1]
 
 
 def test_surrender_window_is_present_and_not_alive() -> None:
@@ -75,10 +75,10 @@ def test_surrender_window_is_present_and_not_alive() -> None:
     ctx = precompute_player_status(_sim(T=40))
     for t in (6, 10, 15):
         assert present_mask(ctx, _RAW, t)[2]
-        assert not alive_mask(ctx, _RAW, t)[2]
+        assert not make_alive_mask(ctx, _RAW, t)[2]
     # before surrender: alive & present; after removal: neither.
-    assert alive_mask(ctx, _RAW, 5)[2] and present_mask(ctx, _RAW, 5)[2]
-    assert not alive_mask(ctx, _RAW, 16)[2] and not present_mask(ctx, _RAW, 16)[2]
+    assert make_alive_mask(ctx, _RAW, 5)[2] and present_mask(ctx, _RAW, 5)[2]
+    assert not make_alive_mask(ctx, _RAW, 16)[2] and not present_mask(ctx, _RAW, 16)[2]
 
 
 def test_capture_while_alive_has_no_spurious_surrender_frame() -> None:
@@ -86,11 +86,11 @@ def test_capture_while_alive_has_no_spurious_surrender_frame() -> None:
     # — alive→eliminated with no intervening present-&-~alive (surrender) frame.
     ctx = precompute_player_status(_sim(T=40))
     for t in range(40):
-        surrendered = present_mask(ctx, _RAW, t)[1] and not alive_mask(ctx, _RAW, t)[1]
+        surrendered = present_mask(ctx, _RAW, t)[1] and not make_alive_mask(ctx, _RAW, t)[1]
         assert not surrendered, f"slot 1 read surrendered at t={t}"
     # the transient: alive+present at 10, eliminated at 11.
-    assert alive_mask(ctx, _RAW, 10)[1] and present_mask(ctx, _RAW, 10)[1]
-    assert not alive_mask(ctx, _RAW, 11)[1] and not present_mask(ctx, _RAW, 11)[1]
+    assert make_alive_mask(ctx, _RAW, 10)[1] and present_mask(ctx, _RAW, 10)[1]
+    assert not make_alive_mask(ctx, _RAW, 11)[1] and not present_mask(ctx, _RAW, 11)[1]
 
 
 def test_army_zero_but_alive_edge_reads_present_and_alive() -> None:
@@ -100,4 +100,4 @@ def test_army_zero_but_alive_edge_reads_present_and_alive() -> None:
     # (slot 0) is exactly this: no events, present & alive at every tick.
     ctx = precompute_player_status(_sim(T=40))
     assert ctx.removal_by_slot[0] == ctx.sentinel  # no removal event
-    assert present_mask(ctx, _RAW, 25)[0] and alive_mask(ctx, _RAW, 25)[0]
+    assert present_mask(ctx, _RAW, 25)[0] and make_alive_mask(ctx, _RAW, 25)[0]

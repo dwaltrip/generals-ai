@@ -34,9 +34,13 @@ The dense-history tail (`ownership_transition[t-k]` + `army_delta[t-k]`,
 H_PADDED = 32
 W_PADDED = 32
 
-# Drop-filter membership.
+# Training data policy constants. See `filters.py`.
+# This sets the exact player count a game must have to be included in training.
+# We only train on "full" games (classic 8-player generals FFA).
+# This is separate from MAX_PLAYERS (the encoder's slot capacity).
 ELIGIBLE_PLAYER_COUNT = 8
-MAX_BOARD_SIDE = 32  # inclusive; drop games where max(w, h) > MAX_BOARD_SIDE
+# Max board size for training games. Inclusive: drop if max(w, h) > MAX_BOARD_SIDE.
+MAX_BOARD_SIDE = 32
 
 # BFS city-passability knob (obs cat 5). A non-own city is treated as passable
 # iff `perspective_total_army > city_army * CITY_TRAVERSABILITY_FACTOR`. Crude
@@ -48,7 +52,7 @@ CITY_TRAVERSABILITY_FACTOR = 4
 
 # Per-opp channel ordering contract:
 #   For channel index `i ∈ 1..7` in any per-opp group, the opponent referenced is
-#   the raw slot at `opp_slots[i-1]`, where `opp_slots = canonical_slot_order(perspective)[1:]`.
+#   the raw slot at `opp_slots[i-1]`, where `opp_slots` comes from SlotOrder.
 #   Channel 0 is always the perspective player ("self").
 # This contract is enforced uniformly across `opp_N_owned`, `opp_N_army_count`,
 # `last_seen_owner_opp_N`, BFS-to-opp-N, `opp_N_contacted`, `opp_N_captured_by`, etc.

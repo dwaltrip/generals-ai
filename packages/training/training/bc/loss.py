@@ -185,7 +185,7 @@ def bc_loss(
         - `aux`:               active aux-head logits, keyed by `output_key`
         - `active_aux_specs`:  the built aux heads — the loss computes a term for each
 
-    targets (collated from `dataset.encode_frame`)
+    targets (collated from `bc.encode_frame`)
         - `mask`:          `[B, H, W, 8]` bool, per-cell legality
         - `action_target`: `[B]` int64. flat cell-major index or `-1` for pass
         - `is_pass`:       `[B]` bool

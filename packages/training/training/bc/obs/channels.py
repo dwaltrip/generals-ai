@@ -16,8 +16,8 @@ Every per-opp channel group (`opp_N_owned`, `opp_N_army_count`,
 `last_seen_owner_opp_N`, BFS-to-opp-N, `opp_N_contacted`, `opp_N_captured_by`,
 `opp_N_has_seen`, ...) follows the same canonical mapping: channel index `i`
 for `i ∈ 1..7` corresponds to the raw slot `opp_slots[i-1]`, where
-`opp_slots = canonical_slot_order(perspective)[1:]`. Channel 0 (in any per-opp
-grouping that *includes* self) is always the perspective player.
+`opp_slots = SlotOrder.for_perspective(perspective).opp_slots`. Channel 0 (in
+any per-opp grouping that *includes* self) is always the perspective player.
 
 --- Knobs deferred for later tuning ---
 
@@ -38,7 +38,7 @@ import numpy as np
 
 from training.bc import bfs
 from training.bc.obs.memory import MemoryState, compute_known_passable
-from training.bc.player_status import alive_mask, present_mask
+from training.bc.player_status import make_alive_mask, present_mask
 
 
 # Hand-picked broadcast-scalar normalization divisors. These are rough
@@ -313,7 +313,7 @@ def _cat_player_status(ctx: GroupBuildCtx) -> list[np.ndarray]:
         "init_memory (training) or the live encode path must build it"
     )
     present = present_mask(sc, ctx.opp_slots, ctx.t)
-    alive = alive_mask(sc, ctx.opp_slots, ctx.t)
+    alive = make_alive_mask(sc, ctx.opp_slots, ctx.t)
     plane = lambda v: np.full((ctx.H, ctx.W), float(v), dtype=np.float32)
     return [*[plane(v) for v in present], *[plane(v) for v in alive]]
 

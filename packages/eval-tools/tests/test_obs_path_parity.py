@@ -42,6 +42,8 @@ from training.bc import bfs as bc_bfs
 from training.bc import obs as bc_obs
 from training.bc.inference import BCPerspective
 from training.bc.mask import build_mask
+from training.bc.sim_types import SimFrame
+from training.bc.slots import SlotOrder, pad_initial_generals
 from training.bc.obs_config import OBS_CONFIG_DEFAULTS
 from training.bc.visibility import compute_visibility
 
@@ -114,14 +116,15 @@ def test_live_and_training_obs_paths_agree(tmp_path):
 
     for s in range(n_players):
         # Match the live encoder's 8-slot general padding (perspective-specific).
-        sim["initial_generals"] = bc_obs.pad_initial_generals(raw_generals, s)
+        sim["initial_generals"] = pad_initial_generals(raw_generals, s)
         mem = bc_obs.init_memory(sim, s, H, W, obs_cfg)
         cache = bc_bfs.init_bfs_cache()
-        opp = bc_obs.canonical_slot_order(s)[1:]
+        slot_order = SlotOrder.for_perspective(s)
         for t in range(_N_TICKS):
             vis = compute_visibility(sim["ownership"][t], s, H, W)
             bc_obs.step_memory(mem, sim, t, vis, s, H, W)
-            train_obs = bc_obs.build_obs(sim, t, s, opp, vis, mem, cache, H, W)
+            sim_frame = SimFrame(sim=sim, t=t, slot_order=slot_order)
+            train_obs = bc_obs.build_obs(sim_frame, vis, mem, cache, H, W)
             train_mask = build_mask(sim, t, s, H, W)
 
             assert np.array_equal(live_obs[s][t], train_obs), (

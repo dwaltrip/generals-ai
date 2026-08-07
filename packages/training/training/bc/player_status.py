@@ -116,7 +116,7 @@ def precompute_player_status(
     return PlayerStatusCtx(is_real, death_by_slot, removal_by_slot, int(sentinel))
 
 
-def alive_mask(ctx: _HasDeathFields, raw_order: list[int], t: int) -> np.ndarray:
+def make_alive_mask(ctx: _HasDeathFields, raw_order: list[int], t: int) -> np.ndarray:
     """Per-channel alive mask `[8]`: real and not yet eliminated.
 
     `death_by_slot >= t` — a player whose first DeathEvent fires at `t` reads

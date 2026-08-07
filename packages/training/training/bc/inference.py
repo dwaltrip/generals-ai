@@ -38,14 +38,14 @@ from training.bc import obs as bc_obs
 from training.bc.constants import H_PADDED, W_PADDED
 from training.bc.model import BCModel, ModelOut, flatten_policy_logits
 from training.bc.model_builder import ConfiguredModel
-from training.bc.obs import pad_initial_generals
 from training.bc.obs_config import ObsConfig
 from training.bc.player_status import precompute_player_status
+from training.bc.sim_types import SimFrame
+from training.bc.slots import MAX_PLAYERS, SlotOrder, pad_initial_generals
 from training.bc.storage.checkpoint import load_from_raw, read_checkpoint
 
 
-# Fixed slot count the model + obs encoder were trained on (8-player FFA).
-P = 8
+P = MAX_PLAYERS
 
 
 def default_device() -> torch.device:
@@ -255,7 +255,7 @@ class BCPerspective:
         # Obs-encoder config the model was trained with — source from the loaded
         # checkpoint's `handle.model.cfg.obs` so the built obs matches `in_ch`.
         self.obs_cfg = obs_cfg
-        self.opp_slots = bc_obs.canonical_slot_order(perspective_slot, P)[1:]
+        self.slot_order = SlotOrder.for_perspective(perspective_slot, P)
         self.force_move = force_move
         self.sample = sample
         self.temperature = temperature
@@ -384,10 +384,16 @@ class BCPerspective:
             self._memory, self._sim, t, vis, self.perspective_slot, H, W, P,
         )
 
+        sim_frame = SimFrame(sim=self._sim, t=t, slot_order=self.slot_order)
+
         # 6. Build obs + legality mask + valid-region mask.
         obs_np = bc_obs.build_obs(
-            self._sim, t, self.perspective_slot, self.opp_slots,
-            vis, self._memory, self._bfs_cache, H, W,
+            sim_frame,
+            vis,
+            self._memory,
+            self._bfs_cache,
+            H,
+            W,
         )
         mask_np = bc_mask.build_mask(self._sim, t, self.perspective_slot, H, W)
         valid_np = np.zeros((1, H_PADDED, W_PADDED), dtype=bool)

@@ -1,5 +1,5 @@
 """
-Targeted unit tests for `bc.obs` helpers — slot canonicalization plus the
+Targeted unit tests for slot canonicalization (`bc.slots`) and the
 dense-history encoders (`_encode_ownership_transition`, `_encode_army_delta`).
 Full `build_obs` is exercised end-to-end by `test_dataloader_smoke.py` against
 real-corpus data.
@@ -10,7 +10,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from training.bc.obs import canonical_slot_order
+from training.bc.slots import SlotOrder
 from training.bc.obs.memory import _encode_army_delta, _encode_ownership_transition
 
 
@@ -26,7 +26,10 @@ from training.bc.obs.memory import _encode_army_delta, _encode_ownership_transit
 )
 def test_canonical_slot_order(perspective_slot, expected):
     """Channel 0 = perspective; channels 1..7 = ascending raw slot, perspective skipped."""
-    assert canonical_slot_order(perspective_slot) == expected
+    slot_order = SlotOrder.for_perspective(perspective_slot)
+    assert list(slot_order.order) == expected
+    assert slot_order.perspective == expected[0]
+    assert slot_order.opp_slots == expected[1:]
 
 
 def test_encode_ownership_transition_all_categories():
@@ -34,7 +37,7 @@ def test_encode_ownership_transition_all_categories():
     slot → canonical channel index mapping is non-trivial (raw 0→ch 1,
     raw 4→ch 4, etc.). Each cell exercises one category."""
     perspective = 3
-    opp_slots = canonical_slot_order(perspective)[1:]  # [0, 1, 2, 4, 5, 6, 7]
+    opp_slots = SlotOrder.for_perspective(perspective).opp_slots  # [0, 1, 2, 4, 5, 6, 7]
 
     # (older, newer, expected) — one cell per category. Gainer's identity
     # doesn't affect the encoding; only the older owner matters.

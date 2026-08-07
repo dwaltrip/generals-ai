@@ -5,7 +5,7 @@
 toolkit keys on it rather than recomputing per frame.
 
 This module is the intended shared home for the elim target logic that the probe
-/ fq consolidation converges on: today both the dataset's `encode_frame` and
+/ fq consolidation converges on: today both `bc.encode_frame` and
 `who_dies_next_baselines` build their targets here off the one precompute.
 """
 
@@ -15,13 +15,8 @@ from dataclasses import dataclass
 
 import numpy as np
 
-# `alive_mask` / `present_mask` are single-sourced in `bc.player_status` (shared
-# with the obs encoder); re-exported here so `elim_targets` callers keep their
-# import path. `ElimCtx` carries the `is_real`/`death_by_slot`/`removal_by_slot`
-# fields they read, so it satisfies the masks' structural types without an import
-# cycle.
 from training.bc.player_status import (
-    alive_mask,
+    make_alive_mask,
     precompute_player_status,
     present_mask,
 )
@@ -29,12 +24,29 @@ from training.bc.player_status import (
 
 __all__ = [
     "ElimCtx",
-    "alive_mask",
+    "make_elim_ctx",
     "next_death_target",
     "precompute_elim",
-    "present_mask",
     "time_bin_targets",
 ]
+
+
+def make_elim_ctx(
+    sim: dict[str, np.ndarray],
+    edges: tuple[int, ...] | None
+) -> ElimCtx:
+    edges_arr = np.asarray(edges, dtype=np.int64) if edges is not None else None
+    death, removal, is_real, sentinel = precompute_elim(sim, edges_arr)
+    # Keyword construction on purpose: the fields are all arrays/ints, so a
+    # positional swap against `precompute_elim`'s tuple order raises no type
+    # error — it would silently desync.
+    return ElimCtx(
+        edges=edges_arr,
+        death_by_slot=death,
+        removal_by_slot=removal,
+        is_real=is_real,
+        sentinel=sentinel,
+    )
 
 
 @dataclass(frozen=True)
@@ -86,9 +98,9 @@ def precompute_elim(
     sentinel and train as "present, never removed" on every frame.
 
     The per-slot event computation is single-sourced in
-    `bc.player_status.precompute_player_status` (shared with the obs encoder);
-    this wrapper sizes the elim-specific `sentinel` and returns the tuple the
-    `ElimCtx(edges, *precompute_elim(...))` construction expects.
+    `bc.player_status.precompute_player_status` (shared with the obs encoder).
+    This wrapper sizes the elim-specific `sentinel` and returns the tuple that
+    `make_elim_ctx` assembles into an `ElimCtx`.
     """
     T = sim["ownership"].shape[0]
     sentinel = T + (int(edges[-1]) if edges is not None else 1)
@@ -117,7 +129,7 @@ def time_bin_targets(
     assert elim.edges is not None, "time_bin targets require bin edges"
     raw = np.asarray(raw_order, dtype=np.intp)
     death_ch = elim.death_by_slot[raw]
-    alive = alive_mask(elim, raw_order, t)
+    alive = make_alive_mask(elim, raw_order, t)
     delta = death_ch - t
     bins = np.where(alive, np.digitize(delta, elim.edges, right=False), 0)
     return bins.astype(np.int64), alive

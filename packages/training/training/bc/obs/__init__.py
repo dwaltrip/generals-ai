@@ -3,8 +3,7 @@ Observation-tensor construction — the policy/value network's input at one
 (game, perspective, timestep) snapshot.
 
 The package owns three things, split across submodules:
-  - `geometry` — pure spatial / slot helpers: `canonical_slot_order` (the
-    Phase-1 perspective→slot-0 pin), Moore dilation, general padding, the
+  - `geometry` — pure spatial helpers: Moore dilation and the
     perspective-filtered board view.
   - `memory` — `MemoryState` + `init_memory` / `step_memory`: per-perspective
     running memory, advanced once per tick, plus the step-time dense-history
@@ -26,9 +25,7 @@ This `__init__` re-exports the package's public surface; importers use
 from training.bc.obs.build import build_obs
 from training.bc.obs.geometry import (
     PerspectiveView,
-    canonical_slot_order,
     make_perspective_view,
-    pad_initial_generals,
 )
 from training.bc.obs.memory import (
     MemoryState,
@@ -40,17 +37,16 @@ from training.bc.obs.memory import (
     step_memory,
 )
 
+
 __all__ = [
     "MemoryState",
     "PerspectiveView",
     "build_obs",
-    "canonical_slot_order",
     "compute_known_passable",
     "init_memory",
     "init_memory_common",
     "init_memory_live_fog_only",
     "make_perspective_view",
-    "pad_initial_generals",
     "scoreboard_row",
     "step_memory",
 ]
