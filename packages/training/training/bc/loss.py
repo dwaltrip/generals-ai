@@ -46,7 +46,7 @@ import torch.nn.functional as F
 from training.bc.actions import _PASS_FLAT_IDX
 from training.bc.aux_heads import AuxHeadSpec
 from training.bc.model import ModelOut, flatten_policy_logits
-from training.bc.soft_target import _soft_target_kernel
+from training.bc.soft_target import soft_target_kernel
 
 
 def _divide_safe(val: float, divisor: int) -> float:
@@ -115,11 +115,10 @@ class LossConfig:
         _assert_non_negative(self.next_elim_target_tau, "next_elim_target_tau")
 
         if self.elim_bin_weights is not None:
+            # coerce to immutable tuple (this dataclass is frozen)
             weights = tuple(float(w) for w in self.elim_bin_weights)
             if any(w < 0 for w in weights):
                 raise ValueError(f"elim_bin_weights must be non-negative, got {weights}")
-            # Coerce to tuple (a config JSON hands a list) so the frozen
-            # dataclass stays hashable and the @cache weight-tensor key is stable.
             object.__setattr__(self, "elim_bin_weights", weights)
 
     @classmethod
@@ -138,29 +137,31 @@ DEFAULT_LOSS_CFG = LossConfig()
 
 @dataclass(frozen=True)
 class LossOut:
-    """`bc_loss`'s return as a typed value object.
+    """
+    Container for computed loss values and companion metrics.
 
-    The core loss components are typed fields. The variant-gated aux-head metrics
-    and counts live in the untyped `aux` dict (TODO: think about improving that).
+    Aux head numbers are currently stored in a loose dict (`aux` field).
+    TODO: We should improve that. The variants make it a bit trickier.
     """
 
     total: torch.Tensor       # scalar, for .backward()
     policy: torch.Tensor      # policy CE, mean over non-pass frames
     value: torch.Tensor       # hard value CE (the reporting metric)
+
     # Soft value CE (trained objective). Identical to `value` at tau=0.
     value_soft: torch.Tensor
     pass_loss: torch.Tensor   # pass BCE. `pass_loss` as `pass` is a keyword.
     n_non_pass: torch.Tensor  # 0-d int, non-pass frame count
+
     # Variant-gated aux metrics + counts, keyed by each active spec's
     # `metric_keys` / `count_key`. Empty for non-aux runs.
     aux: dict[str, torch.Tensor] = field(default_factory=dict)
-    # The active aux specs this output carries — the same list as
-    # `ModelOut.active_aux_specs`, threaded through so consumers (the accumulator,
-    # the train-loop reporters) iterate exactly the built heads.
+    # This matches `ModelOut.active_aux_specs`. Used by loss accumulator,
+    # metric reporters in the training loop, etc.
     active_aux_specs: tuple[AuxHeadSpec, ...] = ()
 
     def __post_init__(self) -> None:
-        # Validate that `aux` carries every metric + count the active heads declare.
+        # Validation check: loose `aux` dict has all keys specified by active aux heads.
         for spec in self.active_aux_specs:
             for key in (*spec.metric_keys, spec.count_key):
                 assert key in self.aux, (
@@ -260,7 +261,7 @@ def bc_loss(
     # directly, so the soft path is one row-gather plus the same CE call.
     value_ce = F.cross_entropy(value_logits, value_target, reduction="mean")
     if cfg.value_target_tau > 0:
-        kernel = _soft_target_kernel(
+        kernel = soft_target_kernel(
             cfg.value_target_tau, value_logits.shape[1], value_logits.device
         )
         value_soft = F.cross_entropy(

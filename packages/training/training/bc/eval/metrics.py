@@ -16,7 +16,7 @@ from __future__ import annotations
 import torch
 import torch.nn.functional as F
 
-from training.bc.soft_target import _soft_target_kernel
+from training.bc.soft_target import soft_target_kernel
 
 
 class PolicyEntropyMeter:
@@ -117,7 +117,7 @@ class ElimMeter:
             return None
         p = self._hist.float() / self._hist.sum()      # hard marginal
         if self.tau > 0:
-            kernel = _soft_target_kernel(self.tau, self.n_bins, torch.device("cpu"))
+            kernel = soft_target_kernel(self.tau, self.n_bins, torch.device("cpu"))
             q = p @ kernel                             # smoothed marginal
         else:
             q = p

@@ -549,9 +549,9 @@ def test_soft_value_targets() -> None:
     # Kernel shape: rows are distributions; for an interior rank, the
     # adjacent-rank mass relative to the peak is exp(-1/τ) (the documented
     # τ-picking relationship).
-    from training.bc.loss import _soft_target_kernel
+    from training.bc.loss import soft_target_kernel
 
-    kernel = _soft_target_kernel(tau, 8, torch.device("cpu"))
+    kernel = soft_target_kernel(tau, 8, torch.device("cpu"))
     assert torch.allclose(kernel.sum(dim=1), torch.ones(8))
     row = kernel[3]
     adjacent_ratio = math.exp(-1 / tau)

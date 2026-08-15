@@ -16,7 +16,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from training.bc.aux_heads.base import AuxLossResult
-from training.bc.soft_target import _elim_weight_tensor, _soft_target_kernel
+from training.bc.soft_target import elim_weight_tensor, soft_target_kernel
 from training.bc.targets.elim_targets import ElimCtx, time_bin_targets
 
 
@@ -59,7 +59,7 @@ class TimeBinSpec:
         alive_mask = targets["alive_mask"]              # [B, 8] bool
         n_bins = elim_logits.shape[2]
         weight = (
-            _elim_weight_tensor(cfg.elim_bin_weights, elim_logits.device)
+            elim_weight_tensor(cfg.elim_bin_weights, elim_logits.device)
             if cfg.elim_bin_weights is not None
             else None
         )
@@ -74,7 +74,7 @@ class TimeBinSpec:
             logits_flat, target_flat, weight=weight, reduction="none"
         ).reshape(elim_logits.shape[:2])                         # [B, 8]
         if cfg.elim_target_tau > 0:
-            kernel = _soft_target_kernel(
+            kernel = soft_target_kernel(
                 cfg.elim_target_tau, n_bins, elim_logits.device
             )
             ce_soft = F.cross_entropy(
