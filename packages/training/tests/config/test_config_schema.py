@@ -18,8 +18,9 @@ from types import UnionType
 from typing import Any, Union, get_args, get_origin, get_type_hints
 
 from training.bc import config as bc_config
-from training.bc.config import CONFIG_VERSION, MIGRATIONS, serialize_config
+from training.bc.config import stored_block
 from training.bc.config.keyset import derive_keyset
+from training.bc.config.stored_block import CONFIG_VERSION, MIGRATIONS, serialize_config
 from training.bc.train_config import TrainConfig
 
 
@@ -82,7 +83,7 @@ def _check_hint(hint: Any, path: str, errors: list[str]) -> None:
 
 def _check_dataclass(cls: type, prefix: str, errors: list[str]) -> None:
     for name, hint in get_type_hints(cls).items():
-        if prefix == "" and name in bc_config._PATH_FIELDS:
+        if prefix == "" and name in stored_block._PATH_FIELDS:
             continue  # Path fields the serde stringifies
         _check_hint(hint, f"{prefix}{name}", errors)
 

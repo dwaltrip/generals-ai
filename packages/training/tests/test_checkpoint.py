@@ -17,7 +17,7 @@ from training.bc.checkpoint import (
     LEGACY_OBS_CFG,
     is_legacy_checkpoint,
 )
-from training.bc.config import CONFIG_VERSION
+from training.bc.config.stored_block import CONFIG_VERSION
 from training.bc.constants import H_PADDED, W_PADDED
 from training.bc.inference import BCModelHandle
 from training.bc.loss import LossConfig

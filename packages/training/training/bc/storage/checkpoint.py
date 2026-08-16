@@ -17,7 +17,7 @@ from typing import Any
 import torch
 
 from training.bc.checkpoint import arch_for_load
-from training.bc.config import resolve_config, serialize_config
+from training.bc.config.stored_block import resolve_config, serialize_config
 from training.bc.model_builder import ConfiguredModel, build_model
 from training.bc.model_config import ModelConfig
 from training.bc.storage.raw_checkpoint import RawCheckpoint

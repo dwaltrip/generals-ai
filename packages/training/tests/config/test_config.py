@@ -7,7 +7,7 @@ import json
 
 import pytest
 
-from training.bc.config import (
+from training.bc.config.stored_block import (
     CONFIG_VERSION,
     migrate,
     resolve_config,

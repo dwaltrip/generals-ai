@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from training.bc.config import StoredConfigBlock
+from training.bc.config.stored_block import StoredConfigBlock
 
 
 @dataclass(frozen=True)

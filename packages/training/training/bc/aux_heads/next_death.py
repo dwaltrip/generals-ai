@@ -124,7 +124,6 @@ class NextDeathSpec:
         nd_ce = torch.where(
             nd_target < 0, torch.full_like(nd_ce, float("nan")), nd_ce
         )
-        # `alive_mask` rides along too (the dataset emits it unconditionally):
         # offline tooling keyed on the alive domain stays joinable, and the
         # alive-vs-present gap (the surrender window) is itself analyzable.
         return {

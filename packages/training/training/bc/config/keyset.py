@@ -26,7 +26,7 @@ if __name__ == "__main__":
     import json
     from pathlib import Path
 
-    from training.bc.config import serialize_config
+    from training.bc.config.stored_block import serialize_config
     from training.bc.train_config import TrainConfig
 
     config = TrainConfig(manifest=Path("m"), intermediate=Path("i"), run_dir=Path("r"))
