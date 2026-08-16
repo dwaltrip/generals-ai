@@ -45,7 +45,16 @@ Soft, cautious carve-out for ML, training, and RL code:
 
 Note (2026-06-23, extended 2026-07-03): The guidelines above are new. We will likely need to calibrate them over time. One route for that: `scripts/one_offs/dump_prose_semi.py` is a prototype that flags semicolon-chain tells in comments and docstrings — a starting point if we later want a detector hook or a cleanup sweep.
 
+## Interfaces are provisional
+
+Much of this codebase was agent-authored with inconsistent design oversight, so an established interface often reflects "an LLM picked it and nothing challenged it yet", not a deliberate decision. Two working rules follow:
+
+- **Question the interface before designing around it.** When a design discussion hits an apparent intrinsic constraint or awkward trade-off, check whether it's really an artifact of some existing interface's current shape, and whether an interface change or cleanup would dissolve the problem. Surface that option instead of presenting the constraint as fixed.
+- **The verbose-docstring tell.** A *super*-verbose docstring often marks an interface that had less design oversight than usual. Treat its shape as especially open to change, not load-bearing.
+
 ## Sub-projects
+
+*NOTE: This section is quite stale (it was written very early in the project). A brief, modern (2026/8/15) inventory: Most code is carefully factored into packages in `packages/`. Training (`packages/training`) is the most substantial package, with `training.bc` as the headline sub-package. There are 3 older "sub-projects" or packages that are still in the project root: replay-collector, replay-parser, and sim-core.*
 
 ### replay-collector
 
