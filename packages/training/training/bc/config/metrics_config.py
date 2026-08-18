@@ -25,14 +25,14 @@ from typing import TYPE_CHECKING
 
 
 if TYPE_CHECKING:
-    from training.bc.train_config import TrainConfig
+    from training.bc.model_config import ModelConfig
 
 @dataclass(frozen=True, kw_only=True)
 class MetricsConfig:
     include_alive_mask: bool  # request the alive_mask column in samples/dumps
 
 
-def metrics_cfg_from(train_cfg: TrainConfig) -> MetricsConfig:
+def metrics_cfg_from(arch: ModelConfig) -> MetricsConfig:
     # TODO(config-bump): Move this derivation into MIGRATIONS[1] as the historical fill.
     # At that time, we should re-consider what an appropriate builder function may be.
-    return MetricsConfig(include_alive_mask=train_cfg.arch.elim_head_variant is not None)
+    return MetricsConfig(include_alive_mask=arch.elim_head_variant is not None)

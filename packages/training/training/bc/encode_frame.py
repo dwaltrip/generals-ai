@@ -4,7 +4,7 @@ import numpy as np
 import torch
 
 from training.bc import bfs
-from training.bc.aux_heads import spec_for
+from training.bc.aux_heads.registry import spec_for
 from training.bc.constants import H_PADDED, W_PADDED
 from training.bc.mask import build_mask
 from training.bc.obs import (

@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 
 import torch
 
-from training.bc.aux_heads import AuxHeadSpec
+from training.bc.aux_heads.base import AuxHeadSpec
 
 
 @dataclass(frozen=True)

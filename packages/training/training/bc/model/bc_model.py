@@ -23,7 +23,8 @@ from __future__ import annotations
 import torch
 import torch.nn as nn
 
-from training.bc.aux_heads import AuxHeadSpec, spec_for
+from training.bc.aux_heads.base import AuxHeadSpec
+from training.bc.aux_heads.registry import spec_for
 from training.bc.model.heads.pass_head import PassHead
 from training.bc.model.heads.policy import PolicyHead
 from training.bc.model.heads.value import ValueHead

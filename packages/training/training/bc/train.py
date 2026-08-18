@@ -34,7 +34,7 @@ import time
 import torch
 from torch.utils.data import DataLoader
 
-from training.bc.aux_heads import AuxHeadSpec
+from training.bc.aux_heads.base import AuxHeadSpec
 from training.bc.checkpoint import ckpt_name
 from training.bc.constants import H_PADDED, W_PADDED
 from training.bc.dataset import IterableDataset, assert_safe_loader, timed_collate

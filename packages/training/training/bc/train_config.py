@@ -20,7 +20,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from training.bc.aux_heads import REGISTRY
+from training.bc.aux_heads.registry import REGISTRY
 from training.bc.loss import LossConfig
 from training.bc.model_config import ModelConfig, build_model_cfg
 

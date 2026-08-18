@@ -44,7 +44,7 @@ import torch
 import torch.nn.functional as F
 
 from training.bc.actions import _PASS_FLAT_IDX
-from training.bc.aux_heads import AuxHeadSpec
+from training.bc.aux_heads.base import AuxHeadSpec
 from training.bc.model import ModelOut, flatten_policy_logits
 from training.bc.soft_target import soft_target_kernel
 

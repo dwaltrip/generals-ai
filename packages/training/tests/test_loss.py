@@ -21,7 +21,8 @@ import pytest
 import torch
 
 from training.bc.actions import _PASS_FLAT_IDX
-from training.bc.aux_heads import REGISTRY, AuxHeadSpec
+from training.bc.aux_heads.base import AuxHeadSpec
+from training.bc.aux_heads.registry import REGISTRY
 from training.bc.loss import LossAccumulator, LossConfig, LossOut, bc_loss
 from training.bc.model import ModelOut
 

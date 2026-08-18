@@ -9,8 +9,8 @@ from __future__ import annotations
 
 import pytest
 
-from training.bc.aux_heads import REGISTRY, spec_for
 from training.bc.aux_heads.base import AuxHeadSpec
+from training.bc.aux_heads.registry import REGISTRY, spec_for
 
 
 def test_registry_holds_the_two_variants():
