@@ -92,6 +92,8 @@ class AuxHeadSpec(Protocol):
         host_batch: dict[str, torch.Tensor],
     ) -> dict[str, torch.Tensor]: ...
 
+    # TODO: This should **NOT** have knowledge of a specific head.
+    #  `edges` is specific to the time-bin elim head.
     def build_eval_meter(self, cfg: Any, edges: tuple[int, ...] | None) -> Any | None: ...
 
     def eval_update(

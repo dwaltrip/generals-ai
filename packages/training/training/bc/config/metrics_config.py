@@ -35,4 +35,11 @@ class MetricsConfig:
 def metrics_cfg_from(arch: ModelConfig) -> MetricsConfig:
     # TODO(config-bump): Move this derivation into MIGRATIONS[1] as the historical fill.
     # At that time, we should re-consider what an appropriate builder function may be.
+    # Relatedly, we must resolve how `dump_records` for next-death expects `alive_mask`
+    # to be present. The temporary derivation below always emits it for next-death.
+    # Once MetricsConfig is in TrainConfig, an invalid next-death config is possible:
+    # include_alive_mask=False and dump_val_frames=True.
+    # Possible fixes: analysis requirements are made explicit by aux heads, or validate
+    # the spec where the capture is wired.
+    # In general, we should try to make "invalid" configs structurally impossible.
     return MetricsConfig(include_alive_mask=arch.elim_head_variant is not None)

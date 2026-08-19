@@ -60,13 +60,12 @@ from training.bc.storage.checkpoint import load_checkpoint
 @dataclass(frozen=True)
 class FrameNeeds:
     """What a probe task needs each frame to carry beyond the always-on obs +
-    valid_mask. Translated into an emit spec via `emit_partial_for`.
+    valid_mask. Translated 1:1 into an emit spec by `emit_partial_for`.
 
     - `elim_variant`: an elimination head's per-frame targets (`next_death` /
-      `time_bin`) — for tasks that predict elimination. Also yields the alive mask.
-    - `alive_mask`: the per-player alive field on its own, no elim targets — for
-      tasks that just need the softmax/regression domain (e.g. lowest-army,
-      army-regression).
+      `time_bin`) — for tasks that predict elimination.
+    - `alive_mask`: the per-player alive field — for tasks that need the
+      softmax/regression domain (e.g. lowest-army, army-regression).
     """
 
     elim_variant: str | None = None
@@ -74,13 +73,11 @@ class FrameNeeds:
 
 
 def emit_partial_for(needs: FrameNeeds) -> PartialEmitSpec:
-    """`FrameNeeds` → the emit partial. Variant tasks get the alive mask too
-    (it defines the target's domain)."""
     return PartialEmitSpec(
         targets=TargetsConfig(
             elim_variant=ElimHeadVariant.coerce(needs.elim_variant), elim_bin_edges=None
         ),
-        emit_alive_mask=needs.alive_mask or needs.elim_variant is not None,
+        emit_alive_mask=needs.alive_mask,
         attach_sim_frame=False,
     )
 

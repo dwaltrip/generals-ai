@@ -63,8 +63,7 @@ from training.analysis.fq.frame_table import (
     join_dump,
     select,
 )
-from training.bc.aux_heads.elim_head_meta import ElimHeadVariant
-from training.bc.config.targets_config import TargetsConfig
+from training.bc.config.targets_config import TARGETS_CFG_ELIM_NEXT_DEATH
 from training.bc.emit_spec import PartialEmitSpec
 from training.bc.splits import load_manifest, samples_for_split
 from training.bc.player_status import precompute_player_status
@@ -273,9 +272,7 @@ def build_spec() -> FrameTableSpec:
     return FrameTableSpec(
         name="family_a_victim",
         emit=PartialEmitSpec(
-            targets=TargetsConfig(
-                elim_variant=ElimHeadVariant.NEXT_DEATH, elim_bin_edges=None
-            ),
+            targets=TARGETS_CFG_ELIM_NEXT_DEATH,
             emit_alive_mask=True,
             attach_sim_frame=True,
         ),

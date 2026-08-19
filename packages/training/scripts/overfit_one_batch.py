@@ -26,9 +26,8 @@ import torch
 from torch.utils.data import DataLoader
 
 from settings import INTERMEDIATE_DIR
-from training.bc.config.targets_config import TargetsConfig
 from training.bc.dataset import IterableDataset
-from training.bc.emit_spec import EmitSpec
+from training.bc.emit_spec import base_emit_spec
 from training.bc.filters import eligible_perspectives
 from training.bc.loss import bc_loss
 from training.bc.model import BCModel
@@ -102,14 +101,9 @@ def main() -> None:
         for k in eligible_perspectives(sim_path, meta_path_for(sim_path), curated_names):
             samples.append((sim_path, k))
     print(f"scanned {len(sim_paths):,} games -> {len(samples):,} eligible (game, k) pairs")
-    spec = EmitSpec(
-        obs=OBS_CONFIG_DEFAULTS,
-        targets=TargetsConfig(elim_variant=None, elim_bin_edges=None),
-        emit_alive_mask=False,
-        emit_frame_info=False,
-        attach_sim_frame=False,
+    ds = IterableDataset(
+        samples=samples, seed=args.seed, spec=base_emit_spec(OBS_CONFIG_DEFAULTS)
     )
-    ds = IterableDataset(samples=samples, seed=args.seed, spec=spec)
     loader = DataLoader(ds, batch_size=args.batch_size)
     min_non_pass = int(args.batch_size * args.min_non_pass_frac)
     print(

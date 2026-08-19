@@ -28,8 +28,6 @@ def precompute_for(spec: EmitSpec, sim: dict[str, np.ndarray]) -> EmitPrecompute
     )
     player_status = None
     if spec.emit_alive_mask:
-        # One event scan per game: the elim precompute's status half also serves
-        # the mask (any sentinel past the last tick reads as alive).
         player_status = (
             elim.player_status if elim is not None else precompute_player_status(sim)
         )

@@ -32,6 +32,16 @@ class TargetsConfig:
             )
 
 
+TARGETS_CFG_NO_ELIM = TargetsConfig(
+    elim_variant=None,
+    elim_bin_edges=None,
+)
+TARGETS_CFG_ELIM_NEXT_DEATH = TargetsConfig(
+    elim_variant=ElimHeadVariant.NEXT_DEATH,
+    elim_bin_edges=None,
+)
+
+
 def targets_cfg_from(arch: ModelConfig) -> TargetsConfig:
     # TODO(config-bump): becomes a field read once the targets sub-config is stored.
     # At that time, we should re-consider what an appropriate builder function may be.

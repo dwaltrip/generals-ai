@@ -1,13 +1,6 @@
-"""Elimination-head targets: the per-game precompute and per-frame target builders.
+"""Elimination-head targets: per-game precompute and per-frame target builders"""
 
-`make_elim_ctx` resolves the per-game precompute once; its result (`ElimCtx`) is
-the natural per-game cache seam for downstream analysis — the fq toolkit keys on
-it rather than recomputing per frame.
-
-This module is the intended shared home for the elim target logic that the probe
-/ fq consolidation converges on: today both `bc.encode_frame` and
-`who_dies_next_baselines` build their targets here off the one precompute.
-"""
+# TODO: elim-head specific code should move to the aux_heads module.
 
 from __future__ import annotations
 

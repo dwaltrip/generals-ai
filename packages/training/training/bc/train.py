@@ -39,7 +39,7 @@ from training.bc.checkpoint import ckpt_name
 from training.bc.config.metrics_config import metrics_cfg_from
 from training.bc.constants import H_PADDED, W_PADDED
 from training.bc.dataset import IterableDataset, assert_safe_loader, timed_collate
-from training.bc.emit_spec import emit_spec_from
+from training.bc.emit_spec import EmitSpec, emit_spec_from
 from training.bc.eval import FrameRecordCapture, dump_path, run_val, save_dump
 from training.bc.loss import LossAccumulator, LossConfig, bc_loss
 from training.bc.model import BCModel
@@ -289,6 +289,7 @@ def build_dataloader(
     config: TrainConfig,
     train_samples: list[tuple[Path, int]],
     device: torch.device,
+    spec: EmitSpec,
 ) -> tuple[IterableDataset, DataLoader]:
     """Build the train `IterableDataset` + `DataLoader` from a config.
 
@@ -297,9 +298,6 @@ def build_dataloader(
     resolved dataloader settings — `pin_memory`/`prefetch_factor` are
     device-dependent, so the log shows resolved value vs. config request.
     """
-    spec = emit_spec_from(
-        config.arch, metrics_cfg_from(config.arch), emit_frame_info=False
-    )
     ds = IterableDataset(
         samples=train_samples,
         seed=config.seed,
@@ -413,7 +411,10 @@ def run_training(
             f"val_pairs={len(val_samples):,}"
         )
 
-        ds, loader = build_dataloader(config, train_samples, device)
+        emit_spec = emit_spec_from(
+            config.arch, metrics_cfg_from(config.arch), emit_frame_info=False
+        )
+        ds, loader = build_dataloader(config, train_samples, device, emit_spec)
 
         # --- Model + optimizer ---
         print(f"building model on {device} (value_head={config.arch.value_head_variant})")
@@ -456,7 +457,7 @@ def run_training(
             peak_tflops=peak_tflops,
             suffix=suffix,
         )
-        train_loop(state, config, loader, ds, val_samples, device, artifacts)
+        train_loop(state, config, loader, ds, val_samples, emit_spec, device, artifacts)
 
 
 def print_epoch_summary(
@@ -624,6 +625,7 @@ def train_loop(
     loader: DataLoader,
     dataset: IterableDataset,
     val_samples: list[tuple[Path, int]],
+    emit_spec: EmitSpec,
     device: torch.device,
     artifacts: RunArtifacts,
 ) -> None:
@@ -682,11 +684,7 @@ def train_loop(
                     num_workers=config.num_workers,
                     pin_memory=config.pin_memory,
                     prefetch_factor=config.prefetch_factor,
-                    spec=emit_spec_from(
-                        config.arch,
-                        metrics_cfg_from(config.arch),
-                        emit_frame_info=capture is not None,
-                    ),
+                    spec=emit_spec,
                     seed=config.seed,
                     amp_dtype=amp_dtype,
                     loss_cfg=loss_cfg,

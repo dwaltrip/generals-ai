@@ -184,7 +184,10 @@ def build_frame_table(
     # TODO(fq-emit-spec-partial-fix): honor False for these two flags. `Frame`
     # reads alive_mask and sim_frame unconditionally, and game-boundary
     # detection relies on the attached sim.
-    assert spec.emit.emit_alive_mask and spec.emit.attach_sim_frame
+    assert spec.emit.emit_alive_mask and spec.emit.attach_sim_frame, (
+        "fq requires emit_alive_mask and attach_sim_frame"
+        " — see TODO(fq-emit-spec-partial-fix) above"
+    )
     ds = IterableDataset(
         samples=samples,
         seed=0,

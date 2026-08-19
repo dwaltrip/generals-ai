@@ -49,6 +49,7 @@ Architectural notes:
 
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 import time
 
@@ -64,6 +65,14 @@ from training.bc.loss import (
     bc_loss,
 )
 from training.bc.model import BCModel, flatten_policy_logits
+
+
+def val_pass_emit_spec(train_spec: EmitSpec, is_capturing: bool) -> EmitSpec:
+    """The dataset emit spec for the val pass is derived from the train emit spec"""
+    return replace(
+        train_spec,
+        emit_frame_info=train_spec.emit_frame_info or is_capturing,
+    )
 
 
 def run_val(
@@ -86,16 +95,18 @@ def run_val(
     JSONL row. Top-1/top-3, pass_acc, pass_frac, and the action histograms
     are `None`-guarded against empty denominators (see module docstring).
 
+    `spec`: val pass should receive the same EmitSpec as used by training.
+
     `capture`, when given, records the per-frame stratified columns
     (`eval.dump`) alongside the summary reductions — same forward, no extra
-    pass. The caller owns writing the capture out, and builds `spec` with
-    `emit_frame_info=True` so the capture gets the provenance scalars.
+    pass. The caller owns writing the capture out.
 
     DataLoader knobs (`num_workers` / `pin_memory` / `prefetch_factor`)
     are caller-supplied — `run_val` mirrors the train loop's choices for
     apples-to-apples throughput numbers. `pin_memory=None` resolves to
     auto (True iff device is CUDA).
     """
+    spec = val_pass_emit_spec(spec, capture is not None)
     val_start = time.perf_counter()
     acc = LossAccumulator(loss_cfg, model.active_aux_specs)
     ent_meter = PolicyEntropyMeter()

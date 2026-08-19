@@ -22,8 +22,7 @@ from training.analysis.families.army_derivers import (
     ARMY_SIM,
 )
 from training.analysis.fq.frame_table import FrameTable, FrameTableSpec
-from training.bc.aux_heads.elim_head_meta import ElimHeadVariant
-from training.bc.config.targets_config import TargetsConfig
+from training.bc.config.targets_config import TARGETS_CFG_ELIM_NEXT_DEATH
 from training.bc.emit_spec import PartialEmitSpec
 
 
@@ -49,9 +48,7 @@ def _masked_army_totals(t: FrameTable, sentinel: float) -> np.ndarray:
 ELIM_HEAD_DEBUG = FrameTableSpec(
     name="elim_head_debug",
     emit=PartialEmitSpec(
-        targets=TargetsConfig(
-            elim_variant=ElimHeadVariant.NEXT_DEATH, elim_bin_edges=None
-        ),
+        targets=TARGETS_CFG_ELIM_NEXT_DEATH,
         emit_alive_mask=True,
         attach_sim_frame=True,
     ),

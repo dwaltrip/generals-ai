@@ -3,7 +3,7 @@
 This is intended to only own knobs that affect the output for a single frame.
 Orchestration params (e.g. shuffling, workers) are specifically not included.
 
-The builders below own the canonical derivation from TrainConfig.
+The builders below own the canonical derivation from the training config.
 """
 
 # NOTE: This is torch-free, as it is imported by the numpy-only golden tests.
@@ -18,7 +18,11 @@ from typing import TYPE_CHECKING
 
 from training.bc.aux_heads.elim_head_meta import does_elim_head_need_alive_mask
 from training.bc.config.metrics_config import MetricsConfig, metrics_cfg_from
-from training.bc.config.targets_config import TargetsConfig, targets_cfg_from
+from training.bc.config.targets_config import (
+    TARGETS_CFG_NO_ELIM,
+    TargetsConfig,
+    targets_cfg_from,
+)
 from training.bc.obs_config import ObsConfig
 
 
@@ -32,7 +36,8 @@ class EmitSpec:
     targets: TargetsConfig
     emit_alive_mask: bool
     emit_frame_info: bool
-    # NOTE: Only valid for analysis dataset walks (SimFrame is not collatable).
+    # NOTE: This is NOT safe for train dataloader (SimFrame is not collatable).
+    # Only valid for analysis dataset walks.
     attach_sim_frame: bool
 
 
@@ -53,6 +58,17 @@ class PartialEmitSpec:
             emit_frame_info=emit_frame_info,
             attach_sim_frame=self.attach_sim_frame,
         )
+
+
+def base_emit_spec(obs: ObsConfig) -> EmitSpec:
+    """Minimal spec: all optional flags off"""
+    return EmitSpec(
+        obs=obs,
+        targets=TARGETS_CFG_NO_ELIM,
+        emit_alive_mask=False,
+        emit_frame_info=False,
+        attach_sim_frame=False,
+    )
 
 
 def emit_spec_from(
