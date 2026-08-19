@@ -24,7 +24,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import Any
 
 import numpy as np
 
@@ -44,34 +44,6 @@ class PlayerStatusCtx:
     death_by_slot: np.ndarray    # [8] int64 — first DeathEvent tick; sentinel; -1 phantom
     removal_by_slot: np.ndarray  # [8] int64 — capture/neutralize tick; sentinel; -1 phantom
     sentinel: int
-
-
-class _HasDeathFields(Protocol):
-    """Structural type for `alive_mask` — anything carrying the death markers.
-
-    Both `PlayerStatusCtx` and `targets.elim_targets.ElimCtx` satisfy it, so the
-    one `alive_mask` implementation serves both without an import cycle. Declared
-    as read-only properties so frozen-dataclass fields match.
-    """
-
-    @property
-    def is_real(self) -> np.ndarray: ...
-    @property
-    def death_by_slot(self) -> np.ndarray: ...
-
-
-class _HasRemovalFields(Protocol):
-    """Structural type for `present_mask` — anything carrying the removal markers.
-
-    The `present_mask` analogue of `_HasDeathFields`: `PlayerStatusCtx` and
-    `ElimCtx` (which now threads `removal_by_slot` for the board-removal elim
-    target) both satisfy it, so the one `present_mask` serves both.
-    """
-
-    @property
-    def is_real(self) -> np.ndarray: ...
-    @property
-    def removal_by_slot(self) -> np.ndarray: ...
 
 
 def precompute_player_status(
@@ -116,7 +88,7 @@ def precompute_player_status(
     return PlayerStatusCtx(is_real, death_by_slot, removal_by_slot, int(sentinel))
 
 
-def make_alive_mask(ctx: _HasDeathFields, raw_order: list[int], t: int) -> np.ndarray:
+def make_alive_mask(ctx: PlayerStatusCtx, raw_order: list[int], t: int) -> np.ndarray:
     """Per-channel alive mask `[8]`: real and not yet eliminated.
 
     `death_by_slot >= t` — a player whose first DeathEvent fires at `t` reads
@@ -127,7 +99,7 @@ def make_alive_mask(ctx: _HasDeathFields, raw_order: list[int], t: int) -> np.nd
     return ctx.is_real[raw] & (ctx.death_by_slot[raw] >= t)
 
 
-def present_mask(ctx: _HasRemovalFields, raw_order: list[int], t: int) -> np.ndarray:
+def present_mask(ctx: PlayerStatusCtx, raw_order: list[int], t: int) -> np.ndarray:
     """Per-channel present mask `[8]`: real and still on the board.
 
     `removal_by_slot >= t` — the player's tiles are still on the board through

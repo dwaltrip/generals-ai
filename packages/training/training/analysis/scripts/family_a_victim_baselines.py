@@ -67,7 +67,7 @@ from training.bc.aux_heads.elim_head_meta import ElimHeadVariant
 from training.bc.config.targets_config import TargetsConfig
 from training.bc.emit_spec import PartialEmitSpec
 from training.bc.splits import load_manifest, samples_for_split
-from training.bc.targets.elim_targets import precompute_elim
+from training.bc.player_status import precompute_player_status
 
 
 DEFAULT_MANIFEST = TRAINING_DATA_DIR / "splits" / "cloud_24k_sub_5k.json"
@@ -250,9 +250,10 @@ def _death_tick_deriver():
     soft scorer excludes them with one comparison."""
 
     def prepare(sim: dict[str, np.ndarray]) -> np.ndarray:
-        death_by_slot, _removal, _is_real, sentinel = precompute_elim(sim, None)
-        real = (death_by_slot >= 0) & (death_by_slot < sentinel)
-        return np.where(real, death_by_slot, NO_DEATH)
+        status = precompute_player_status(sim)
+        death = status.death_by_slot
+        real = (death >= 0) & (death < status.sentinel)
+        return np.where(real, death, NO_DEATH)
 
     return per_game(
         "death_tick", True, prepare, lambda state, f: state[f.raw_order]

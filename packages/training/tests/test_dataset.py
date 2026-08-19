@@ -17,9 +17,8 @@ from training.bc.dataset import (
 from training.bc.filters import is_eligible
 from training.bc.player_status import make_alive_mask
 from training.bc.targets.elim_targets import (
-    ElimCtx,
+    make_elim_ctx,
     next_death_target,
-    precompute_elim,
     time_bin_targets,
 )
 
@@ -143,7 +142,7 @@ def test_walk_stops_at_elim_timestep(
     pytest.skip("no eliminated perspectives in fixture")
 
 
-_ELIM_EDGES = np.array([10, 20, 40, 80, 160, 320, 640], dtype=np.int64)
+_ELIM_EDGES = (10, 20, 40, 80, 160, 320, 640)
 
 
 def _synthetic_sim(
@@ -172,10 +171,10 @@ def _synthetic_sim(
 
 
 def test_elim_precompute_winner_vs_phantom() -> None:
-    """`precompute_elim` distinguishes the three slot kinds for both events:
+    """`make_elim_ctx` distinguishes the three slot kinds for both events:
     real-with-event slots get their death / removal timestep, the winner (real,
-    absent from both) the large finite sentinel, phantom slots (never played) the
-    -1 marker."""
+    absent from both) the large finite elim-sized sentinel, phantom slots (never
+    played) the -1 marker."""
     # 4-player game: slots 0..3 real, 4..7 phantom. Slot 0 wins; 1/2/3 die.
     # Removals: slot 1 surrenders@10 then removed@12 (surrender window); slot 2
     # captured-while-alive (death==removal@20); slot 3 surrenders@30, removed@33.
@@ -185,12 +184,13 @@ def test_elim_precompute_winner_vs_phantom() -> None:
         T=40,
         removals=[(12, 1), (20, 2), (33, 3)],
     )
-    death_by_slot, removal_by_slot, is_real, sentinel = precompute_elim(sim, _ELIM_EDGES)
+    status = make_elim_ctx(sim, _ELIM_EDGES).player_status
 
+    sentinel = status.sentinel
     assert sentinel == 40 + 640
-    assert list(death_by_slot) == [sentinel, 10, 20, 30, -1, -1, -1, -1]
-    assert list(removal_by_slot) == [sentinel, 12, 20, 33, -1, -1, -1, -1]
-    assert list(is_real) == [True, True, True, True, False, False, False, False]
+    assert list(status.death_by_slot) == [sentinel, 10, 20, 30, -1, -1, -1, -1]
+    assert list(status.removal_by_slot) == [sentinel, 12, 20, 33, -1, -1, -1, -1]
+    assert list(status.is_real) == [True, True, True, True, False, False, False, False]
 
 
 def test_elim_targets_masks_phantom_and_dead_channels() -> None:
@@ -199,7 +199,7 @@ def test_elim_targets_masks_phantom_and_dead_channels() -> None:
     eliminated channel is masked too — only currently-alive real players carry a
     target."""
     sim = _synthetic_sim([0, 1, 2, 3], [(10, 1), (20, 2), (30, 3)], T=40)
-    elim = ElimCtx(_ELIM_EDGES, *precompute_elim(sim, _ELIM_EDGES))
+    elim = make_elim_ctx(sim, _ELIM_EDGES)
     # Perspective = slot 0 → canonical channel order [0,1,2,3,4,5,6,7].
     raw_order = [0, 1, 2, 3, 4, 5, 6, 7]
 
@@ -228,7 +228,7 @@ def test_next_death_target_picks_soonest_and_masks_winner_tail() -> None:
         T=40,
         removals=[(10, 1), (20, 2), (30, 3)],
     )
-    elim = ElimCtx(_ELIM_EDGES, *precompute_elim(sim, _ELIM_EDGES))
+    elim = make_elim_ctx(sim, _ELIM_EDGES)
     raw_order = [0, 1, 2, 3, 4, 5, 6, 7]
 
     # At t=5: all four real players present; soonest removal is slot 1 at t=10.
@@ -237,7 +237,7 @@ def test_next_death_target_picks_soonest_and_masks_winner_tail() -> None:
     assert list(present) == [True, True, True, True, False, False, False, False]
     # Per-channel horizon = removal − t over the present slots (winner = sentinel−t).
     assert list(removal_dt[1:4]) == [5, 15, 25]
-    assert removal_dt[0] == elim.sentinel - 5
+    assert removal_dt[0] == elim.player_status.sentinel - 5
 
     # At t=15 (slot 1 removed): next victim is slot 2 (removal 20), dt=5.
     nxt2, present2, dt2, _ = next_death_target(elim, raw_order, t=15)
@@ -262,7 +262,7 @@ def test_next_death_target_uses_removal_over_the_present_domain() -> None:
         T=40,
         removals=[(12, 1), (20, 2), (30, 3)],
     )
-    elim = ElimCtx(_ELIM_EDGES, *precompute_elim(sim, _ELIM_EDGES))
+    elim = make_elim_ctx(sim, _ELIM_EDGES)
     raw_order = [0, 1, 2, 3, 4, 5, 6, 7]
 
     # At t=8 slot 1 is in its surrender window: ~alive but still present, and the
@@ -270,7 +270,7 @@ def test_next_death_target_uses_removal_over_the_present_domain() -> None:
     # alive-domain target would have excluded it and mis-named slot 2.
     nxt, present, dt, _ = next_death_target(elim, raw_order, t=8)
     assert nxt == 1 and dt == 4
-    assert present[1] and not make_alive_mask(elim, raw_order, 8)[1]
+    assert present[1] and not make_alive_mask(elim.player_status, raw_order, 8)[1]
 
 
 def test_next_death_target_ties_resolve_to_lowest_channel() -> None:
@@ -283,7 +283,7 @@ def test_next_death_target_ties_resolve_to_lowest_channel() -> None:
         T=40,
         removals=[(10, 1), (20, 2), (20, 3)],
     )
-    elim = ElimCtx(_ELIM_EDGES, *precompute_elim(sim, _ELIM_EDGES))
+    elim = make_elim_ctx(sim, _ELIM_EDGES)
     raw_order = [0, 1, 2, 3, 4, 5, 6, 7]
     nxt, _present, dt, _ = next_death_target(elim, raw_order, t=15)
     assert nxt == 2 and dt == 5   # channel 2 over channel 3

@@ -1,8 +1,8 @@
 """Elimination-head targets: the per-game precompute and per-frame target builders.
 
-`precompute_elim` resolves the winner-vs-phantom split once per game; its result
-(`ElimCtx`) is the natural per-game cache seam for downstream analysis — the fq
-toolkit keys on it rather than recomputing per frame.
+`make_elim_ctx` resolves the per-game precompute once; its result (`ElimCtx`) is
+the natural per-game cache seam for downstream analysis — the fq toolkit keys on
+it rather than recomputing per frame.
 
 This module is the intended shared home for the elim target logic that the probe
 / fq consolidation converges on: today both `bc.encode_frame` and
@@ -16,6 +16,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from training.bc.player_status import (
+    PlayerStatusCtx,
     make_alive_mask,
     precompute_player_status,
     present_mask,
@@ -26,9 +27,25 @@ __all__ = [
     "ElimCtx",
     "make_elim_ctx",
     "next_death_target",
-    "precompute_elim",
     "time_bin_targets",
 ]
+
+
+@dataclass(frozen=True)
+class ElimCtx:
+    """Per-game precompute backing the elimination heads' targets: the shared
+    player-status precompute, with an elim-sized sentinel, plus the time_bin
+    head's bin edges.
+
+    The two status events back different elim targets: `death_by_slot` (first
+    DeathEvent — surrender or capture) drives the time_bin head's `alive` domain;
+    `removal_by_slot` (board-removal — capture/neutralize that clears the slot's
+    tiles) drives the next_death head's `present` domain. See `bc.player_status`
+    for the death-vs-removal distinction (the surrender window is the gap).
+    """
+
+    player_status: PlayerStatusCtx
+    edges: np.ndarray | None  # [n_bins - 1] strictly-increasing bin edges; None for next_death
 
 
 def make_elim_ctx(
@@ -36,80 +53,15 @@ def make_elim_ctx(
     edges: tuple[int, ...] | None
 ) -> ElimCtx:
     edges_arr = np.asarray(edges, dtype=np.int64) if edges is not None else None
-    death, removal, is_real, sentinel = precompute_elim(sim, edges_arr)
-    # Keyword construction on purpose: the fields are all arrays/ints, so a
-    # positional swap against `precompute_elim`'s tuple order raises no type
-    # error — it would silently desync.
-    return ElimCtx(
-        edges=edges_arr,
-        death_by_slot=death,
-        removal_by_slot=removal,
-        is_real=is_real,
-        sentinel=sentinel,
-    )
-
-
-@dataclass(frozen=True)
-class ElimCtx:
-    """Per-game precompute backing the elimination heads' targets.
-
-    `edges` is the dataset-constant bin-edge array (time_bin head only);
-    `death_by_slot` / `removal_by_slot` / `is_real` are per-game [8]-arrays
-    indexed by *raw* slot id; `sentinel` is the winner's stand-in event tick.
-    Built once per game in `_walk` (when an elim head is enabled) and threaded
-    into every `encode_frame` call for that game.
-
-    The two events back different elim targets: `death_by_slot` (first DeathEvent
-    — surrender or capture) drives the time_bin head's `alive` domain;
-    `removal_by_slot` (board-removal — capture/neutralize that clears the slot's
-    tiles) drives the next_death head's `present` domain. See `bc.player_status`
-    for the death-vs-removal distinction (the surrender window is the gap).
-    """
-
-    edges: np.ndarray | None     # [n_bins - 1] strictly-increasing bin edges; None for next_death
-    death_by_slot: np.ndarray    # [8] int64 — first DeathEvent tick; winner sentinel; -1 = phantom
-    removal_by_slot: np.ndarray  # [8] int64 — board-removal tick; winner sentinel; -1 = phantom
-    is_real: np.ndarray          # [8] bool — slot actually played this game
-    sentinel: int                # winner's stand-in event tick (> any real event)
-
-
-def precompute_elim(
-    sim: dict[str, np.ndarray], edges: np.ndarray | None
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, int]:
-    """Per-game `(death_by_slot, removal_by_slot, is_real, sentinel)` for the elim targets.
-
-    `death_by_slot[s]` is slot `s`'s first-DeathEvent timestep and
-    `removal_by_slot[s]` its board-removal timestep — each the large finite
-    winner `sentinel` (integer-typed, not `np.inf`) for a real slot with no such
-    event, or `-1` for a phantom slot that never played. `is_real[s]` marks the
-    slots present at t=0. The winner-vs-phantom split is what `real_slots`
-    resolves: the winner is real-and-absent-from-events, a phantom is not-real —
-    and only the latter must be masked out.
-
-    The sentinel only has to exceed every real event tick (real events are ≤
-    T−1) so the winner never wins the soonest-event argmin unless it is the lone
-    survivor. For the time_bin head it is additionally sized as `T + max_edge`
-    so the winner's `Δ = sentinel − t` lands in the top "never" bin; next_death
-    passes no edges and uses `T + 1`.
-
-    The obs encoder always runs at P=8 and `opp_slots` always yields 7 ids from
-    `range(8)`, but FFA games can start with <8 players (~7% of the corpus, see
-    `6.13-6`). Without `is_real`, those phantom channels would inherit the winner
-    sentinel and train as "present, never removed" on every frame.
-
-    The per-slot event computation is single-sourced in
-    `bc.player_status.precompute_player_status` (shared with the obs encoder).
-    This wrapper sizes the elim-specific `sentinel` and returns the tuple that
-    `make_elim_ctx` assembles into an `ElimCtx`.
-    """
+    # Sentinel sizing: any value past the last real event tick keeps the winner
+    # out of the soonest-event argmin, but the time_bin head also digitizes the
+    # winner's Δ = sentinel − t, so it needs T + max_edge to land the winner in
+    # the top "never" bin. next_death passes no edges and gets T + 1.
     T = sim["ownership"].shape[0]
-    sentinel = T + (int(edges[-1]) if edges is not None else 1)
-    status = precompute_player_status(sim, sentinel=sentinel)
-    return (
-        status.death_by_slot,
-        status.removal_by_slot,
-        status.is_real,
-        status.sentinel,
+    sentinel = T + (int(edges_arr[-1]) if edges_arr is not None else 1)
+    return ElimCtx(
+        player_status=precompute_player_status(sim, sentinel=sentinel),
+        edges=edges_arr,
     )
 
 
@@ -127,9 +79,10 @@ def time_bin_targets(
     bin 0, masked out by `alive`.
     """
     assert elim.edges is not None, "time_bin targets require bin edges"
+    status = elim.player_status
     raw = np.asarray(raw_order, dtype=np.intp)
-    death_ch = elim.death_by_slot[raw]
-    alive = make_alive_mask(elim, raw_order, t)
+    death_ch = status.death_by_slot[raw]
+    alive = make_alive_mask(status, raw_order, t)
     delta = death_ch - t
     bins = np.where(alive, np.digitize(delta, elim.edges, right=False), 0)
     return bins.astype(np.int64), alive
@@ -168,14 +121,15 @@ def next_death_target(
     deterministic convention; the soft target instead splits mass evenly across a
     tie.
     """
+    status = elim.player_status
     raw = np.asarray(raw_order, dtype=np.intp)
-    removal_ch = elim.removal_by_slot[raw]                   # [8]
-    present = present_mask(elim, raw_order, t)               # [8]
+    removal_ch = status.removal_by_slot[raw]                 # [8]
+    present = present_mask(status, raw_order, t)             # [8]
     removal_dt = (removal_ch - t).astype(np.int64)           # [8] per-channel horizon
     # Soonest removal among present channels; non-present channels can't be the victim.
     cand = np.where(present, removal_ch, np.iinfo(np.int64).max)
     nxt = int(cand.argmin())
-    if cand[nxt] >= elim.sentinel:
+    if cand[nxt] >= status.sentinel:
         # The soonest "removal" is the winner sentinel (or no present channel) →
         # no real next removal from here. Mask the frame out.
         return -1, present, -1, removal_dt

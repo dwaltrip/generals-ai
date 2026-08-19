@@ -13,10 +13,10 @@ from training.bc.obs import (
     build_obs,
 )
 from training.bc.player_status import make_alive_mask
+from training.bc.precompute import EmitPrecompute
 from training.bc.sample import FrameMeta, TrainingSample
 from training.bc.sim_types import PerspectiveMeta, SimFrame
 from training.bc.targets.core_targets import policy_pass_target, value_target
-from training.bc.targets.elim_targets import ElimCtx
 from training.shared.timing import timer
 
 
@@ -29,7 +29,7 @@ def encode_frame(
     state: MemoryState,
     bfs_cache: bfs.BFSCache,
     spec: EmitSpec,
-    elim_ctx: ElimCtx | None = None,
+    pre: EmitPrecompute,
 ) -> TrainingSample:
     """
     Training samples are single ticks from one player's perspective in a game.
@@ -40,9 +40,6 @@ def encode_frame(
         - `build_mask` (move legality, stateless)
         - `policy_pass_target` (the action targets, used by the policy and pass heads)
         - `value_target`
-
-    `elim_ctx` is the game-level precompute for the alive mask and elim-head
-    targets; required when the spec asks for either.
 
     For sequentially encoded frames (e.g. during a dataset walk), encode_frame
     assumes that `step_memory` has already been called for this `t`.
@@ -69,14 +66,16 @@ def encode_frame(
 
         alive_mask = None
         aux_head_targets = None
-        if spec.emit_alive_mask or spec.targets.elim_variant is not None:
-            assert elim_ctx is not None
-            raw_order = list(perspective.slot_order.order)
-            if spec.emit_alive_mask:
-                alive_mask = torch.from_numpy(make_alive_mask(elim_ctx, raw_order, t))
-            aux_spec = spec_for(spec.targets.elim_variant)
-            if aux_spec is not None:
-                aux_head_targets = aux_spec.encode_targets(elim_ctx, raw_order, t)
+        raw_order = list(perspective.slot_order.order)
+        if spec.emit_alive_mask:
+            assert pre.player_status is not None
+            alive_mask = torch.from_numpy(
+                make_alive_mask(pre.player_status, raw_order, t)
+            )
+        aux_spec = spec_for(spec.targets.elim_variant)
+        if aux_spec is not None:
+            assert pre.elim is not None
+            aux_head_targets = aux_spec.encode_targets(pre.elim, raw_order, t)
 
         sample = TrainingSample(
             obs=torch.from_numpy(obs_np),

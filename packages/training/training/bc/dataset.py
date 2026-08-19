@@ -38,9 +38,9 @@ from training.bc import bfs
 from training.bc.emit_spec import EmitSpec
 from training.bc.encode_frame import encode_frame
 from training.bc.obs import init_memory, step_memory
+from training.bc.precompute import precompute_for
 from training.bc.sample import FrameMeta
 from training.bc.sim_types import GameMeta
-from training.bc.targets.elim_targets import make_elim_ctx
 from training.bc.visibility import compute_visibility
 from training.shared.timing import timer
 
@@ -187,11 +187,6 @@ class IterableDataset(TorchIterableDataset):
         self._shuffle_buffer_size = shuffle_buffer_size
         self._epoch = 0
         self._prof_sink = prof_sink
-        # The per-game elim precompute serves both the variant targets and the
-        # standalone alive mask.
-        self._needs_elim_ctx = (
-            spec.emit_alive_mask or spec.targets.elim_variant is not None
-        )
         # Index of each (path, k) pair in the caller's `samples` order, so
         # `sample_idx` survives the group/epoch shuffles and lets offline
         # consumers join frames back to the manifest entry they came from.
@@ -310,9 +305,7 @@ class IterableDataset(TorchIterableDataset):
 
             game_meta = GameMeta.from_npz(sim, meta)
 
-            elim_ctx = None
-            if self._needs_elim_ctx:
-                elim_ctx = make_elim_ctx(sim, self._spec.targets.elim_bin_edges)
+            pre = precompute_for(self._spec, sim)
 
             for k in g.perspective_ks:
                 perspective = game_meta.perspectives[k]
@@ -361,7 +354,7 @@ class IterableDataset(TorchIterableDataset):
                             state,
                             bfs_cache,
                             self._spec,
-                            elim_ctx=elim_ctx,
+                            pre,
                         )
 
                     # Timer: measures per-sample overhead plus (per batch boundary) collate,
