@@ -6,6 +6,7 @@ import torch
 from training.bc import bfs
 from training.bc.aux_heads.registry import spec_for
 from training.bc.constants import H_PADDED, W_PADDED
+from training.bc.emit_spec import EmitSpec
 from training.bc.mask import build_mask
 from training.bc.obs import (
     MemoryState,
@@ -27,9 +28,8 @@ def encode_frame(
     vis: np.ndarray,
     state: MemoryState,
     bfs_cache: bfs.BFSCache,
+    spec: EmitSpec,
     elim_ctx: ElimCtx | None = None,
-    elim_variant: str | None = None,
-    unsafe_attach_sim_frame: bool = False,
 ) -> TrainingSample:
     """
     Training samples are single ticks from one player's perspective in a game.
@@ -41,8 +41,8 @@ def encode_frame(
         - `policy_pass_target` (the action targets, used by the policy and pass heads)
         - `value_target`
 
-    elim_ctx: game-level precompute for elim-head targets.
-    elim_variant: selects the elim head ("time_bin", "next_death", or None).
+    `elim_ctx` is the game-level precompute for the alive mask and elim-head
+    targets; required when the spec asks for either.
 
     For sequentially encoded frames (e.g. during a dataset walk), encode_frame
     assumes that `step_memory` has already been called for this `t`.
@@ -69,14 +69,14 @@ def encode_frame(
 
         alive_mask = None
         aux_head_targets = None
-        if elim_ctx is not None:
+        if spec.emit_alive_mask or spec.targets.elim_variant is not None:
+            assert elim_ctx is not None
             raw_order = list(perspective.slot_order.order)
-            # Aliveness is a general property. Used by both elim-head variants and
-            # by offline analysis code (via `emit_alive_mask`).
-            alive_mask = torch.from_numpy(make_alive_mask(elim_ctx, raw_order, t))
-            spec = spec_for(elim_variant)
-            if spec is not None:
-                aux_head_targets = spec.encode_targets(elim_ctx, raw_order, t)
+            if spec.emit_alive_mask:
+                alive_mask = torch.from_numpy(make_alive_mask(elim_ctx, raw_order, t))
+            aux_spec = spec_for(spec.targets.elim_variant)
+            if aux_spec is not None:
+                aux_head_targets = aux_spec.encode_targets(elim_ctx, raw_order, t)
 
         sample = TrainingSample(
             obs=torch.from_numpy(obs_np),
@@ -86,7 +86,7 @@ def encode_frame(
             is_pass=torch.tensor(is_pass, dtype=torch.bool),
             value_target=torch.tensor(value_target(perspective.placement), dtype=torch.int64),
             frame_meta=frame_meta,
-            sim_frame=(sim_frame if unsafe_attach_sim_frame else None),
+            sim_frame=(sim_frame if spec.attach_sim_frame else None),
             alive_mask=alive_mask,
             aux_head_targets=aux_head_targets,
         )

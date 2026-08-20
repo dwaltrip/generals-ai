@@ -20,6 +20,7 @@ import numpy as np
 
 from training.analysis.fq.derivers import Deriver, Frame
 from training.bc.dataset import IterableDataset
+from training.bc.emit_spec import PartialEmitSpec
 from training.bc.obs_config import OBS_CONFIG_DEFAULTS, ObsConfig
 from training.bc.sim_types import SimFrame
 
@@ -53,7 +54,7 @@ class FrameTableSpec:
     """
 
     name: str
-    dataset_kwargs: dict          # raw IterableDataset kwargs
+    emit: PartialEmitSpec         # obs + frame_info are bound by build_frame_table
     emit_cols: dict[str, str]     # dataset-emitted field -> column name
     derivers: list[Deriver]       # columns computed from the Frame
     derived_cols: dict[str, Callable[[FrameTable], np.ndarray]] = field(default_factory=dict)
@@ -180,11 +181,15 @@ def build_frame_table(
     if max_games is not None:
         samples = cap_by_games(samples, max_games)
     subset_to_full = np.array([full_pos[(p, k)] for p, k in samples], dtype=np.int64)
-    assert "shuffle_buffer_size" not in spec.dataset_kwargs, (
-        "build_frame_table fixes shuffle_buffer_size=0; the spec must not set it"
-    )
+    # TODO(fq-emit-spec-partial-fix): honor False for these two flags. `Frame`
+    # reads alive_mask and sim_frame unconditionally, and game-boundary
+    # detection relies on the attached sim.
+    assert spec.emit.emit_alive_mask and spec.emit.attach_sim_frame
     ds = IterableDataset(
-        samples=samples, seed=0, obs_cfg=obs_cfg, shuffle_buffer_size=0, **spec.dataset_kwargs
+        samples=samples,
+        seed=0,
+        spec=spec.emit.to_spec(obs_cfg, emit_frame_info=True),
+        shuffle_buffer_size=0,
     )
 
     cols: dict[str, list] = defaultdict(list)

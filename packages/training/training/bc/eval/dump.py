@@ -34,8 +34,8 @@ import torch.nn.functional as F
 from torch.utils.data import DataLoader
 
 from training.bc.dataset import IterableDataset, assert_safe_loader
+from training.bc.emit_spec import EmitSpec, emit_spec_for_model
 from training.bc.model import BCModel, ModelOut, flatten_policy_logits
-from training.bc.obs_config import ObsConfig
 from training.shared.device import dataloader_kwargs, move_batch, obs_for_model
 
 
@@ -46,7 +46,7 @@ class FrameRecordCapture:
     column dict for `save_dump`. Columns live on CPU as plain numpy arrays
     (~100 B/frame), so a full cloud-scale val pass stays in the tens of MB.
 
-    Requires the dataset to be built with `include_frame_info=True` — the
+    Requires the dataset to be built with `emit_frame_info=True` — the
     provenance scalars come from the batch, not the model.
 
     Each batch's `ModelOut` carries its own `aux_specs`, so `add_batch` records
@@ -164,10 +164,7 @@ def iter_val_forward(
     *,
     batch_size: int,
     num_workers: int,
-    obs_cfg: ObsConfig,
-    include_frame_info: bool,
-    elim_bin_edges: tuple[int, ...] | None,
-    elim_head_variant: str | None = None,
+    spec: EmitSpec,
     seed: int = 0,
     amp_dtype: torch.dtype | None = None,
     pin_memory: bool | None = None,
@@ -185,14 +182,7 @@ def iter_val_forward(
     re-enters it itself; that re-entry is numerically a no-op since the loss
     reuses no model weights (autocast's weight-cast cache is irrelevant to it).
     """
-    ds = IterableDataset(
-        samples=val_samples,
-        seed=seed,
-        obs_cfg=obs_cfg,
-        include_frame_info=include_frame_info,
-        elim_bin_edges=elim_bin_edges,
-        elim_head_variant=elim_head_variant,
-    )
+    ds = IterableDataset(samples=val_samples, seed=seed, spec=spec)
     loader = DataLoader(
         ds,
         batch_size=batch_size,
@@ -239,8 +229,6 @@ def capture_val_frames(
     walked sample list back to full-val-split positions for `finalize`.
     """
     capture = FrameRecordCapture()
-    elim_on = model.cfg.elim_head_variant is not None
-    elim_bin_edges = model.cfg.elim_bin_edges if elim_on else None
     start = time.perf_counter()
     last_report = start
     for host_batch, moved, out in iter_val_forward(
@@ -249,10 +237,7 @@ def capture_val_frames(
         device,
         batch_size=batch_size,
         num_workers=num_workers,
-        obs_cfg=model.cfg.obs,
-        include_frame_info=True,
-        elim_bin_edges=elim_bin_edges,
-        elim_head_variant=model.cfg.elim_head_variant,
+        spec=emit_spec_for_model(model.cfg, emit_frame_info=True),
     ):
         capture.add_batch(host_batch, moved, out)
         if progress_every_sec is not None:

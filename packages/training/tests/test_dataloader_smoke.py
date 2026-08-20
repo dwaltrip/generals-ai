@@ -37,11 +37,12 @@ FLAT_ACTION_COUNT = H_PADDED * W_PADDED * 8
 def test_dataloader_pipeline_smoke(
     samples: list[tuple[Path, int]],
     shuffle_buffer_size: int,
+    make_emit_spec,
 ) -> None:
     ds = IterableDataset(
         samples=samples,
         seed=0,
-        obs_cfg=OBS_CONFIG_DEFAULTS,
+        spec=make_emit_spec(),
         shuffle_buffer_size=shuffle_buffer_size,
     )
     loader = DataLoader(ds, batch_size=BATCH_SIZE)
@@ -116,7 +117,9 @@ def test_dataloader_pipeline_smoke(
     assert out.value_logits.shape == (BATCH_SIZE, 8)
 
 
-def test_obs_fp16_matches_fp32_downcast(samples: list[tuple[Path, int]]) -> None:
+def test_obs_fp16_matches_fp32_downcast(
+    samples: list[tuple[Path, int]], make_emit_spec
+) -> None:
     """fp16-built obs is bit-identical to the fp32 build cast to fp16 — the
     invariant behind "fp16 obs is free under autocast" (docs/2026-06/6.06-7).
 
@@ -131,11 +134,11 @@ def test_obs_fp16_matches_fp32_downcast(samples: list[tuple[Path, int]]) -> None
     """
     ds32 = IterableDataset(
         samples=samples, seed=0, shuffle_buffer_size=0,
-        obs_cfg=replace(OBS_CONFIG_DEFAULTS, obs_dtype="fp32"),
+        spec=make_emit_spec(obs=replace(OBS_CONFIG_DEFAULTS, obs_dtype="fp32")),
     )
     ds16 = IterableDataset(
         samples=samples, seed=0, shuffle_buffer_size=0,
-        obs_cfg=replace(OBS_CONFIG_DEFAULTS, obs_dtype="fp16"),
+        spec=make_emit_spec(obs=replace(OBS_CONFIG_DEFAULTS, obs_dtype="fp16")),
     )
     loader32 = DataLoader(ds32, batch_size=BATCH_SIZE)
     loader16 = DataLoader(ds16, batch_size=BATCH_SIZE)
@@ -150,7 +153,9 @@ def test_obs_fp16_matches_fp32_downcast(samples: list[tuple[Path, int]]) -> None
     assert checked > 0, "no frames compared — corpus walk produced nothing"
 
 
-def test_player_status_channels_are_append_only(samples: list[tuple[Path, int]]) -> None:
+def test_player_status_channels_are_append_only(
+    samples: list[tuple[Path, int]], make_emit_spec
+) -> None:
     """The player-status group appends 14 channels and leaves the base obs
     byte-identical — the guarantee that a pre-status checkpoint (status off)
     reconstructs the original obs and runs unchanged. Frame-aligned via the
@@ -162,11 +167,15 @@ def test_player_status_channels_are_append_only(samples: list[tuple[Path, int]])
     assert on_cfg.obs_channels == n_base + 14
 
     loader_off = DataLoader(
-        IterableDataset(samples=samples, seed=0, shuffle_buffer_size=0, obs_cfg=off_cfg),
+        IterableDataset(
+            samples=samples, seed=0, shuffle_buffer_size=0, spec=make_emit_spec(obs=off_cfg)
+        ),
         batch_size=BATCH_SIZE,
     )
     loader_on = DataLoader(
-        IterableDataset(samples=samples, seed=0, shuffle_buffer_size=0, obs_cfg=on_cfg),
+        IterableDataset(
+            samples=samples, seed=0, shuffle_buffer_size=0, spec=make_emit_spec(obs=on_cfg)
+        ),
         batch_size=BATCH_SIZE,
     )
 

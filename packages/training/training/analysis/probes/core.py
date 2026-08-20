@@ -43,7 +43,10 @@ from typing import Protocol
 import torch
 import torch.nn as nn
 
+from training.bc.aux_heads.elim_head_meta import ElimHeadVariant
+from training.bc.config.targets_config import TargetsConfig
 from training.bc.dataset import IterableDataset
+from training.bc.emit_spec import PartialEmitSpec
 from training.bc.model.bc_model import BCModel
 from training.bc.obs_config import ObsConfig
 from training.bc.storage.checkpoint import load_checkpoint
@@ -57,8 +60,7 @@ from training.bc.storage.checkpoint import load_checkpoint
 @dataclass(frozen=True)
 class FrameNeeds:
     """What a probe task needs each frame to carry beyond the always-on obs +
-    valid_mask. A declarative contract the framework translates into dataset
-    kwargs via `dataset_args_for`.
+    valid_mask. Translated into an emit spec via `emit_partial_for`.
 
     - `elim_variant`: an elimination head's per-frame targets (`next_death` /
       `time_bin`) — for tasks that predict elimination. Also yields the alive mask.
@@ -71,14 +73,16 @@ class FrameNeeds:
     alive_mask: bool = False
 
 
-def dataset_args_for(needs: FrameNeeds) -> dict:
-    """`FrameNeeds` → `IterableDataset` kwargs. A set `elim_variant` already
-    emits the alive mask, so `emit_alive_mask` is only forced on when no variant
-    is covering it — one emitter per frame, no double-write."""
-    return {
-        "elim_head_variant": needs.elim_variant,
-        "emit_alive_mask": needs.alive_mask and needs.elim_variant is None,
-    }
+def emit_partial_for(needs: FrameNeeds) -> PartialEmitSpec:
+    """`FrameNeeds` → the emit partial. Variant tasks get the alive mask too
+    (it defines the target's domain)."""
+    return PartialEmitSpec(
+        targets=TargetsConfig(
+            elim_variant=ElimHeadVariant.coerce(needs.elim_variant), elim_bin_edges=None
+        ),
+        emit_alive_mask=needs.alive_mask or needs.elim_variant is not None,
+        attach_sim_frame=False,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -218,8 +222,9 @@ def cache_probe_features(
     once the cap is hit) — useful for a quick smoke run.
     """
     ds = IterableDataset(
-        samples=samples, seed=seed, obs_cfg=obs_cfg,
-        **dataset_args_for(task.frame_needs),
+        samples=samples,
+        seed=seed,
+        spec=emit_partial_for(task.frame_needs).to_spec(obs_cfg, emit_frame_info=False),
     )
 
     obs_buf: list[torch.Tensor] = []

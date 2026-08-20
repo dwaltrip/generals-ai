@@ -13,7 +13,11 @@ from pathlib import Path
 import pytest
 
 from settings import INTERMEDIATE_DIR
+from training.bc.aux_heads.elim_head_meta import ElimHeadVariant
+from training.bc.config.targets_config import TargetsConfig
+from training.bc.emit_spec import EmitSpec
 from training.bc.filters import eligible_perspectives
+from training.bc.obs_config import OBS_CONFIG_DEFAULTS, ObsConfig
 from training.bc.splits import build_manifest, load_curated_names
 from training.bc.utils import list_sim_paths, meta_path_for
 
@@ -64,6 +68,34 @@ def make_manifest_small(intermediate_root: Path, sim_paths: list[Path]):
         )
 
     return _make_manifest_small
+
+
+@pytest.fixture(scope="session")
+def make_emit_spec():
+    """Factory fixture for an `EmitSpec`. Defaults: the default obs config,
+    core targets, all flags off."""
+
+    def _make(
+        *,
+        obs: ObsConfig = OBS_CONFIG_DEFAULTS,
+        elim_variant: str | ElimHeadVariant | None = None,
+        elim_bin_edges: tuple[int, ...] | None = None,
+        emit_alive_mask: bool = False,
+        emit_frame_info: bool = False,
+        attach_sim_frame: bool = False,
+    ) -> EmitSpec:
+        return EmitSpec(
+            obs=obs,
+            targets=TargetsConfig(
+                elim_variant=ElimHeadVariant.coerce(elim_variant),
+                elim_bin_edges=elim_bin_edges,
+            ),
+            emit_alive_mask=emit_alive_mask,
+            emit_frame_info=emit_frame_info,
+            attach_sim_frame=attach_sim_frame,
+        )
+
+    return _make
 
 
 @pytest.fixture(scope="session")

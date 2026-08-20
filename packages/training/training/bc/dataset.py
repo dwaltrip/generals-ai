@@ -35,9 +35,9 @@ from torch.utils.data import DataLoader, default_collate
 from torch.utils.data import IterableDataset as TorchIterableDataset
 
 from training.bc import bfs
+from training.bc.emit_spec import EmitSpec
 from training.bc.encode_frame import encode_frame
 from training.bc.obs import init_memory, step_memory
-from training.bc.obs_config import ObsConfig
 from training.bc.sample import FrameMeta
 from training.bc.sim_types import GameMeta
 from training.bc.targets.elim_targets import make_elim_ctx
@@ -165,71 +165,38 @@ class IterableDataset(TorchIterableDataset):
         self,
         samples: list[tuple[Path, int]],
         seed: int,
-        obs_cfg: ObsConfig,
+        spec: EmitSpec,
         shuffle_buffer_size: int = 0,
         prof_sink: FileSink | None = None,
-        include_frame_info: bool = False,
-        elim_bin_edges: tuple[int, ...] | None = None,
-        elim_head_variant: str | None = None,
-        emit_alive_mask: bool = False,
-        # Attach `SimFrame` to each yielded sample. This allows offline analysis to
-        # read raw sim ground truth alongside the encoded obs, in the same pass.
-        # This SHOULD NOT be used during training (or with DataLoader in general),
-        # as SimFrame is non-collatable (hence the `unsafe_` prefix).
-        unsafe_attach_sim_frame: bool = False,
     ) -> None:
         """
         `samples` is a list of `(sim_path, perspective_k)` pairs. Caller is
         responsible for filtering — this class trusts every pair is trainable.
         See `bc.splits.samples_for_split` for the production producer.
 
-        `obs_cfg` is the obs-encoder config (sizes the obs tensor); it must
-        match the model's `in_ch`. Required — pass `config.arch.obs` from the
-        training config (or `OBS_CONFIG_DEFAULTS` for default-shape diagnostics).
+        `spec` is the emission contract: what each yielded sample carries.
 
         `prof_sink`, when set, switches on the per-worker timing profiler: each
         worker enables `timer` for its walk and flushes a snapshot through the
         sink on teardown. `None` (the default) keeps every timing seam inert.
         Wired from `train.build_dataloader` via `timing_run.active_sink()`.
-
-        `include_frame_info` adds per-frame provenance data for offline analysis.
-
-        `elim_head_variant`, when set, switches on an elimination head's
-        per-frame targets and selects which: `"time_bin"` →
-        `elim_bin_target` (requires `elim_bin_edges` — they size the bins and the
-        winner sentinel); `"next_death"` → `next_elim_target`/`next_elim_dt` (no
-        edges — the next-victim target is invariant to them, so the sentinel is
-        just "beyond the last tick"). Both also emit the per-player `alive_mask`.
-        Pass the model's `arch.elim_head_variant` (+
-        `arch.elim_bin_edges` for time_bin) iff the elim head is enabled. A
-        `None` variant leaves the targets off, so non-elim runs are unaffected.
-
-        `emit_alive_mask` requests the per-player `alive_mask` *without* any elim
-        head variant — for consumers (e.g. an army-regression probe) that need
-        the alive field but no elimination targets. It builds the same per-game
-        elim precompute the variants use and emits only `alive_mask`. Redundant
-        when a variant is set (that already emits it).
         """
-        if elim_head_variant == "time_bin" and elim_bin_edges is None:
-            raise ValueError("time_bin elim head requires elim_bin_edges")
         self._groups = _group_by_path(samples)
         self._seed = seed
-        self._obs_cfg = obs_cfg
+        self._spec = spec
         self._shuffle_buffer_size = shuffle_buffer_size
         self._epoch = 0
         self._prof_sink = prof_sink
-        self._include_frame_info = include_frame_info
-        self._unsafe_attach_sim_frame = unsafe_attach_sim_frame
-        self._elim_edges = elim_bin_edges
-        self._elim_variant = elim_head_variant
-        # The per-game elim precompute is used for both the variant targets and the
-        # standalone alive mask, so in either case _needs_elim_ctx must be True.
-        self._needs_elim_ctx = elim_head_variant is not None or emit_alive_mask
+        # The per-game elim precompute serves both the variant targets and the
+        # standalone alive mask.
+        self._needs_elim_ctx = (
+            spec.emit_alive_mask or spec.targets.elim_variant is not None
+        )
         # Index of each (path, k) pair in the caller's `samples` order, so
         # `sample_idx` survives the group/epoch shuffles and lets offline
         # consumers join frames back to the manifest entry they came from.
         self._sample_index = (
-            {pair: i for i, pair in enumerate(samples)} if include_frame_info else {}
+            {pair: i for i, pair in enumerate(samples)} if spec.emit_frame_info else {}
         )
 
     def set_epoch(self, epoch: int) -> None:
@@ -345,7 +312,7 @@ class IterableDataset(TorchIterableDataset):
 
             elim_ctx = None
             if self._needs_elim_ctx:
-                elim_ctx = make_elim_ctx(sim, self._elim_edges)
+                elim_ctx = make_elim_ctx(sim, self._spec.targets.elim_bin_edges)
 
             for k in g.perspective_ks:
                 perspective = game_meta.perspectives[k]
@@ -356,7 +323,7 @@ class IterableDataset(TorchIterableDataset):
                         perspective.slot,
                         game_meta.H,
                         game_meta.W,
-                        self._obs_cfg,
+                        self._spec.obs,
                     )
                     bfs_cache = bfs.init_bfs_cache()
 
@@ -370,7 +337,7 @@ class IterableDataset(TorchIterableDataset):
                     step_memory(state, sim, t, vis, perspective.slot, game_meta.H, game_meta.W)
 
                     frame_meta = None
-                    if self._include_frame_info:
+                    if self._spec.emit_frame_info:
                         frame_meta = FrameMeta(
                             frame_t=torch.tensor(t, dtype=torch.int64),
                             players_alive=torch.tensor(
@@ -393,9 +360,8 @@ class IterableDataset(TorchIterableDataset):
                             vis,
                             state,
                             bfs_cache,
+                            self._spec,
                             elim_ctx=elim_ctx,
-                            elim_variant=self._elim_variant,
-                            unsafe_attach_sim_frame=self._unsafe_attach_sim_frame,
                         )
 
                     # Timer: measures per-sample overhead plus (per batch boundary) collate,

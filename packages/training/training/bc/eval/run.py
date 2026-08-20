@@ -32,7 +32,7 @@ want on the loss curve:
       property of the val set) but echoed in every row for grep-ability
       when comparing the two.
 
-    - **elim head** (present only when the head is active, via `elim_bin_edges`):
+    - **elim head** (present only when the head is active):
       `elim_soft` / `elim` losses plus `elim_top1`, `elim_soft_floor`,
       `elim_pred_entropy` from `ElimMeter`. The health check is
       `elim_soft < elim_soft_floor` (beats the constant-predictor baseline);
@@ -54,6 +54,7 @@ import time
 
 import torch
 
+from training.bc.emit_spec import EmitSpec
 from training.bc.eval.dump import FrameRecordCapture, iter_val_forward
 from training.bc.eval.metrics import ActionDistMeter, PolicyEntropyMeter
 from training.bc.loss import (
@@ -63,7 +64,6 @@ from training.bc.loss import (
     bc_loss,
 )
 from training.bc.model import BCModel, flatten_policy_logits
-from training.bc.obs_config import ObsConfig
 
 
 def run_val(
@@ -74,13 +74,11 @@ def run_val(
     num_workers: int,
     pin_memory: bool | None,
     prefetch_factor: int,
-    obs_cfg: ObsConfig,
+    spec: EmitSpec,
     seed: int = 0,
     amp_dtype: torch.dtype | None = None,
     loss_cfg: LossConfig = DEFAULT_LOSS_CFG,
     capture: FrameRecordCapture | None = None,
-    elim_bin_edges: tuple[int, ...] | None = None,
-    elim_head_variant: str | None = None,
 ) -> dict:
     """Run one full validation pass and return the summary metrics.
 
@@ -90,9 +88,8 @@ def run_val(
 
     `capture`, when given, records the per-frame stratified columns
     (`eval.dump`) alongside the summary reductions — same forward, no extra
-    pass. The caller owns writing the capture out. With it, the dataset
-    carries the frame-provenance scalars (`include_frame_info`); when `None`
-    (the default), the pass is unchanged.
+    pass. The caller owns writing the capture out, and builds `spec` with
+    `emit_frame_info=True` so the capture gets the provenance scalars.
 
     DataLoader knobs (`num_workers` / `pin_memory` / `prefetch_factor`)
     are caller-supplied — `run_val` mirrors the train loop's choices for
@@ -108,8 +105,8 @@ def run_val(
     # This design is used as specs are stateless singletons shared across runs
     # via the registry, while a meter is per-pass mutable state.
     aux_specs_with_meters = [
-        (spec, spec.build_eval_meter(loss_cfg, elim_bin_edges))
-        for spec in model.active_aux_specs
+        (aux, aux.build_eval_meter(loss_cfg, spec.targets.elim_bin_edges))
+        for aux in model.active_aux_specs
     ]
     n_top1_correct = 0
     n_top3_correct = 0
@@ -125,10 +122,7 @@ def run_val(
         device,
         batch_size=batch_size,
         num_workers=num_workers,
-        obs_cfg=obs_cfg,
-        include_frame_info=capture is not None,
-        elim_bin_edges=elim_bin_edges,
-        elim_head_variant=elim_head_variant,
+        spec=spec,
         seed=seed,
         amp_dtype=amp_dtype,
         pin_memory=pin_memory,
@@ -183,8 +177,8 @@ def run_val(
         dist_meter.update(topk[:, 0], action_target, non_pass)
 
         # Each spec handles updating its own metrics.
-        for spec, meter in aux_specs_with_meters:
-            spec.eval_update(meter, out, batch)
+        for aux, meter in aux_specs_with_meters:
+            aux.eval_update(meter, out, batch)
 
     duration_sec = time.perf_counter() - val_start
     s = acc.summary()
@@ -218,6 +212,6 @@ def run_val(
     }
     # Aux-head metrics — present only when a head is active, so non-elim val rows
     # are unchanged. Each active spec surfaces its own summary.
-    for spec, meter in aux_specs_with_meters:
-        summary.update(spec.eval_summary(meter, s))
+    for aux, meter in aux_specs_with_meters:
+        summary.update(aux.eval_summary(meter, s))
     return summary

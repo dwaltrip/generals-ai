@@ -26,6 +26,8 @@ from training.analysis.fq.frame_table import (
     FrameTableSpec,
     build_frame_table,
 )
+from training.bc.config.targets_config import TargetsConfig
+from training.bc.emit_spec import PartialEmitSpec
 
 
 def test_kth_lowest_alive_order_and_guard() -> None:
@@ -84,8 +86,10 @@ def test_captured_column_implications(samples: list[tuple[Path, int]]) -> None:
 
     spec = FrameTableSpec(
         name="captured_smoke",
-        dataset_kwargs=dict(
-            emit_alive_mask=True, include_frame_info=True, unsafe_attach_sim_frame=True
+        emit=PartialEmitSpec(
+            targets=TargetsConfig(elim_variant=None, elim_bin_edges=None),
+            emit_alive_mask=True,
+            attach_sim_frame=True,
         ),
         emit_cols={"alive_mask": "alive"},
         derivers=[ARMY_SIM, CAPTURED],

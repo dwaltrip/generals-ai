@@ -23,7 +23,7 @@ from torch import Tensor
 class Frame:
     """The deriver-facing view of one (game, perspective, tick): the dataset's
     encoded outputs (`obs`, `valid_mask`, `alive`) unified with the raw `sim` it
-    attached via the `unsafe_attach_sim_frame` seam (`sim`, `t`, `raw_order`).
+    attached via the `attach_sim_frame` seam (`sim`, `t`, `raw_order`).
 
     `raw_order` is the canonical `[perspective_slot, *opp_slots]` channel→raw-slot
     map. `game_id` is a walk-local per-game token (the `per_game` cache key):

@@ -32,7 +32,27 @@ class EmitSpec:
     targets: TargetsConfig
     emit_alive_mask: bool
     emit_frame_info: bool
-    attach_sim_frame: bool  # analysis only
+    # NOTE: Only valid for analysis dataset walks (SimFrame is not collatable).
+    attach_sim_frame: bool
+
+
+@dataclass(frozen=True, kw_only=True)
+class PartialEmitSpec:
+    """Partial emit spec with `obs` and `emit_frame_info` left open.
+    Used for analysis."""
+
+    targets: TargetsConfig
+    emit_alive_mask: bool
+    attach_sim_frame: bool
+
+    def to_spec(self, obs: ObsConfig, *, emit_frame_info: bool) -> EmitSpec:
+        return EmitSpec(
+            obs=obs,
+            targets=self.targets,
+            emit_alive_mask=self.emit_alive_mask,
+            emit_frame_info=emit_frame_info,
+            attach_sim_frame=self.attach_sim_frame,
+        )
 
 
 def emit_spec_from(

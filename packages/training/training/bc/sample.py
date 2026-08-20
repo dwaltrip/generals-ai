@@ -56,7 +56,7 @@ class TrainingSample:
         if self.sim_frame is not None:
             # Analysis-only seam, deliberately non-Tensor.
             # This path should never run during an actual train loop.
-            # See `unsafe_attach_sim_frame` on IterableDataset.
+            # See `EmitSpec.attach_sim_frame`.
             sample["sim_frame"] = cast(Any, self.sim_frame)
 
         return sample

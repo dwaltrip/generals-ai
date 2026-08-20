@@ -22,6 +22,9 @@ from training.analysis.families.army_derivers import (
     ARMY_SIM,
 )
 from training.analysis.fq.frame_table import FrameTable, FrameTableSpec
+from training.bc.aux_heads.elim_head_meta import ElimHeadVariant
+from training.bc.config.targets_config import TargetsConfig
+from training.bc.emit_spec import PartialEmitSpec
 
 
 def lowest_army_victim(t: FrameTable) -> np.ndarray:
@@ -45,8 +48,12 @@ def _masked_army_totals(t: FrameTable, sentinel: float) -> np.ndarray:
 
 ELIM_HEAD_DEBUG = FrameTableSpec(
     name="elim_head_debug",
-    dataset_kwargs=dict(
-        elim_head_variant="next_death", include_frame_info=True, unsafe_attach_sim_frame=True
+    emit=PartialEmitSpec(
+        targets=TargetsConfig(
+            elim_variant=ElimHeadVariant.NEXT_DEATH, elim_bin_edges=None
+        ),
+        emit_alive_mask=True,
+        attach_sim_frame=True,
     ),
     emit_cols={
         "alive_mask": "alive",

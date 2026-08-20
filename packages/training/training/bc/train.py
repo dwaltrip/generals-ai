@@ -36,8 +36,10 @@ from torch.utils.data import DataLoader
 
 from training.bc.aux_heads.base import AuxHeadSpec
 from training.bc.checkpoint import ckpt_name
+from training.bc.config.metrics_config import metrics_cfg_from
 from training.bc.constants import H_PADDED, W_PADDED
 from training.bc.dataset import IterableDataset, assert_safe_loader, timed_collate
+from training.bc.emit_spec import emit_spec_from
 from training.bc.eval import FrameRecordCapture, dump_path, run_val, save_dump
 from training.bc.loss import LossAccumulator, LossConfig, bc_loss
 from training.bc.model import BCModel
@@ -295,18 +297,15 @@ def build_dataloader(
     resolved dataloader settings — `pin_memory`/`prefetch_factor` are
     device-dependent, so the log shows resolved value vs. config request.
     """
+    spec = emit_spec_from(
+        config.arch, metrics_cfg_from(config.arch), emit_frame_info=False
+    )
     ds = IterableDataset(
         samples=train_samples,
         seed=config.seed,
-        obs_cfg=config.arch.obs,
+        spec=spec,
         shuffle_buffer_size=config.shuffle_buffer_size,
         prof_sink=active_sink(),
-        elim_bin_edges=(
-            config.arch.elim_bin_edges
-            if config.arch.elim_head_variant is not None
-            else None
-        ),
-        elim_head_variant=config.arch.elim_head_variant,
     )
     dl_kwargs = dataloader_kwargs(
         num_workers=config.num_workers,
@@ -683,16 +682,15 @@ def train_loop(
                     num_workers=config.num_workers,
                     pin_memory=config.pin_memory,
                     prefetch_factor=config.prefetch_factor,
-                    obs_cfg=config.arch.obs,
+                    spec=emit_spec_from(
+                        config.arch,
+                        metrics_cfg_from(config.arch),
+                        emit_frame_info=capture is not None,
+                    ),
                     seed=config.seed,
                     amp_dtype=amp_dtype,
                     loss_cfg=loss_cfg,
                     capture=capture,
-                    elim_bin_edges=(
-                        config.arch.elim_bin_edges
-                        if config.arch.elim_head_variant is not None else None
-                    ),
-                    elim_head_variant=config.arch.elim_head_variant,
                 )
                 if capture is not None:
                     write_val_dump(

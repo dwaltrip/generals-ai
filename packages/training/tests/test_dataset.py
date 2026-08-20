@@ -15,7 +15,6 @@ from training.bc.dataset import (
     _shuffle_buffered,
 )
 from training.bc.filters import is_eligible
-from training.bc.obs_config import OBS_CONFIG_DEFAULTS
 from training.bc.player_status import make_alive_mask
 from training.bc.targets.elim_targets import (
     ElimCtx,
@@ -69,7 +68,9 @@ def test_shuffle_buffered_is_deterministic() -> None:
 
 
 @pytest.mark.parametrize("num_workers", [1, 2, 4, 8])
-def test_iter_groups_partitions_disjointly_and_completely(num_workers: int) -> None:
+def test_iter_groups_partitions_disjointly_and_completely(
+    num_workers: int, make_emit_spec
+) -> None:
     """Across all `worker_id`s, `_iter_groups` shards are pairwise disjoint
     and together cover every group exactly once, with near-equal sizes.
     Direct test of the sharding math — DataLoader's role is just wiring
@@ -79,7 +80,7 @@ def test_iter_groups_partitions_disjointly_and_completely(num_workers: int) -> N
     nothing by construction, so the case has no bug to catch.
     """
     samples = [(Path(f"/synth/g{i:03d}.npz"), 0) for i in range(40)]
-    ds = IterableDataset(samples=samples, seed=0, obs_cfg=OBS_CONFIG_DEFAULTS)
+    ds = IterableDataset(samples=samples, seed=0, spec=make_emit_spec())
 
     seen_paths: set[Path] = set()
     sizes: list[int] = []
@@ -101,14 +102,14 @@ def test_iter_groups_partitions_disjointly_and_completely(num_workers: int) -> N
     assert max(sizes) - min(sizes) <= 1, f"shards unbalanced: {sizes}"
 
 
-def test_cross_epoch_shuffle_advances() -> None:
+def test_cross_epoch_shuffle_advances(make_emit_spec) -> None:
     """`set_epoch(n)` controls the per-epoch shuffle. Same multiset both
     epochs, different order. Iterates the dataset directly — no DataLoader,
     no worker subprocess. The worker-fork failure mode the old
     `_epoch_counter += 1` had is now structurally impossible: `__iter__`
     no longer mutates `self`, so there's nothing for a fork to lose."""
     samples = [(Path(f"/synth/g{i:03d}.npz"), 0) for i in range(40)]
-    ds = _IdentityDataset(samples=samples, seed=0, obs_cfg=OBS_CONFIG_DEFAULTS)
+    ds = _IdentityDataset(samples=samples, seed=0, spec=make_emit_spec())
 
     ds.set_epoch(0)
     epoch0 = list(ds)
@@ -120,7 +121,7 @@ def test_cross_epoch_shuffle_advances() -> None:
 
 
 def test_walk_stops_at_elim_timestep(
-    samples: list[tuple[Path, int]],
+    samples: list[tuple[Path, int]], make_emit_spec
 ) -> None:
     """For an eliminated perspective, `_walk` yields exactly `elim_timestep`
     frames — once a player is out, post-elim frames carry no training
@@ -132,7 +133,7 @@ def test_walk_stops_at_elim_timestep(
         with np.load(meta_path) as meta_npz:
             elim_t = int(meta_npz["elim_timestep"][k])
         if elim_t > 0:
-            ds = IterableDataset(samples=[(sim_path, k)], seed=0, obs_cfg=OBS_CONFIG_DEFAULTS)
+            ds = IterableDataset(samples=[(sim_path, k)], seed=0, spec=make_emit_spec())
             walked = sum(1 for _ in ds._walk(ds._groups))
             assert walked == elim_t, (
                 f"perspective k={k} in {sim_path.name}: "

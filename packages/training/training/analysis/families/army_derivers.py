@@ -12,9 +12,11 @@ from training.analysis.obs_utils import army_totals_ch_indices, per_player_army
 from training.bc.obs_config import OBS_CONFIG_DEFAULTS
 
 
-# Army-total obs channels — `dense_history_n`-independent, so resolving them once
-# from the config defaults is safe for ground-truth tables. A model-joined table
-# would instead pin obs_cfg to the producing checkpoint.
+# TODO(fq-army-ch-obs-cfg): resolved at import from the DEFAULT obs layout, not
+# from the obs_cfg a table is actually built with, and nothing checks that the
+# two agree — an obs config with a different channel layout would silently read
+# the wrong planes. (`dense_history_n` specifically doesn't shift these indices;
+# see `army_totals_ch_indices`.)
 ARMY_CH = army_totals_ch_indices(OBS_CONFIG_DEFAULTS.dense_history_n)
 
 

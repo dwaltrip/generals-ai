@@ -52,6 +52,9 @@ from training.analysis.scripts.family_a_victim_baselines import (
     NO_DEATH,
     _death_tick_deriver,
 )
+from training.bc.aux_heads.elim_head_meta import ElimHeadVariant
+from training.bc.config.targets_config import TargetsConfig
+from training.bc.emit_spec import PartialEmitSpec
 from training.bc.splits import load_manifest, samples_for_split
 
 
@@ -72,10 +75,12 @@ def build_spec() -> FrameTableSpec:
     it skips the whole rate-construction menu the baseline script builds."""
     return FrameTableSpec(
         name="victim_gaps",
-        dataset_kwargs=dict(
-            elim_head_variant="next_death",
-            include_frame_info=True,
-            unsafe_attach_sim_frame=True,
+        emit=PartialEmitSpec(
+            targets=TargetsConfig(
+                elim_variant=ElimHeadVariant.NEXT_DEATH, elim_bin_edges=None
+            ),
+            emit_alive_mask=True,
+            attach_sim_frame=True,
         ),
         emit_cols={"alive_mask": "alive", "next_elim_target": "victim", "next_elim_dt": "dt"},
         derivers=[_death_tick_deriver()],
