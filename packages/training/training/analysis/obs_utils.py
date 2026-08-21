@@ -37,7 +37,8 @@ def army_totals_ch_indices(dense_history_n: int) -> list[int]:
     broadcast scalars (`army / 1000`), fog-independent, in the fixed base
     channels, so the indices are independent of `dense_history_n`.
     """
-    # TODO: this is a bit brittle
+    # TODO: This is a bit brittle.
+    # See related noted: 8.20-1-analysis-toolkit-brittleness.md
     wanted = ["self_army_count"] + [f"opp_{i}_army_count" for i in range(1, N_PLAYERS)]
     return get_obs_channel_indices(dense_history_n, wanted)
 

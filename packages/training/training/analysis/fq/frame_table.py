@@ -39,6 +39,9 @@ GROUND_TRUTH_OBS_CFG = ObsConfig(
 )
 
 
+# TODO(unchecked-implicit-obs-contract): derivers can carry implicit obs layout
+# and meaning assumptions. The obs_cfg received later by build_frame_table is not
+# checked against those assumptions. See 8.20-1-analysis-toolkit-brittleness.md
 @dataclass
 class FrameTableSpec:
     """A table spec: what the dataset must emit and which columns to build.
@@ -181,9 +184,13 @@ def build_frame_table(
     if max_games is not None:
         samples = cap_by_games(samples, max_games)
     subset_to_full = np.array([full_pos[(p, k)] for p, k in samples], dtype=np.int64)
-    # TODO(fq-emit-spec-partial-fix): honor False for these two flags. `Frame`
-    # reads alive_mask and sim_frame unconditionally, and game-boundary
-    # detection relies on the attached sim.
+    # TODO(fq-emit-spec-partial-fix): `fq` currently requires the alive mask and
+    # an attached sim for all tables, whether or not the analysis uses them.
+    # It should support False for emit_alive_mask and attach_sim_frame.
+    # Currently "alive_mask" is read unconditionally (without good reason).
+    # The sim frame flag is not intrinsically needed either: `gid` can be built
+    # other ways (e.g. sample_idx). And the other sim-frame reads
+    # (sim, t, raw_order) are only consumed by derivers that already need the sim.
     assert spec.emit.emit_alive_mask and spec.emit.attach_sim_frame, (
         "fq requires emit_alive_mask and attach_sim_frame"
         " — see TODO(fq-emit-spec-partial-fix) above"

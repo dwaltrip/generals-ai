@@ -12,11 +12,10 @@ from training.analysis.obs_utils import army_totals_ch_indices, per_player_army
 from training.bc.obs_config import OBS_CONFIG_DEFAULTS
 
 
-# TODO(fq-army-ch-obs-cfg): resolved at import from the DEFAULT obs layout, not
-# from the obs_cfg a table is actually built with, and nothing checks that the
-# two agree — an obs config with a different channel layout would silently read
-# the wrong planes. (`dense_history_n` specifically doesn't shift these indices;
-# see `army_totals_ch_indices`.)
+# TODO(fq-army-ch-obs-cfg): computed once at import time from the default obs
+# config, not from the obs_cfg a table is actually built with. This is one
+# instance of the unchecked obs assumptions described in this note:
+# 8.20-1-analysis-toolkit-brittleness.md
 ARMY_CH = army_totals_ch_indices(OBS_CONFIG_DEFAULTS.dense_history_n)
 
 

@@ -57,6 +57,9 @@ from training.bc.storage.checkpoint import load_checkpoint
 # ---------------------------------------------------------------------------
 
 
+# TODO(unchecked-implicit-obs-contract): probe tasks are defined with implicit
+# obs assumptions. The obs_cfg passed to a probe run is not checked
+# against those assumptions. See 8.20-1-analysis-toolkit-brittleness.md
 @dataclass(frozen=True)
 class FrameNeeds:
     """What a probe task needs each frame to carry beyond the always-on obs +
