@@ -1,5 +1,6 @@
 import pytest
 
+from training.bc.datapipe.sim_types import GameMeta
 from training.goldens.compare import compare_targets
 from training.goldens.loaders import load_fixture, load_targets_bundle, perspective_for
 from training.goldens.registry import TargetsEntry, targets_entries
@@ -13,8 +14,9 @@ def test_targets_golden(entry: TargetsEntry) -> None:
         pytest.fail(f"unblessed: no targets bundle for {entry.fixture.id}, run regen")
 
     sim, meta = load_fixture(entry.fixture)
+    game_meta = GameMeta.from_npz(sim, meta)
     persp = perspective_for(meta, entry.fixture.slot)
-    got = compute_targets(sim, persp, entry)
+    got = compute_targets(sim, game_meta, persp, entry)
 
     mismatch = compare_targets(got, bundle, entry.keys)
     if mismatch is not None:

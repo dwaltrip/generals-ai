@@ -17,7 +17,7 @@ does not load or construct a meta dict.
       the "full" set of keys, and all values are `ndarray`.
     - The live path's hand-built dict: These games are still in progress. This sim
       dict has a subset of the keys, and the time-indexed history fields are Python
-      lists of `ndarray` snapshots, appended per tick, as they occur. This is in 
+      lists of `ndarray` snapshots, appended per tick, as they occur. This is in
       contrast to their npz counterparts, which are single pre-stacked `ndarray`s.
 """
 

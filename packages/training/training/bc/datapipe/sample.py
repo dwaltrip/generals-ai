@@ -3,7 +3,9 @@ from typing import Any, cast
 
 import torch
 
+from training.bc.datapipe.emit import FrameEmission
 from training.bc.datapipe.sim_types import SimFrame
+from training.bc.datapipe.walk import WalkFrame
 
 
 @dataclass(frozen=True)
@@ -60,3 +62,32 @@ class TrainingSample:
             sample["sim_frame"] = cast(Any, self.sim_frame)
 
         return sample
+
+
+def pack_sample(
+    frame: WalkFrame,
+    emission: FrameEmission,
+    frame_meta: FrameMeta | None,
+    sim_frame: SimFrame | None,
+) -> TrainingSample:
+    return TrainingSample(
+        obs=torch.from_numpy(frame.obs),
+        mask=torch.from_numpy(frame.legality_mask),
+        valid_mask=torch.from_numpy(frame.board_mask),
+        action_target=torch.from_numpy(emission.action_target),
+        is_pass=torch.from_numpy(emission.is_pass),
+        value_target=torch.from_numpy(emission.value_target),
+        frame_meta=frame_meta,
+        sim_frame=sim_frame,
+        alive_mask=(
+            None if emission.alive_mask is None else torch.from_numpy(emission.alive_mask)
+        ),
+        aux_head_targets=(
+            None
+            if emission.aux_head_targets is None
+            else {
+                key: torch.from_numpy(value)
+                for key, value in emission.aux_head_targets.items()
+            }
+        ),
+    )

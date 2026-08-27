@@ -8,6 +8,7 @@ from training.bc.datapipe.walk import WalkFrame
 from training.goldens.hashes import hash_channels, hash_frames, hash_mask_frames
 from training.goldens.loaders import ObsReference
 
+
 # TODO: figure out dtype declarations for the goldens
 # TODO: partial-bundle handling (key missing from the bundle file)
 

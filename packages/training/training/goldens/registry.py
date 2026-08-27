@@ -3,8 +3,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from training.bc.config.targets_config import TargetsConfig
+from training.bc.datapipe.emit_spec import PartialEmitSpec
 from training.bc.obs_config import ObsConfig
+
 
 # TODO(sketch): registry data transcription pending (8.12-2), including the
 # emit-point naming decision (targets vs emit vocabulary).
@@ -32,8 +33,7 @@ class ObsEntry:
 @dataclass(frozen=True)
 class TargetsEntry:
     point: str
-    cfg: TargetsConfig
-    emit_alive_mask: bool
+    spec: PartialEmitSpec
     keys: tuple[str, ...]
     fixture: FixtureRecord
     bundle_path: Path

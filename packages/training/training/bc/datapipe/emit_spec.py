@@ -6,11 +6,6 @@ Orchestration params (e.g. shuffling, workers) are specifically not included.
 The builders below own the canonical derivation from the training config.
 """
 
-# NOTE: This is torch-free, as it is imported by the numpy-only golden tests.
-
-# TODO: Will likely move into a future `bc.walk` module alongside the walk-core
-# work (possibly with sample.py, encode_frame.py, and sim_types.py).
-
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -39,6 +34,14 @@ class EmitSpec:
     # NOTE: This is NOT safe for train dataloader (SimFrame is not collatable).
     # Only valid for analysis dataset walks.
     attach_sim_frame: bool
+
+    @property
+    def partial(self) -> PartialEmitSpec:
+        return PartialEmitSpec(
+            targets=self.targets,
+            emit_alive_mask=self.emit_alive_mask,
+            attach_sim_frame=self.attach_sim_frame,
+        )
 
 
 @dataclass(frozen=True, kw_only=True)

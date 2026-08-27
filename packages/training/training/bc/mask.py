@@ -16,6 +16,14 @@ from training.bc.constants import H_PADDED, W_PADDED
 from training.shared.timing import timer
 
 
+# NOTE: New name. "board_mask" was previously called "valid_mask".
+# We plan to slowly convert old code as we touch it.
+def build_board_mask(H: int, W: int) -> np.ndarray:
+    board_mask = np.zeros((1, H_PADDED, W_PADDED), dtype=np.bool_)
+    board_mask[0, :H, :W] = True
+    return board_mask
+
+
 @timer.timed("build_mask")
 def build_mask(
     sim: dict[str, np.ndarray],

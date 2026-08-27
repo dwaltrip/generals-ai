@@ -1,5 +1,6 @@
 import pytest
 
+from training.bc.datapipe.sim_types import GameMeta
 from training.bc.datapipe.walk import walk
 from training.goldens.compare import compare_obs
 from training.goldens.loaders import load_fixture, load_obs_reference, perspective_for
@@ -13,8 +14,9 @@ def test_obs_golden(entry: ObsEntry) -> None:
         pytest.fail(f"unblessed: no obs references for {entry.point}-{entry.fixture.id}, run regen")
 
     sim, meta = load_fixture(entry.fixture)
+    game_meta = GameMeta.from_npz(sim, meta)
     persp = perspective_for(meta, entry.fixture.slot)
-    frames = list(walk(sim, persp, entry.cfg))
+    frames = list(walk(sim, game_meta, persp, entry.cfg))
 
     mismatch = compare_obs(frames, ref)
     if mismatch is not None:

@@ -305,7 +305,7 @@ class IterableDataset(TorchIterableDataset):
 
             game_meta = GameMeta.from_npz(sim, meta)
 
-            pre = precompute_for(self._spec, sim)
+            pre = precompute_for(self._spec.partial, sim)
 
             for k in g.perspective_ks:
                 perspective = game_meta.perspectives[k]
@@ -348,6 +348,7 @@ class IterableDataset(TorchIterableDataset):
                         sample = encode_frame(
                             sim,
                             t,
+                            game_meta,
                             perspective,
                             frame_meta,
                             vis,
