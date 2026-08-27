@@ -4,7 +4,7 @@ import pytest
 
 from training.bc.config import MetricsConfig
 from training.bc.config.targets_config import targets_cfg_from
-from training.bc.emit_spec import emit_spec_for_model, emit_spec_from
+from training.bc.datapipe.emit_spec import emit_spec_for_model, emit_spec_from
 from training.bc.model_config import build_model_cfg
 
 

@@ -5,7 +5,7 @@ from pathlib import Path
 
 import numpy as np
 
-from training.bc.sim_types import PerspectiveMeta
+from training.bc.datapipe.sim_types import PerspectiveMeta
 from training.goldens.registry import FixtureRecord
 
 

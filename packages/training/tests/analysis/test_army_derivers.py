@@ -27,7 +27,7 @@ from training.analysis.fq.frame_table import (
     build_frame_table,
 )
 from training.bc.config.targets_config import TARGETS_CFG_NO_ELIM
-from training.bc.emit_spec import PartialEmitSpec
+from training.bc.datapipe.emit_spec import PartialEmitSpec
 
 
 def test_kth_lowest_alive_order_and_guard() -> None:

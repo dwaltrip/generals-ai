@@ -3,7 +3,7 @@ from typing import Any, cast
 
 import torch
 
-from training.bc.sim_types import SimFrame
+from training.bc.datapipe.sim_types import SimFrame
 
 
 @dataclass(frozen=True)

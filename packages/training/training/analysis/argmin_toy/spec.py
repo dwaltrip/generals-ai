@@ -19,7 +19,7 @@ import numpy as np
 from training.analysis.families.army_derivers import ARMY_SIM, CAPTURED, LAND_SIM
 from training.analysis.fq.frame_table import FrameTable, FrameTableSpec
 from training.bc.config.targets_config import TARGETS_CFG_NO_ELIM
-from training.bc.emit_spec import PartialEmitSpec
+from training.bc.datapipe.emit_spec import PartialEmitSpec
 
 
 def n_alive(t: FrameTable) -> np.ndarray:

@@ -42,7 +42,7 @@ from training.bc import bfs as bc_bfs
 from training.bc import obs as bc_obs
 from training.bc.inference import BCPerspective
 from training.bc.mask import build_mask
-from training.bc.sim_types import SimFrame
+from training.bc.datapipe.sim_types import SimFrame
 from training.bc.slots import SlotOrder, pad_initial_generals
 from training.bc.obs_config import OBS_CONFIG_DEFAULTS
 from training.bc.visibility import compute_visibility

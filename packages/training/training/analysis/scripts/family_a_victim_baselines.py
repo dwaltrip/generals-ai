@@ -64,7 +64,7 @@ from training.analysis.fq.frame_table import (
     select,
 )
 from training.bc.config.targets_config import TARGETS_CFG_ELIM_NEXT_DEATH
-from training.bc.emit_spec import PartialEmitSpec
+from training.bc.datapipe.emit_spec import PartialEmitSpec
 from training.bc.splits import load_manifest, samples_for_split
 from training.bc.player_status import precompute_player_status
 

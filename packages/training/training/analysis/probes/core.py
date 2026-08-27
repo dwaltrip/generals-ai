@@ -46,7 +46,7 @@ import torch.nn as nn
 from training.bc.aux_heads.elim_head_meta import ElimHeadVariant
 from training.bc.config.targets_config import TargetsConfig
 from training.bc.dataset import IterableDataset
-from training.bc.emit_spec import PartialEmitSpec
+from training.bc.datapipe.emit_spec import PartialEmitSpec
 from training.bc.model.bc_model import BCModel
 from training.bc.obs_config import ObsConfig
 from training.bc.storage.checkpoint import load_checkpoint

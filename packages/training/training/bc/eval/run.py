@@ -55,7 +55,7 @@ import time
 
 import torch
 
-from training.bc.emit_spec import EmitSpec
+from training.bc.datapipe.emit_spec import EmitSpec
 from training.bc.eval.dump import FrameRecordCapture, iter_val_forward
 from training.bc.eval.metrics import ActionDistMeter, PolicyEntropyMeter
 from training.bc.loss import (

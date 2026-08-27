@@ -9,7 +9,7 @@ from training.bc import bfs
 from training.bc.mask import build_mask
 from training.bc.obs import build_obs, init_memory, step_memory
 from training.bc.obs_config import ObsConfig
-from training.bc.sim_types import PerspectiveMeta, SimFrame
+from training.bc.datapipe.sim_types import PerspectiveMeta, SimFrame
 from training.bc.visibility import compute_visibility
 
 

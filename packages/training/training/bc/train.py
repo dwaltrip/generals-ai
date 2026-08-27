@@ -39,7 +39,7 @@ from training.bc.checkpoint import ckpt_name
 from training.bc.config.metrics_config import metrics_cfg_from
 from training.bc.constants import H_PADDED, W_PADDED
 from training.bc.dataset import IterableDataset, assert_safe_loader, timed_collate
-from training.bc.emit_spec import EmitSpec, emit_spec_from
+from training.bc.datapipe.emit_spec import EmitSpec, emit_spec_from
 from training.bc.eval import FrameRecordCapture, dump_path, run_val, save_dump
 from training.bc.loss import LossAccumulator, LossConfig, bc_loss
 from training.bc.model import BCModel

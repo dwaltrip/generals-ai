@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from training.bc.walk import WalkFrame
+from training.bc.datapipe.walk import WalkFrame
 from training.goldens.hashes import hash_channels, hash_frames, hash_mask_frames
 from training.goldens.loaders import ObsReference
 

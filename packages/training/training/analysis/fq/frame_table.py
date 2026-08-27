@@ -20,9 +20,9 @@ import numpy as np
 
 from training.analysis.fq.derivers import Deriver, Frame
 from training.bc.dataset import IterableDataset
-from training.bc.emit_spec import PartialEmitSpec
+from training.bc.datapipe.emit_spec import PartialEmitSpec
 from training.bc.obs_config import OBS_CONFIG_DEFAULTS, ObsConfig
-from training.bc.sim_types import SimFrame
+from training.bc.datapipe.sim_types import SimFrame
 
 
 # Obs config for ground-truth fq tables: default `n`, fp32, no player-status

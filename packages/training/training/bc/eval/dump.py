@@ -34,7 +34,7 @@ import torch.nn.functional as F
 from torch.utils.data import DataLoader
 
 from training.bc.dataset import IterableDataset, assert_safe_loader
-from training.bc.emit_spec import EmitSpec, emit_spec_for_model
+from training.bc.datapipe.emit_spec import EmitSpec, emit_spec_for_model
 from training.bc.model import BCModel, ModelOut, flatten_policy_logits
 from training.shared.device import dataloader_kwargs, move_batch, obs_for_model
 

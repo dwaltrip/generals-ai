@@ -6,7 +6,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from training.bc.emit_spec import EmitSpec
+from training.bc.datapipe.emit_spec import EmitSpec
 from training.bc.player_status import PlayerStatusCtx, precompute_player_status
 from training.bc.targets.elim_targets import ElimCtx, make_elim_ctx
 

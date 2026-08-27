@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from training.bc.walk import WalkFrame
+from training.bc.datapipe.walk import WalkFrame
 
 # TODO(sketch): hash algorithm + canonical serialization decided in the
 # hash-builder sketch, recorded in the channel summary.

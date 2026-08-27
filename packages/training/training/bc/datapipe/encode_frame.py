@@ -6,16 +6,16 @@ import torch
 from training.bc import bfs
 from training.bc.aux_heads.registry import spec_for
 from training.bc.constants import H_PADDED, W_PADDED
-from training.bc.emit_spec import EmitSpec
+from training.bc.datapipe.emit_spec import EmitSpec
 from training.bc.mask import build_mask
 from training.bc.obs import (
     MemoryState,
     build_obs,
 )
 from training.bc.player_status import make_alive_mask
-from training.bc.precompute import EmitPrecompute
-from training.bc.sample import FrameMeta, TrainingSample
-from training.bc.sim_types import PerspectiveMeta, SimFrame
+from training.bc.datapipe.precompute import EmitPrecompute
+from training.bc.datapipe.sample import FrameMeta, TrainingSample
+from training.bc.datapipe.sim_types import PerspectiveMeta, SimFrame
 from training.bc.targets.core_targets import policy_pass_target, value_target
 from training.shared.timing import timer
 

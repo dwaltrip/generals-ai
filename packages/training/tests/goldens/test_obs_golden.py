@@ -1,6 +1,6 @@
 import pytest
 
-from training.bc.walk import walk
+from training.bc.datapipe.walk import walk
 from training.goldens.compare import compare_obs
 from training.goldens.loaders import load_fixture, load_obs_reference, perspective_for
 from training.goldens.registry import ObsEntry, obs_entries

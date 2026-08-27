@@ -23,7 +23,7 @@ from training.analysis.families.army_derivers import (
 )
 from training.analysis.fq.frame_table import FrameTable, FrameTableSpec
 from training.bc.config.targets_config import TARGETS_CFG_ELIM_NEXT_DEATH
-from training.bc.emit_spec import PartialEmitSpec
+from training.bc.datapipe.emit_spec import PartialEmitSpec
 
 
 def lowest_army_victim(t: FrameTable) -> np.ndarray:

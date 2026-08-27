@@ -29,7 +29,7 @@ from training.bc.obs.channels import (
 )
 from training.bc.obs.memory import MemoryState
 from training.bc.obs_config import GATED_CHANNEL_GROUPS
-from training.bc.sim_types import SimFrame
+from training.bc.datapipe.sim_types import SimFrame
 from training.shared.timing import timer
 
 

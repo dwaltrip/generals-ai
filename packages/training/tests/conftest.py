@@ -15,7 +15,7 @@ import pytest
 from settings import INTERMEDIATE_DIR
 from training.bc.aux_heads.elim_head_meta import ElimHeadVariant
 from training.bc.config.targets_config import TargetsConfig
-from training.bc.emit_spec import EmitSpec
+from training.bc.datapipe.emit_spec import EmitSpec
 from training.bc.filters import eligible_perspectives
 from training.bc.obs_config import OBS_CONFIG_DEFAULTS, ObsConfig
 from training.bc.splits import build_manifest, load_curated_names

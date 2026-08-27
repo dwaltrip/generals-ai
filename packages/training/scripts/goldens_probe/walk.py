@@ -19,7 +19,7 @@ from training.bc.mask import build_mask
 from training.bc.obs import build_obs, init_memory, step_memory
 from training.bc.slots import SlotOrder
 from training.bc.obs_config import ObsConfig
-from training.bc.sim_types import SimFrame
+from training.bc.datapipe.sim_types import SimFrame
 from training.bc.targets.core_targets import policy_pass_target, value_target
 from training.bc.targets.elim_targets import (
     make_elim_ctx,

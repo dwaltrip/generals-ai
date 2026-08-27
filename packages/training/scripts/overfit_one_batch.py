@@ -27,7 +27,7 @@ from torch.utils.data import DataLoader
 
 from settings import INTERMEDIATE_DIR
 from training.bc.dataset import IterableDataset
-from training.bc.emit_spec import base_emit_spec
+from training.bc.datapipe.emit_spec import base_emit_spec
 from training.bc.filters import eligible_perspectives
 from training.bc.loss import bc_loss
 from training.bc.model import BCModel

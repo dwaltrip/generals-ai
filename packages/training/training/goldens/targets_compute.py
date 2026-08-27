@@ -6,7 +6,7 @@ from training.bc.aux_heads.elim_head_meta import ElimHeadVariant
 from training.bc.constants import W_PADDED
 from training.bc.mask import build_mask
 from training.bc.player_status import make_alive_mask, precompute_player_status
-from training.bc.sim_types import PerspectiveMeta
+from training.bc.datapipe.sim_types import PerspectiveMeta
 from training.bc.targets.core_targets import policy_pass_target, value_target
 from training.bc.targets.elim_targets import (
     make_elim_ctx,

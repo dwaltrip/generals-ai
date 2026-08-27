@@ -35,12 +35,12 @@ from torch.utils.data import DataLoader, default_collate
 from torch.utils.data import IterableDataset as TorchIterableDataset
 
 from training.bc import bfs
-from training.bc.emit_spec import EmitSpec
-from training.bc.encode_frame import encode_frame
+from training.bc.datapipe.emit_spec import EmitSpec
+from training.bc.datapipe.encode_frame import encode_frame
 from training.bc.obs import init_memory, step_memory
-from training.bc.precompute import precompute_for
-from training.bc.sample import FrameMeta
-from training.bc.sim_types import GameMeta
+from training.bc.datapipe.precompute import precompute_for
+from training.bc.datapipe.sample import FrameMeta
+from training.bc.datapipe.sim_types import GameMeta
 from training.bc.visibility import compute_visibility
 from training.shared.timing import timer
 

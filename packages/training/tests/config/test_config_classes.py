@@ -74,7 +74,7 @@ def test_config_package_imports_torch_free():
         [
             sys.executable,
             "-c",
-            "import training.bc.config, training.bc.emit_spec, sys; "
+            "import training.bc.config, training.bc.datapipe.emit_spec, sys; "
             "assert 'torch' not in sys.modules",
         ],
         check=True,

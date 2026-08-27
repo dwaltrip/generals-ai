@@ -40,7 +40,7 @@ from training.bc.model import BCModel, ModelOut, flatten_policy_logits
 from training.bc.model_builder import ConfiguredModel
 from training.bc.obs_config import ObsConfig
 from training.bc.player_status import precompute_player_status
-from training.bc.sim_types import SimFrame
+from training.bc.datapipe.sim_types import SimFrame
 from training.bc.slots import MAX_PLAYERS, SlotOrder, pad_initial_generals
 from training.bc.storage.checkpoint import load_from_raw, read_checkpoint
 

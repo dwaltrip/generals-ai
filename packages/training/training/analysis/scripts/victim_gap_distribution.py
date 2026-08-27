@@ -53,7 +53,7 @@ from training.analysis.scripts.family_a_victim_baselines import (
     _death_tick_deriver,
 )
 from training.bc.config.targets_config import TARGETS_CFG_ELIM_NEXT_DEATH
-from training.bc.emit_spec import PartialEmitSpec
+from training.bc.datapipe.emit_spec import PartialEmitSpec
 from training.bc.splits import load_manifest, samples_for_split
 
 
