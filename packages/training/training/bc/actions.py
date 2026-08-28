@@ -9,7 +9,7 @@ calls `decode` to convert model predictions back to wire moves.
 The `(is_pass, flat_idx)` output shape is coupled to the **split-head**
 policy design (a separate scalar pass head + per-cell directional
 logits). If the policy head ever folds pass into the per-cell logits
-(a joint H×W×9 design), this representation has to change.
+(a joint HxWx9 design), this representation has to change.
 
 Wire deltas are interpreted in **unpadded** coordinates (`±1, ±W_unpadded`);
 the resulting cell is then re-indexed into the top-left-padded grid
