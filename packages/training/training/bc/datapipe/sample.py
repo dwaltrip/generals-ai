@@ -72,7 +72,7 @@ def pack_sample(
 ) -> TrainingSample:
     return TrainingSample(
         obs=torch.from_numpy(frame.obs),
-        mask=torch.from_numpy(frame.legality_mask),
+        mask=torch.from_numpy(emission.legality_mask),
         valid_mask=torch.from_numpy(frame.board_mask),
         action_target=torch.from_numpy(emission.action_target),
         is_pass=torch.from_numpy(emission.is_pass),

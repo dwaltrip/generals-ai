@@ -9,6 +9,7 @@ from training.bc.constants import W_PADDED
 from training.bc.datapipe.emit_spec import PartialEmitSpec
 from training.bc.datapipe.precompute import EmitPrecompute
 from training.bc.datapipe.sim_types import GameMeta, PerspectiveMeta
+from training.bc.mask import build_mask
 from training.bc.player_status import make_alive_mask
 from training.bc.targets.core_targets import policy_pass_target, value_target
 
@@ -16,6 +17,7 @@ from training.bc.targets.core_targets import policy_pass_target, value_target
 # TODO: I don't love the name FrameEmission...
 @dataclass(frozen=True)
 class FrameEmission:
+    legality_mask: np.ndarray
     action_target: np.ndarray
     is_pass: np.ndarray
     value_target: np.ndarray
@@ -24,6 +26,7 @@ class FrameEmission:
 
     def to_dict(self) -> dict[str, np.ndarray]:
         out = {
+            "legality_mask": self.legality_mask,
             "action_target": self.action_target,
             "is_pass": self.is_pass,
             "value_target": self.value_target,
@@ -64,6 +67,7 @@ def emit_frame(
         }
 
     return FrameEmission(
+        legality_mask=build_mask(sim, t, perspective.slot, game.H, game.W),
         action_target=np.asarray(flat_idx, dtype=np.int64),
         is_pass=np.asarray(is_pass, dtype=np.bool_),
         value_target=np.asarray(value_target(perspective.placement), dtype=np.int64),

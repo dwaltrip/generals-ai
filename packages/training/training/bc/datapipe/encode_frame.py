@@ -9,7 +9,7 @@ from training.bc.datapipe.precompute import EmitPrecompute
 from training.bc.datapipe.sample import FrameMeta, TrainingSample, pack_sample
 from training.bc.datapipe.sim_types import GameMeta, PerspectiveMeta, SimFrame
 from training.bc.datapipe.walk import WalkFrame
-from training.bc.mask import build_board_mask, build_mask
+from training.bc.mask import build_board_mask
 from training.bc.obs import MemoryState, build_obs
 from training.shared.timing import timer
 
@@ -35,7 +35,6 @@ def encode_frame(
     frame = WalkFrame(
         t=t,
         obs=build_obs(sim_frame, vis, state, bfs_cache, H, W),
-        legality_mask=build_mask(sim, t, perspective.slot, H, W),
         board_mask=build_board_mask(H, W),
     )
 

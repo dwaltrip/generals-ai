@@ -67,9 +67,10 @@ def compare_targets(
 ) -> TargetsMismatch | None:
     changed = []
     for key in keys:
-        if key == "mask":
+        if key == "legality_mask":
             same = np.array_equal(
-                hash_mask_frames(got["mask"]), bundle["mask_frame_hashes"]
+                hash_mask_frames(got["legality_mask"]),
+                bundle["legality_mask_frame_hashes"],
             )
         else:
             ref = bundle[key]

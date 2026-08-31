@@ -7,7 +7,7 @@ import numpy as np
 
 from training.bc import bfs
 from training.bc.datapipe.sim_types import GameMeta, PerspectiveMeta, SimFrame
-from training.bc.mask import build_board_mask, build_mask
+from training.bc.mask import build_board_mask
 from training.bc.obs import build_obs, init_memory, step_memory
 from training.bc.obs_config import ObsConfig
 from training.bc.slots import SlotOrder
@@ -18,7 +18,6 @@ from training.bc.visibility import compute_visibility
 class WalkFrame:
     t: int
     obs: np.ndarray
-    legality_mask: np.ndarray
     board_mask: np.ndarray
 
 
@@ -55,7 +54,6 @@ class PerspectiveWalk:
         return WalkFrame(
             t=t,
             obs=build_obs(sim_frame, vis, self._state, self._bfs_cache, H, W),
-            legality_mask=build_mask(sim, t, slot, H, W),
             board_mask=self._board_mask,
         )
 
