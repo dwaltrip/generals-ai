@@ -14,9 +14,8 @@ from training.bc.player_status import make_alive_mask
 from training.bc.targets.core_targets import policy_pass_target, value_target
 
 
-# TODO: I don't love the name FrameEmission...
 @dataclass(frozen=True)
-class FrameEmission:
+class FrameSupervision:
     legality_mask: np.ndarray
     action_target: np.ndarray
     is_pass: np.ndarray
@@ -38,14 +37,14 @@ class FrameEmission:
         return out
 
 
-def emit_frame(
+def emit_tail(
     sim: dict[str, np.ndarray],
     t: int,
     game: GameMeta,
     perspective: PerspectiveMeta,
     spec: PartialEmitSpec,
     pre: EmitPrecompute,
-) -> FrameEmission:
+) -> FrameSupervision:
     raw_order = list(perspective.slot_order.order)
 
     is_pass, flat_idx = policy_pass_target(sim, perspective.slot, t, game.W, W_PADDED)
@@ -66,7 +65,7 @@ def emit_frame(
             for key, tensor in aux_spec.encode_targets(pre.elim, raw_order, t).items()
         }
 
-    return FrameEmission(
+    return FrameSupervision(
         legality_mask=build_mask(sim, t, perspective.slot, game.H, game.W),
         action_target=np.asarray(flat_idx, dtype=np.int64),
         is_pass=np.asarray(is_pass, dtype=np.bool_),

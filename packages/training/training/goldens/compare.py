@@ -30,11 +30,11 @@ class ObsMismatch:
 
 
 @dataclass(frozen=True)
-class TargetsMismatch:
+class SupervisionMismatch:
     changed_keys: tuple[str, ...]
 
     def summary(self) -> str:
-        return f"targets mismatch: keys {list(self.changed_keys)}"
+        return f"supervision mismatch: keys {list(self.changed_keys)}"
 
 
 def compare_obs(frames: list[WalkFrame], ref: ObsReference) -> ObsMismatch | None:
@@ -60,11 +60,11 @@ def compare_obs(frames: list[WalkFrame], ref: ObsReference) -> ObsMismatch | Non
     return ObsMismatch(changed_ticks=changed_ticks, changed_channels=changed_channels)
 
 
-def compare_targets(
+def compare_supervision(
     got: dict[str, np.ndarray],
     bundle: dict[str, np.ndarray],
     keys: tuple[str, ...],
-) -> TargetsMismatch | None:
+) -> SupervisionMismatch | None:
     changed = []
     for key in keys:
         if key == "legality_mask":
@@ -81,4 +81,4 @@ def compare_targets(
             )
         if not same:
             changed.append(key)
-    return TargetsMismatch(changed_keys=tuple(changed)) if changed else None
+    return SupervisionMismatch(changed_keys=tuple(changed)) if changed else None

@@ -3,7 +3,7 @@ from __future__ import annotations
 import numpy as np
 
 from training.bc import bfs
-from training.bc.datapipe.emit import emit_frame
+from training.bc.datapipe.emit import emit_tail
 from training.bc.datapipe.emit_spec import EmitSpec
 from training.bc.datapipe.precompute import EmitPrecompute
 from training.bc.datapipe.sample import FrameMeta, TrainingSample, pack_sample
@@ -39,10 +39,10 @@ def encode_frame(
     )
 
     with timer.section("encode_tail"):
-        emission = emit_frame(sim, t, game, perspective, spec.partial, pre)
+        supervision = emit_tail(sim, t, game, perspective, spec.partial, pre)
         return pack_sample(
             frame,
-            emission,
+            supervision,
             frame_meta,
             sim_frame if spec.attach_sim_frame else None,
         )

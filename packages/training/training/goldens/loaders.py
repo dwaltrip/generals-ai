@@ -32,6 +32,6 @@ def load_obs_reference(path: Path) -> ObsReference | None:
     raise NotImplementedError
 
 
-def load_targets_bundle(path: Path) -> dict[str, np.ndarray] | None:
+def load_supervision_bundle(path: Path) -> dict[str, np.ndarray] | None:
     # TODO(sketch): None = unblessed
     raise NotImplementedError

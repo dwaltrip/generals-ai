@@ -7,8 +7,7 @@ from training.bc.datapipe.emit_spec import PartialEmitSpec
 from training.bc.obs_config import ObsConfig
 
 
-# TODO(sketch): registry data transcription pending (8.12-2), including the
-# emit-point naming decision (targets vs emit vocabulary).
+# TODO(sketch): registry data transcription pending (8.12-2).
 
 
 @dataclass(frozen=True)
@@ -31,7 +30,7 @@ class ObsEntry:
 
 
 @dataclass(frozen=True)
-class TargetsEntry:
+class SupervisionEntry:
     point: str
     spec: PartialEmitSpec
     keys: tuple[str, ...]
@@ -44,6 +43,6 @@ def obs_entries() -> list[ObsEntry]:
     return []
 
 
-def targets_entries() -> list[TargetsEntry]:
+def supervision_entries() -> list[SupervisionEntry]:
     # TODO(sketch)
     return []
