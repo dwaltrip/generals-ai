@@ -19,7 +19,7 @@ import re
 from training.bc.checkpoint import is_legacy_checkpoint
 from training.bc.loss import LossConfig
 from training.bc.run_logger import RunLogger
-from training.bc.train_config import TrainConfig, _extract_loss, json_default
+from training.bc.train_config import TrainConfig, _extract_loss, stringify_path
 from utils.log import abort
 
 
@@ -41,7 +41,7 @@ def initialize_run_dir(config: TrainConfig, config_input_text: str | None = None
     config.run_dir.mkdir(parents=True, exist_ok=False)
     print(f"run dir: {config.run_dir}")
     with (config.run_dir / "args.json").open("x") as fp:
-        json.dump(asdict(config), fp, default=json_default, indent=2)
+        json.dump(asdict(config), fp, default=stringify_path, indent=2)
     if config_input_text is not None:
         (config.run_dir / "config.input.json").write_text(config_input_text)
 
@@ -263,4 +263,4 @@ def write_args_resume(
         **asdict(config),
     }
     with (config.run_dir / f"args{info.next_suffix}.json").open("x") as fp:
-        json.dump(payload, fp, default=json_default, indent=2)
+        json.dump(payload, fp, default=stringify_path, indent=2)

@@ -1,9 +1,9 @@
 """Construct live model objects from resolved config.
 
-`build_model` is the one place a `ModelConfig` becomes a `BCModel`. Checkpoint
-loading and fresh-training construction both go through it.
-This module is also the named home for a future configurable builder — one that
-could reconstruct historical model/obs/loss behavior from config.
+`build_model` is the one place a `ModelConfig` becomes a `BCModel`.
+Checkpoint loading and fresh-training construction both go through it.
+This module could also be the home for a hypothetical configurable builder.
+E.g. Something that reconstructs historical model/obs/loss behavior from config.
 """
 
 from __future__ import annotations

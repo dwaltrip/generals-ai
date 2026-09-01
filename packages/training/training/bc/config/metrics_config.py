@@ -4,8 +4,6 @@ This sub-config owns tangential configs that have no impact on model weights
 and are only used to configure other recorded artifacts (e.g. val dumps).
 """
 
-# NOTE: This is torch-free, as it is imported by the numpy-only golden tests.
-
 # NOTE: The concept behind MetricsConfig is new. We are starting with a
 # deliberately minimal, incomplete form for the goldens first cut work.
 # The shape may shift while the concept settles.

@@ -1,21 +1,16 @@
 """Per-player game status: the per-game precompute + the alive/present masks.
 
-A neutral, torch-free home shared by the obs encoder (`bc.obs`) and the elim
-targets (`bc.targets.elim_targets`), so the "who is alive / on the board at tick
-t" logic lives in exactly one place rather than being recomputed (and risking
-divergence) on each side.
-
-Two per-slot tick markers, both following the sim-core event convention (events
+Two per-slot tick markers, both following the sim-core event convention. Events
 fire pre-increment and become visible at `snapshot[e+1]`, so `snapshot[e]` is
-pre-event — see `sim-core/README.md`):
+pre-event (see `sim-core/README.md`):
 
   - `death_by_slot` — the first `DeathEvent` (surrender, or capture-while-alive).
     Drives `alive`: a player stops *playing* here.
   - `removal_by_slot` — the board-removal event (capture or neutralize) that
-    transfers/clears the player's tiles. Drives `present`: the player's army
-    leaves the board here.
+    transfers/clears the player's tiles. Drives `present`: at this point,
+    the player no longer owns army or tiles.
 
-The surrender window is exactly the gap between the two (`~alive & present`).
+The surrender window is the gap between the two (`~alive & present`).
 Both masks use `tick >= t` (alive/present through `snapshot[e]`, gone from
 `e+1`), which is the correct test against the obs's pre-event board snapshot.
 """
@@ -52,7 +47,7 @@ def precompute_player_status(
     """Per-game `PlayerStatusCtx` from the sim's event lists.
 
     `sentinel` defaults to `T + 1` (just past the last tick — enough for the
-    masks); callers that digitize a `Δ = sentinel − t` into bins (the elim
+    masks); callers that digitize a `Δ = sentinel - t` into bins (the elim
     time_bin head) pass a larger value so the winner lands in the top bin.
     """
     ownership = sim["ownership"]

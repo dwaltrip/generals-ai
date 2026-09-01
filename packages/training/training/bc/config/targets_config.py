@@ -1,7 +1,5 @@
 """TargetsConfig: the recipe knobs for the emitted training targets."""
 
-# NOTE: This module is torch-free, as it is imported by the numpy-only golden tests.
-
 from __future__ import annotations
 
 from dataclasses import dataclass

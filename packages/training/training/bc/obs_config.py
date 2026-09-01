@@ -1,22 +1,15 @@
-"""Obs-encoder configuration — the static hyperparameters that shape the obs
-tensor a model is trained on.
+"""The obs-encoder configuration.
 
-`ObsConfig` is nested inside `ModelConfig` (so it rides into every checkpoint's
-`arch` key) and the encoder reads it off `MemoryState`. It carries the knobs
-that determine the *input contract*: the channel count (`dense_history_n` +
-the enabled gated groups → `obs_channels`) and the tensor's element dtype
-(`obs_dtype`).
+This carries the knobs that determine the input contract: which channels are 
+enabled, the dtype for each channel, and how the channel values are computed.
 
 Defaults are policy, not structure, so they live here as a named instance
-(`OBS_CONFIG_DEFAULTS`) rather than as inline field defaults — symmetric with
-`checkpoint.LEGACY_OBS_CFG` (the frozen historical value). The two are equal
-today and allowed to diverge the day we re-default `n`: conflating them would
-silently re-describe old checkpoints. The class itself carries no default
-policy, so construct via `OBS_CONFIG_DEFAULTS` (or explicit fields), not
-`ObsConfig()`.
+(`OBS_CONFIG_DEFAULTS`) rather than as inline field defaults. This is symmetric
+with `checkpoint.LEGACY_OBS_CFG` (the frozen historical value).
+The two are equal today and allowed to diverge the day we re-default `n`
+(conflating them would silently re-describe old checkpoints).
 
-Deliberately torch-free — imports only `bc.constants` (pure ints + the
-channel-count formula).
+Deliberately torch-free.
 """
 
 from __future__ import annotations
@@ -60,7 +53,7 @@ class ObsConfig:
 
     # Depth of the dense recent-spatial-history window: `ownership_transition`
     # and `army_delta` are each emitted for the last `n` ticks, adding `2 * n`
-    # channels. `0` ablates history entirely.
+    # channels. `0` effectively disables this channel.
     dense_history_n: int
 
     # Element dtype of the assembled obs tensor: "fp32" or "fp16". fp16 halves
@@ -81,7 +74,7 @@ class ObsConfig:
     def channel_names(self) -> list[str]:
         """The obs tensor's channel names for this config: the frozen base +
         dense-history tail + each enabled gated group's names, appended in spec
-        order. The single source of truth for layout and for `obs_channels`."""
+        order. Source of truth for layout and channel count."""
         names = ungated_obs_channel_names(self.dense_history_n)
         for group in GATED_CHANNEL_GROUPS:
             if group.enabled(self):
@@ -90,8 +83,7 @@ class ObsConfig:
 
     @property
     def obs_channels(self) -> int:
-        """Total obs-tensor channel count implied by this config — derived from
-        `channel_names` (one source, so count and names can't drift)."""
+        """Total obs-tensor channel count implied by this config."""
         return len(self.channel_names)
 
     @classmethod
@@ -122,8 +114,7 @@ GATED_CHANNEL_GROUPS: list[ChannelGroup] = [
 ]
 
 
-# Live default policy — the single home for the current default `n`. Referenced
-# by `ModelConfig.obs`'s default and by every "I want the defaults" call site.
+# The live default policy. Source of truth for the current default `n`.
 OBS_CONFIG_DEFAULTS = ObsConfig(
     dense_history_n=5,
     obs_dtype="fp16",

@@ -278,17 +278,11 @@ class TrainConfig:
 
 
 def make_run_id() -> str:
-    """UTC-timestamp run-id, e.g. `2026-05-22T19-30-00Z`.
-
-    Dash-separated time component (not the `:` ISO 8601 uses) so the id
-    is safe to use as a filesystem path on every OS we care about.
-    """
+    """UTC-timestamp run-id. Dash-separated (safe to use in a unix filepath)."""
     return datetime.now(UTC).strftime("%Y-%m-%dT%H-%M-%SZ")
 
 
-def json_default(obj: object) -> str:
-    """JSON `default=` for `asdict(TrainConfig)`. Stringifies `Path`; anything
-    else that lands here is an unexpected type — raise to surface it."""
+def stringify_path(obj: object) -> str:
     if isinstance(obj, Path):
         return str(obj)
     raise TypeError(f"unserializable: {type(obj).__name__}: {obj!r}")

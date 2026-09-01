@@ -184,7 +184,7 @@ def config_from_args(args: argparse.Namespace) -> TrainConfig:
 
 
 def resume_run_dir(args: argparse.Namespace) -> Path:
-    """The run dir a `--resume` targets: `out_dir/<resume-id>` (an existing dir)."""
+    """The run dir a `--resume` targets: `out_dir/<resume-id>`"""
     if args.out_dir is None:
-        raise SystemExit("--out-dir is required (or set a default in the wrapper)")
+        raise SystemExit("--out-dir is required ")
     return args.out_dir / args.resume

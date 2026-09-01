@@ -23,7 +23,7 @@ from training.bc.run_dir import (
     load_parent_config,
     prepare_resume,
 )
-from training.bc.train_config import TrainConfig, json_default
+from training.bc.train_config import TrainConfig, stringify_path
 
 
 def _config(**overrides: object) -> TrainConfig:
@@ -164,7 +164,7 @@ def test_resume_flat_parent_loss_no_spurious_drift(tmp_path: Path) -> None:
     loss.pop("mu_pass")                      # mu_pass postdates the flat-config era
     flat_args = {**nested, **loss}           # loss knobs splayed flat at top level
     args_path = tmp_path / "args.json"
-    args_path.write_text(json.dumps(flat_args, default=json_default))
+    args_path.write_text(json.dumps(flat_args, default=stringify_path))
 
     parent = load_parent_config(args_path)
     assert parent["loss"]["mu_pass"] == 1.0  # completed from LossConfig defaults
@@ -193,7 +193,7 @@ def _gate_run(tmp_path: Path) -> Path:
     → past the epoch-target check, so a later abort is attributable to the gate)."""
     run = tmp_path
     parent = _config(run_dir=run, epochs=5)
-    (run / "args.json").write_text(json.dumps(asdict(parent), default=json_default))
+    (run / "args.json").write_text(json.dumps(asdict(parent), default=stringify_path))
     return run
 
 

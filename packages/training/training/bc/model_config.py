@@ -1,26 +1,17 @@
-"""Self-describing spec for the BC model — input encoding + trunk + heads.
+"""Self-describing spec for the BC model: input encoding + trunk + heads.
 
-`ModelConfig` is the single object that flows config-file → model → checkpoint
-→ inference, so any checkpoint carries everything needed to reconstruct both the
-model AND the obs encoding that produced its inputs. Two differently-configured
-models can therefore coexist in one process (the head-to-head eval sweeps need).
+`ModelConfig` flows from config-file → model → checkpoint → inference.
+This is how a checkpoint specifies everything needed to reconstruct both the
+model and the obs encoding used to produce the model inputs.
 
-The obs-encoder config nests here as `obs: ObsConfig`; `in_ch` is a derived
-property (the obs channel count), not a stored field or a free knob. Nesting
-keeps the input contract and the trunk in one self-describing unit, traveling
-under the single `arch` checkpoint key — no separate serialization path.
+The obs-encoder config is nested underneath `obs`.
+`in_ch` is a derived property (the obs channel count).
+Nesting keeps the input contract and the trunk in one self-describing unit.
 
-Default policy lives in `MODEL_CONFIG_DEFAULTS` (a named instance), not as inline
-field defaults — symmetric with `obs_config.OBS_CONFIG_DEFAULTS`. Build a
-customized config via `build_model_cfg(**overrides)`, which fills the policy
-defaults; the bare class carries only the structural `H`/`W` defaults.
+Defaults are stored as an instantiated object: MODEL_CONFIG_DEFAULTS.
+build_model_cfg is used to construct a copy and also to pass overrides.
 
-Deliberately **torch-free**: imports only `bc.constants` + `bc.obs_config`
-(pure ints / dataclass), so `train_config`, `checkpoint`, and `inference` can
-compose `ModelConfig` without dragging the torch-heavy `model.py` into their
-import graph at module load. `VALUE_HEAD_VARIANTS` lives here for the same
-reason — `model.py` and `train_config.py` both read it without a deferred-import
-dance.
+Deliberately torch-free.
 """
 
 from __future__ import annotations
@@ -57,14 +48,8 @@ ELIM_HEAD_VARIANTS = ("time_bin", "next_death")
 
 @dataclass(frozen=True)
 class ModelConfig:
-    """The BC model's full spec — obs encoding + trunk widths/depths + value head.
-
-    Policy fields carry no inline defaults — the live defaults live in
-    `MODEL_CONFIG_DEFAULTS`; construct via `build_model_cfg` (or explicit fields).
-    The default `128/128/160` trunk is the "0.5×" of DeepNash's `256/256/320`
-    (1/4 the params -> theoretically faster compute for the proof-of-concept
-    phase while still possibly viable).
-    """
+    """Spec forlthe BC model: obs encoding + trunk widths/depths + value head.
+    Defaults are in MODEL_CONFIG_DEFAULTS. Construct via build_model_cfg."""
 
     # --- swept: the trunk's design ---
     outer_width: int
@@ -94,10 +79,7 @@ class ModelConfig:
     value_head_dropout2d_site: str
     value_head_skip_dropout2d: float
     # --- aux heads ---
-    # Elimination auxiliary head — read off the shared trunk to enrich it for the
-    # policy + future PPO critic. Opt-in and arch-gated: the head is constructed
-    # only when a variant is set, so every pre-elim checkpoint still loads
-    # `strict=True`.
+    # Elimination auxiliary head 
     #   elim_head_variant  — the single gate (see ELIM_HEAD_VARIANTS):
     #     None         — no elim head (the default).
     #     "time_bin"   — per-player, per-frame time-to-elimination as an
@@ -130,21 +112,14 @@ class ModelConfig:
 
     @property
     def in_ch(self) -> int:
-        """The trunk's input channel count = the obs channel count.
-
-        Derived from `obs`, not a dataclass field: it enters the network only at
-        the trunk's first conv, so `obs` fully determines it.
-        """
+        """Derived from `obs`. It enters the network only at the trunk's first
+        conv, so `obs` fully determines it. """
         return self.obs.obs_channels
 
     @property
     def elim_n_bins(self) -> int:
-        """Number of elim-head bins = `len(elim_bin_edges) + 1`.
-
-        The single source of truth for the head's output size and the elim
-        loss's class count — derived, never stored, so the edges tuple can't
-        drift from the class count it implies.
-        """
+        """Number of elim-head bins. Source of truth for the head's output
+        size and the elim loss's class count."""
         return len(self.elim_bin_edges) + 1
 
     @classmethod
@@ -163,15 +138,15 @@ class ModelConfig:
         return errors
 
     def __post_init__(self) -> None:
+        # -----------------------------------------------------------------------
+        # TODO: I don't think we should be pulling in OBS_CONFIG_DEFAULTS here...
+        # -----------------------------------------------------------------------
         # Coerce a dict-valued `obs` (asdict round-trip / config JSON), filling
         # missing keys from the live defaults so partial obs blocks are legal.
         if isinstance(self.obs, dict):
             merged = {**asdict(OBS_CONFIG_DEFAULTS), **self.obs}
             object.__setattr__(self, "obs", ObsConfig(**merged))
-        # Coerce edges to a tuple of ints: a config JSON / asdict round-trip
-        # hands them back as a list, and the field's identity (equality, hash on
-        # this frozen dataclass) must not depend on which container they arrive
-        # in.
+        # Coerce edges to a tuple of ints
         object.__setattr__(
             self, "elim_bin_edges", tuple(int(e) for e in self.elim_bin_edges)
         )
@@ -201,16 +176,12 @@ class ModelConfig:
                 f"value_head_dropout2d_site must be one of "
                 f"{VALUE_HEAD_DROPOUT2D_SITES}; got {self.value_head_dropout2d_site!r}"
             )
-        # A set-but-inert knob would let a sweep config lie about what ran.
         if self.value_head_variant == "direct" and self.value_head_skip_dropout2d > 0:
             raise ValueError(
                 "value_head_skip_dropout2d requires the pyramid variant — "
                 "the direct head has no pre-module skips to drop"
             )
-        # Edges must be a non-empty, strictly increasing sequence of positive
-        # ints — validated even when the head is disabled, so a malformed sweep
-        # config fails at construction rather than only when the head is turned
-        # on. `np.digitize` relies on the strict-increase invariant.
+        # Edges must be a non-empty, strictly increasing sequence of positive ints.
         edges = self.elim_bin_edges
         if len(edges) < 1:
             raise ValueError(f"elim_bin_edges must be non-empty; got {edges!r}")
@@ -236,9 +207,10 @@ class ModelConfig:
             raise ValueError("H/W must be positive")
 
 
-# Live default policy — the single home for the default trunk/obs/value-head
-# spec. Referenced by `build_model_cfg` and as `BCModel`'s default arg.
+# This is the default policy.
 MODEL_CONFIG_DEFAULTS = ModelConfig(
+    # The default `128/128/160` trunk is the "0.5x" of DeepNash (256/256/320).
+    # This has roughly 1/4 as many params as it would with the DeepNash numbers.
     outer_width=128,
     middle_width=128,
     inner_width=160,
@@ -259,12 +231,7 @@ MODEL_CONFIG_DEFAULTS = ModelConfig(
 
 
 def build_model_cfg(**overrides: Any) -> ModelConfig:
-    """Build a `ModelConfig`, filling unset fields from `MODEL_CONFIG_DEFAULTS`.
-
-    The single construction path for partial configs — app code
-    (`build_model_cfg(value_head_variant=...)`) and dict-bearing loaders (config
-    files, checkpoint arch dicts, resume overlays) alike.
-    """
+    """Build a ModelConfig, filling unset fields from MODEL_CONFIG_DEFAULTS"""
     # NOTE(ckpt-cfg-refactor-note): in_ch is a derived property, not a field.
     # Legacy checkpoints recorded it inside their arch dict, so pop this known
     # legacy key before `replace()` rejects it as an unexpected kwarg (TypeError).

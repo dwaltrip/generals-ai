@@ -54,7 +54,7 @@ def build_mask(
     repeats each per-direction legality into both sub-channels.
 
     Padded cells (`r >= H` or `c >= W`) are all False — initial zero allocation
-    handles this; the assignment only writes the unpadded region.
+    handles this. The assignment only modifies the unpadded region.
     """
     HW = H * W
 
@@ -63,8 +63,7 @@ def build_mask(
     armies_2d = sim["armies"][t].reshape(H, W)
     source_ok = (own_2d == perspective_slot) & (armies_2d >= 2)
 
-    # Densify mountains for (4). Static within a game; per-frame cost is
-    # microseconds (could lift to a per-game precompute if profiling shows it).
+    # Densify mountains for (4). Static within a game.
     mountains = np.zeros(HW, dtype=bool)
     mountains[sim["mountains"]] = True
     not_mountain_2d = ~mountains.reshape(H, W)
@@ -73,7 +72,7 @@ def build_mask(
     # we restrict the source region to cells whose destination falls in-bounds,
     # then AND with the (shifted) destination passability. The "missing" rows/
     # cols (where the destination would be out of bounds) stay False from the
-    # zero allocation — that's how condition (3) gets baked in.
+    # zero allocation. This is how condition (3) is met.
     legal_per_dir = np.zeros((H, W, 4), dtype=bool)
     # N (dest_row = r - 1): valid sources are rows 1..H-1; dest is rows 0..H-2.
     legal_per_dir[1:, :, actions.N] = source_ok[1:, :] & not_mountain_2d[:-1, :]

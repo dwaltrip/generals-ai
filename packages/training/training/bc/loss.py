@@ -291,7 +291,6 @@ def bc_loss(
     }
 
     # Aux-head terms: each active head computes its loss and metrics.
-    # `_assemble_total` then folds the trained terms into `total`.
     for spec in model_out.active_aux_specs:
         res = spec.loss(model_out, targets, cfg)
         out.update(res.metrics)
@@ -448,10 +447,7 @@ def _assemble_total(
     cfg: LossConfig,
     specs: tuple[AuxHeadSpec, ...],
 ) -> Any:
-    """The one definition of how `total` is composed from component metrics — shared
-    by `bc_loss` (live tensors) and `LossAccumulator.summary` (epoch-mean floats), so
-    the per-batch and epoch totals can't drift. Reads `policy`/`value_soft`/`pass`
-    plus each spec's `term_key` from `metrics` (the caller must have populated them).
+    """Source of truth for how `total` loss is aggregated from the parts.
     Polymorphic over tensor/float via the shared `+`/`*`."""
     total = (
         metrics["policy"]
