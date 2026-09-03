@@ -117,7 +117,11 @@ SUPERVISION_KEYS = [
     SupervisionKey(name="present_mask", deps=("elim_variant",)),
 ]
 
-FIXTURES: list[FixtureRecord] = []
+FIXTURES = [
+    FixtureRecord(replay_id="ukRz7oSS8", slot=7, note="throwaway pick, eliminated at t=138"),
+    FixtureRecord(replay_id="xdZsRyX0O", slot=2, note="throwaway pick, eliminated at t=183"),
+    FixtureRecord(replay_id="NAT6qThbE", slot=2, note="throwaway pick, survivor"),
+]
 
 
 # --- Entries ---
