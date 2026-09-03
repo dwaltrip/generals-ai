@@ -9,10 +9,6 @@ from training.goldens.hashes import hash_channels, hash_frames, hash_mask_frames
 from training.goldens.loaders import ObsReference
 
 
-# TODO: figure out dtype declarations for the goldens
-# TODO: partial-bundle handling (key missing from the bundle file)
-
-
 @dataclass(frozen=True)
 class ObsMismatch:
     changed_ticks: np.ndarray
@@ -32,9 +28,16 @@ class ObsMismatch:
 @dataclass(frozen=True)
 class SupervisionMismatch:
     changed_keys: tuple[str, ...]
+    note: str | None = None
 
     def summary(self) -> str:
+        if self.note is not None:
+            return f"supervision mismatch: {self.note}"
         return f"supervision mismatch: keys {list(self.changed_keys)}"
+
+
+def same_bytes(a: np.ndarray, b: np.ndarray) -> bool:
+    return a.dtype == b.dtype and a.shape == b.shape and a.tobytes() == b.tobytes()
 
 
 def compare_obs(frames: list[WalkFrame], ref: ObsReference) -> ObsMismatch | None:
@@ -60,25 +63,22 @@ def compare_obs(frames: list[WalkFrame], ref: ObsReference) -> ObsMismatch | Non
     return ObsMismatch(changed_ticks=changed_ticks, changed_channels=changed_channels)
 
 
+def stored_form(key: str, arr: np.ndarray, hashed_keys: frozenset[str]) -> np.ndarray:
+    return hash_mask_frames(arr) if key in hashed_keys else arr
+
+
 def compare_supervision(
     got: dict[str, np.ndarray],
-    bundle: dict[str, np.ndarray],
+    ref: dict[str, np.ndarray],
     keys: tuple[str, ...],
+    hashed_keys: frozenset[str],
 ) -> SupervisionMismatch | None:
-    changed = []
-    for key in keys:
-        if key == "legality_mask":
-            same = np.array_equal(
-                hash_mask_frames(got["legality_mask"]),
-                bundle["legality_mask_frame_hashes"],
-            )
-        else:
-            ref = bundle[key]
-            same = (
-                got[key].dtype == ref.dtype
-                and got[key].shape == ref.shape
-                and got[key].tobytes() == ref.tobytes()
-            )
-        if not same:
-            changed.append(key)
-    return SupervisionMismatch(changed_keys=tuple(changed)) if changed else None
+    if set(got) != set(keys):
+        return SupervisionMismatch(
+            changed_keys=(),
+            note=f"emitted keys differ: extra {set(got) - set(keys)}, missing {set(keys) - set(got)}",
+        )
+    changed = tuple(
+        key for key in keys if not same_bytes(stored_form(key, got[key], hashed_keys), ref[key])
+    )
+    return SupervisionMismatch(changed_keys=changed) if changed else None

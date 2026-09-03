@@ -5,8 +5,8 @@ from pathlib import Path
 
 import numpy as np
 
-from training.bc.datapipe.sim_types import PerspectiveMeta
-from training.goldens.registry import FixtureRecord
+from training.bc.datapipe.sim_types import GameMeta, PerspectiveMeta
+from training.goldens.registry import FIXTURES_DIR, FixtureRecord
 
 
 @dataclass(frozen=True)
@@ -15,23 +15,39 @@ class ObsReference:
     channel_hashes: np.ndarray
 
 
-def load_fixture(
-    fixture: FixtureRecord,
-) -> tuple[dict[str, np.ndarray], dict[str, np.ndarray]]:
-    # TODO(sketch)
-    raise NotImplementedError
+def _load_npz(path: Path) -> dict[str, np.ndarray]:
+    with np.load(path) as z:
+        return {k: z[k] for k in z.files}
 
 
-def perspective_for(meta: dict[str, np.ndarray], slot: int) -> PerspectiveMeta:
-    # TODO(sketch): slot -> k resolution
-    raise NotImplementedError
+def load_fixture(fixture: FixtureRecord) -> tuple[dict[str, np.ndarray], dict[str, np.ndarray]]:
+    sim = _load_npz(FIXTURES_DIR / f"{fixture.replay_id}.npz")
+    meta = _load_npz(FIXTURES_DIR / f"{fixture.replay_id}.meta.npz")
+    return sim, meta
+
+
+def perspective_for(game_meta: GameMeta, slot: int) -> PerspectiveMeta:
+    matches = [p for p in game_meta.perspectives.values() if p.slot == slot]
+    assert len(matches) == 1, f"slot {slot}: expected one recorded perspective, found {len(matches)}"
+    return matches[0]
+
+
+def load_array(path: Path) -> np.ndarray | None:
+    return np.load(path) if path.exists() else None
 
 
 def load_obs_reference(path: Path) -> ObsReference | None:
-    # TODO(sketch): None = unblessed
-    raise NotImplementedError
+    if not path.exists():
+        return None
+    z = _load_npz(path)
+    return ObsReference(frame_hashes=z["frame_hashes"], channel_hashes=z["channel_hashes"])
 
 
-def load_supervision_bundle(path: Path) -> dict[str, np.ndarray] | None:
-    # TODO(sketch): None = unblessed
-    raise NotImplementedError
+def load_supervision_reference(paths: dict[str, Path]) -> dict[str, np.ndarray] | None:
+    out = {}
+    for key, path in paths.items():
+        arr = load_array(path)
+        if arr is None:
+            return None
+        out[key] = arr
+    return out

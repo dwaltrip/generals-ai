@@ -15,7 +15,7 @@ def test_obs_golden(entry: ObsEntry) -> None:
 
     sim, meta = load_fixture(entry.fixture)
     game_meta = GameMeta.from_npz(sim, meta)
-    persp = perspective_for(meta, entry.fixture.slot)
+    persp = perspective_for(game_meta, entry.fixture.slot)
     frames = list(walk(sim, game_meta, persp, entry.cfg))
 
     mismatch = compare_obs(frames, ref)
