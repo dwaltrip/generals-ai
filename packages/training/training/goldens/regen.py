@@ -7,6 +7,7 @@ status line per file. Run from packages/training:
 from __future__ import annotations
 
 from collections import defaultdict
+from dataclasses import dataclass
 from pathlib import Path
 import sys
 from typing import Any
@@ -72,7 +73,16 @@ def _regen_obs(fx: FixtureRecord, sim, game_meta: GameMeta, persp) -> None:
         print(f"  {status:12s} {_rel(entry.ref_path)}")
 
 
-def _regen_supervision(fx: FixtureRecord, sim, game_meta: GameMeta, persp) -> None:
+@dataclass(frozen=True)
+class _PlannedFile:
+    path: Path
+    array: np.ndarray
+    members: tuple[str, ...]
+
+
+def _plan_supervision(
+    fx: FixtureRecord, sim, game_meta: GameMeta, persp
+) -> tuple[list[_PlannedFile], list[str]]:
     entries = [e for e in supervision_entries() if e.fixture == fx]
     got = {e.point: compute_supervision(sim, game_meta, persp, e) for e in entries}
 
@@ -84,11 +94,8 @@ def _regen_supervision(fx: FixtureRecord, sim, game_meta: GameMeta, persp) -> No
             )
             sys.exit(1)
 
-    fixture_dir = REFERENCES_DIR / "supervision" / fx.id
-    fixture_dir.mkdir(parents=True, exist_ok=True)
-    expected: set[Path] = set()
-    written_new: dict[Path, bytes] = {}
-
+    planned: list[_PlannedFile] = []
+    warnings: list[str] = []
     for key in SUPERVISION_KEYS:
         groups: dict[tuple[Any, ...], list[SupervisionEntry]] = defaultdict(list)
         for e in entries:
@@ -109,25 +116,41 @@ def _regen_supervision(fx: FixtureRecord, sim, game_meta: GameMeta, persp) -> No
                 sys.exit(1)
 
             stored = stored_form(key.name, base, members[0].hashed_keys)
-            path = members[0].paths[key.name]
-            old = load_array(path)
-            status = _status(old, stored)
-            np.save(path, stored)
-            if old is None:
-                written_new[path] = stored.tobytes()
-            expected.add(path)
             group_arrays[gid] = stored
-            print(f"  {status:12s} {_rel(path)}   <- {', '.join(m.point for m in members)}")
+            planned.append(
+                _PlannedFile(
+                    path=members[0].paths[key.name],
+                    array=stored,
+                    members=tuple(m.point for m in members),
+                )
+            )
 
         gids = list(group_arrays)
         for i in range(len(gids)):
             for j in range(i + 1, len(gids)):
                 if same_bytes(group_arrays[gids[i]], group_arrays[gids[j]]):
-                    print(
+                    warnings.append(
                         f"  warning: {key.name} groups {gids[i]} and {gids[j]} are byte-identical"
                         " on this fixture (over-declared deps, or unexercised)"
                     )
+    return planned, warnings
 
+
+def _write_supervision(fx: FixtureRecord, planned: list[_PlannedFile], warnings: list[str]) -> None:
+    fixture_dir = REFERENCES_DIR / "supervision" / fx.id
+    fixture_dir.mkdir(parents=True, exist_ok=True)
+    written_new: dict[Path, bytes] = {}
+    for item in planned:
+        old = load_array(item.path)
+        status = _status(old, item.array)
+        np.save(item.path, item.array)
+        if old is None:
+            written_new[item.path] = item.array.tobytes()
+        print(f"  {status:12s} {_rel(item.path)}   <- {', '.join(item.members)}")
+    for line in warnings:
+        print(line)
+
+    expected = {item.path for item in planned}
     for path in sorted(fixture_dir.iterdir()):
         if path in expected:
             continue
@@ -137,13 +160,20 @@ def _regen_supervision(fx: FixtureRecord, sim, game_meta: GameMeta, persp) -> No
 
 
 def main() -> None:
+    # Compute and check every fixture before writing anything, so a
+    # contradiction leaves the references untouched.
+    loaded = []
     for fx in FIXTURES:
         sim, meta = load_fixture(fx)
         game_meta = GameMeta.from_npz(sim, meta)
         persp = perspective_for(game_meta, fx.slot)
+        planned, warnings = _plan_supervision(fx, sim, game_meta, persp)
+        loaded.append((fx, sim, game_meta, persp, planned, warnings))
+
+    for fx, sim, game_meta, persp, planned, warnings in loaded:
         print(f"== {fx.id}  T={game_meta.T} end_t={persp.end_t}  ({fx.note})")
         _regen_obs(fx, sim, game_meta, persp)
-        _regen_supervision(fx, sim, game_meta, persp)
+        _write_supervision(fx, planned, warnings)
 
 
 if __name__ == "__main__":
