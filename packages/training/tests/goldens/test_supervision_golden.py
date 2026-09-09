@@ -13,7 +13,8 @@ from training.goldens.supervision_compute import compute_supervision
 def test_supervision_golden(entry: SupervisionEntry) -> None:
     ref = load_supervision_reference(entry.paths)
     if ref is None:
-        pytest.fail(f"unblessed: no supervision references for {entry.point}-{entry.fixture.id}, run regen")
+        label = "{entry.point}-{entry.fixture.id}"
+        pytest.fail(f"unblessed: no supervision references for {label}, run regen")
 
     sim, meta = load_fixture(entry.fixture)
     game_meta = GameMeta.from_npz(sim, meta)

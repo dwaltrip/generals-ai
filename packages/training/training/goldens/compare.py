@@ -16,12 +16,12 @@ class ObsMismatch:
     note: str | None = None
 
     def summary(self) -> str:
-        if self.note is not None:
-            return f"obs mismatch: {self.note}"
+        note = f"\n  note: {self.note}" if self.note else ""
         first = int(self.changed_ticks[0]) if self.changed_ticks.size else -1
         return (
-            f"obs mismatch: {self.changed_ticks.size} ticks changed"
-            f" (first t={first}), channels={self.changed_channels.tolist()}"
+            f"obs mismatch: {self.changed_ticks.size} ticks changed" +
+            f" (first t={first}), channels={self.changed_channels.tolist()}" +
+            note
         )
 
 
@@ -31,9 +31,8 @@ class SupervisionMismatch:
     note: str | None = None
 
     def summary(self) -> str:
-        if self.note is not None:
-            return f"supervision mismatch: {self.note}"
-        return f"supervision mismatch: keys {list(self.changed_keys)}"
+        note = f"\n  note: {self.note}" if self.note else ""
+        return f"supervision mismatch: keys {list(self.changed_keys)}{note}"
 
 
 def same_bytes(a: np.ndarray, b: np.ndarray) -> bool:
@@ -74,11 +73,14 @@ def compare_supervision(
     hashed_keys: frozenset[str],
 ) -> SupervisionMismatch | None:
     if set(got) != set(keys):
+        extra = set(got) - set(keys)
+        missing = set(got) - set(keys)
         return SupervisionMismatch(
             changed_keys=(),
-            note=f"emitted keys differ: extra {set(got) - set(keys)}, missing {set(keys) - set(got)}",
+            note=f"emitted keys differ. extra: {extra}, missing: {missing}",
         )
     changed = tuple(
-        key for key in keys if not same_bytes(stored_form(key, got[key], hashed_keys), ref[key])
+        key for key in keys
+        if not same_bytes(stored_form(key, got[key], hashed_keys), ref[key])
     )
     return SupervisionMismatch(changed_keys=changed) if changed else None

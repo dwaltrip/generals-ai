@@ -1,10 +1,12 @@
 #!/usr/bin/env -S uv run python
-"""Copy a few random eligible corpus games into the goldens fixtures dir and
-print FixtureRecord lines to paste into the registry. Throwaway picks for the
-build; proper fixture selection replaces them. Run from packages/training:
-
-    ./scripts/goldens_pick_throwaway_fixtures.py [SEED] [N]
 """
+Copy a few random eligible corpus games into goldens fixtures dir.
+Prints out FixtureRecord lines for pasting into the registry.
+Usage: ./scripts/goldens_pick_throwaway_fixtures.py [SEED] [N]
+"""
+
+# NOTE: Temp throwaway fixtures for the goldens-1st-cut implementation.
+# We will replace those fixtures during proper fixture selection.
 
 from __future__ import annotations
 

@@ -1,8 +1,10 @@
-"""Prototype regen: writes every registry entry's references and prints one
-status line per file. Run from packages/training:
-
+"""
+Produce and write golden references for all registry entries.
+Run from packages/training:
     uv run python -m training.goldens.regen
 """
+
+# NOTE: Current status is semi-prototypish, vibe-cded by Claude.
 
 from __future__ import annotations
 

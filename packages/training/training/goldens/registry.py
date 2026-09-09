@@ -16,7 +16,7 @@ FIXTURES_DIR = DATA_ROOT / "fixtures"
 REFERENCES_DIR = DATA_ROOT / "references"
 
 
-# --- Records ---
+# --- Types ---
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -53,7 +53,9 @@ class SupervisionKey:
     hashed: bool = False
 
 
-# --- Data (plain values only) ---
+# --- Registry "Points" ---
+# TODO: Need a better name for "points". It used to be "config points" which worked.
+# But it isn't 1-1 anymore... need to sort that out and figure out the precise concept.
 
 OBS_POINTS = [
     ObsPoint(
@@ -66,8 +68,9 @@ OBS_POINTS = [
     ),
 ]
 
-# Append only: a group's reference file is named after the first point (in
-# this order) that emits the key, so inserting a point above others relocates files.
+# NOTE: This list is append only! Reference filenames depend on the order.
+# The "representative point" for a key is the first one in this list that emits it.
+# See `representative` below.
 SUPERVISION_POINTS = [
     SupervisionPoint(
         name="core",
@@ -156,6 +159,9 @@ def spec_for(point: SupervisionPoint) -> PartialEmitSpec:
 def group_id(key: SupervisionKey, spec: PartialEmitSpec) -> tuple[Any, ...]:
     targets_fields = {f.name for f in fields(TargetsConfig)}
     return tuple(
+        # -----------------------------------------------------
+        # TODO: hmmm not sure about this, seems a bit brittle.
+        # -----------------------------------------------------
         getattr(spec.targets, f) if f in targets_fields else getattr(spec, f)
         for f in key.deps
     )
@@ -212,7 +218,7 @@ def supervision_entries() -> list[SupervisionEntry]:
     return out
 
 
-# --- Import-time checks (pure, no IO) ---
+# --- Import-time checks ---
 
 
 def _assert_no_defaults(cls: type) -> None:
