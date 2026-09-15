@@ -6,17 +6,17 @@ import hashlib
 import numpy as np
 
 
-# Hash: blake2b, 8-byte digest, read as little-endian uint64. Canonical bytes
-# are the array's C-order buffer in its emitted dtype. TODO: sha256 may be
-# faster on this machine (7.15-2 §2); pick before the first committed bless.
+# Hash: sha256 truncated to its first 8 bytes, read as little-endian uint64.
+# Canonical bytes are the array's C-order buffer in its emitted dtype.
+# Picked over blake2b-8 by timing on the M1 (about 2x faster, hardware SHA).
 
 
 def _new_hasher():
-    return hashlib.blake2b(digest_size=8)
+    return hashlib.sha256()
 
 
 def _as_uint64(digest: bytes) -> int:
-    return int.from_bytes(digest, "little")
+    return int.from_bytes(digest[:8], "little")
 
 
 def _hash64(buf: bytes) -> int:
