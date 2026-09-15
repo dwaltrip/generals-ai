@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 from dataclasses import MISSING, dataclass, fields
+from enum import Enum
 from pathlib import Path
 from typing import Any
 
+from training.bc.aux_heads.elim_head_meta import ElimHeadVariant
+from training.bc.config.metrics_config import MetricsConfig
 from training.bc.config.targets_config import TargetsConfig
-from training.bc.datapipe.emit_spec import PartialEmitSpec
+from training.bc.datapipe.emit_spec import PartialEmitSpec, partial_emit_spec_from
 from training.bc.obs_config import ObsConfig
 
 
@@ -17,6 +20,11 @@ REFERENCES_DIR = DATA_ROOT / "references"
 
 
 # --- Types ---
+
+
+class RefForm(Enum):
+    FULL = "full"                  # the array as emitted
+    FRAME_HASHES = "frame_hashes"  # one hash per row along the first axis
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -33,40 +41,47 @@ class FixtureRecord:
 @dataclass(frozen=True, kw_only=True)
 class ObsPoint:
     name: str
-    cfg: dict[str, Any]
+    cfg: ObsConfig
 
 
 @dataclass(frozen=True, kw_only=True)
 class SupervisionPoint:
     name: str
-    targets: dict[str, Any]
-    emit_alive_mask: bool
+    cfg: TargetsConfig
     keys: tuple[str, ...]
 
 
 @dataclass(frozen=True, kw_only=True)
 class SupervisionKey:
     name: str
-    # Config fields this key's bytes depend on. Points that agree on these
-    # fields share one stored reference. Regen verifies the claim.
+    # TargetsConfig fields this key's bytes depend on. Points that agree on
+    # these fields share one stored reference. Regen verifies the claim.
     deps: tuple[str, ...]
-    hashed: bool = False
+    form: RefForm
 
 
-# --- Registry "Points" ---
-# TODO: Need a better name for "points". It used to be "config points" which worked.
-# But it isn't 1-1 anymore... need to sort that out and figure out the precise concept.
+# --- Registry data ---
+#
+# A point is a config value: the stored config for one guarded surface. Every
+# config here is written out as a literal. Never reference a named config
+# constant (e.g. OBS_CONFIG_DEFAULTS): the registry pins values so that prod's
+# defaults can move without re-describing what is guarded.
 
 OBS_POINTS = [
     ObsPoint(
         name="fp16_player_status_on",
-        cfg={"dense_history_n": 5, "obs_dtype": "fp16", "player_status_channels": True},
+        cfg=ObsConfig(dense_history_n=5, obs_dtype="fp16", player_status_channels=True),
     ),
     ObsPoint(
         name="fp32_pre_player_status",
-        cfg={"dense_history_n": 5, "obs_dtype": "fp32", "player_status_channels": False},
+        cfg=ObsConfig(dense_history_n=5, obs_dtype="fp32", player_status_channels=False),
     ),
 ]
+
+# The metrics surface is not guarded. A point holds every config field that
+# affects the bytes of an emitted key. Fields that only add or remove columns
+# (metrics column requests) are held at their null value.
+_METRICS = MetricsConfig(include_alive_mask=False)
 
 # NOTE: This list is append only! Reference filenames depend on the order.
 # The "representative point" for a key is the first one in this list that emits it.
@@ -74,22 +89,17 @@ OBS_POINTS = [
 SUPERVISION_POINTS = [
     SupervisionPoint(
         name="core",
-        targets={"elim_variant": None, "elim_bin_edges": None},
-        emit_alive_mask=False,
+        cfg=TargetsConfig(elim_variant=None, elim_bin_edges=None),
         keys=("legality_mask", "action_target", "is_pass", "value_target"),
-    ),
-    SupervisionPoint(
-        name="alive_only",
-        targets={"elim_variant": None, "elim_bin_edges": None},
-        emit_alive_mask=True,
-        keys=("legality_mask", "action_target", "is_pass", "value_target", "alive_mask"),
     ),
     SupervisionPoint(
         name="time_bin",
         # TODO(sweep): confirm the edges against the checkpoints that trained
         # with the elim head (8.12-2 §9). Currently the ModelConfig default.
-        targets={"elim_variant": "time_bin", "elim_bin_edges": [10, 20, 40, 80, 160, 320, 640]},
-        emit_alive_mask=True,
+        cfg=TargetsConfig(
+            elim_variant=ElimHeadVariant.TIME_BIN,
+            elim_bin_edges=(10, 20, 40, 80, 160, 320, 640),
+        ),
         keys=(
             "legality_mask", "action_target", "is_pass", "value_target",
             "alive_mask", "elim_bin_target",
@@ -97,27 +107,25 @@ SUPERVISION_POINTS = [
     ),
     SupervisionPoint(
         name="next_death",
-        targets={"elim_variant": "next_death", "elim_bin_edges": None},
-        emit_alive_mask=True,
+        cfg=TargetsConfig(elim_variant=ElimHeadVariant.NEXT_DEATH, elim_bin_edges=None),
         keys=(
             "legality_mask", "action_target", "is_pass", "value_target",
-            "alive_mask", "next_elim_target", "next_elim_dt",
-            "next_elim_removal_dt", "present_mask",
+            "next_elim_target", "next_elim_dt", "next_elim_removal_dt", "present_mask",
         ),
     ),
 ]
 
 SUPERVISION_KEYS = [
-    SupervisionKey(name="legality_mask", deps=(), hashed=True),
-    SupervisionKey(name="action_target", deps=()),
-    SupervisionKey(name="is_pass", deps=()),
-    SupervisionKey(name="value_target", deps=()),
-    SupervisionKey(name="alive_mask", deps=()),
-    SupervisionKey(name="elim_bin_target", deps=("elim_variant", "elim_bin_edges")),
-    SupervisionKey(name="next_elim_target", deps=("elim_variant",)),
-    SupervisionKey(name="next_elim_dt", deps=("elim_variant",)),
-    SupervisionKey(name="next_elim_removal_dt", deps=("elim_variant",)),
-    SupervisionKey(name="present_mask", deps=("elim_variant",)),
+    SupervisionKey(name="legality_mask", deps=(), form=RefForm.FRAME_HASHES),
+    SupervisionKey(name="action_target", deps=(), form=RefForm.FULL),
+    SupervisionKey(name="is_pass", deps=(), form=RefForm.FULL),
+    SupervisionKey(name="value_target", deps=(), form=RefForm.FULL),
+    SupervisionKey(name="alive_mask", deps=(), form=RefForm.FULL),
+    SupervisionKey(name="elim_bin_target", deps=("elim_variant", "elim_bin_edges"), form=RefForm.FULL),
+    SupervisionKey(name="next_elim_target", deps=("elim_variant",), form=RefForm.FULL),
+    SupervisionKey(name="next_elim_dt", deps=("elim_variant",), form=RefForm.FULL),
+    SupervisionKey(name="next_elim_removal_dt", deps=("elim_variant",), form=RefForm.FULL),
+    SupervisionKey(name="present_mask", deps=("elim_variant",), form=RefForm.FULL),
 ]
 
 FIXTURES = [
@@ -131,6 +139,13 @@ FIXTURES = [
 
 
 @dataclass(frozen=True)
+class KeyRef:
+    key: str
+    form: RefForm
+    path: Path
+
+
+@dataclass(frozen=True)
 class ObsEntry:
     point: str
     cfg: ObsConfig
@@ -141,35 +156,27 @@ class ObsEntry:
 @dataclass(frozen=True)
 class SupervisionEntry:
     point: str
+    cfg: TargetsConfig
     spec: PartialEmitSpec
-    keys: tuple[str, ...]
-    hashed_keys: frozenset[str]
     fixture: FixtureRecord
-    paths: dict[str, Path]
+    refs: dict[str, KeyRef]
+
+    @property
+    def keys(self) -> tuple[str, ...]:
+        return tuple(self.refs)
 
 
 def spec_for(point: SupervisionPoint) -> PartialEmitSpec:
-    return PartialEmitSpec(
-        targets=TargetsConfig(**point.targets),
-        emit_alive_mask=point.emit_alive_mask,
-        attach_sim_frame=False,
-    )
+    return partial_emit_spec_from(point.cfg, _METRICS)
 
 
-def group_id(key: SupervisionKey, spec: PartialEmitSpec) -> tuple[Any, ...]:
-    targets_fields = {f.name for f in fields(TargetsConfig)}
-    return tuple(
-        # -----------------------------------------------------
-        # TODO: hmmm not sure about this, seems a bit brittle.
-        # -----------------------------------------------------
-        getattr(spec.targets, f) if f in targets_fields else getattr(spec, f)
-        for f in key.deps
-    )
+def group_id(key: SupervisionKey, cfg: TargetsConfig) -> tuple[Any, ...]:
+    return tuple(getattr(cfg, f) for f in key.deps)
 
 
 def representative(key: SupervisionKey, gid: tuple[Any, ...]) -> str:
     for point in SUPERVISION_POINTS:
-        if key.name in point.keys and group_id(key, spec_for(point)) == gid:
+        if key.name in point.keys and group_id(key, point.cfg) == gid:
             return point.name
     raise KeyError(f"no point emits {key.name!r} with group {gid!r}")
 
@@ -182,19 +189,14 @@ def obs_ref_path(point: str, fixture: FixtureRecord) -> Path:
     return REFERENCES_DIR / "obs" / point / f"{fixture.id}.npz"
 
 
-def supervision_ref_path(key: SupervisionKey, spec: PartialEmitSpec, fixture: FixtureRecord) -> Path:
-    rep = representative(key, group_id(key, spec))
+def supervision_ref_path(key: SupervisionKey, cfg: TargetsConfig, fixture: FixtureRecord) -> Path:
+    rep = representative(key, group_id(key, cfg))
     return REFERENCES_DIR / "supervision" / fixture.id / f"{rep}{REP_SEP}{key.name}.npy"
 
 
 def obs_entries() -> list[ObsEntry]:
     return [
-        ObsEntry(
-            point=p.name,
-            cfg=ObsConfig(**p.cfg),
-            fixture=fx,
-            ref_path=obs_ref_path(p.name, fx),
-        )
+        ObsEntry(point=p.name, cfg=p.cfg, fixture=fx, ref_path=obs_ref_path(p.name, fx))
         for p in OBS_POINTS
         for fx in FIXTURES
     ]
@@ -205,16 +207,15 @@ def supervision_entries() -> list[SupervisionEntry]:
     for p in SUPERVISION_POINTS:
         spec = spec_for(p)
         for fx in FIXTURES:
-            out.append(
-                SupervisionEntry(
-                    point=p.name,
-                    spec=spec,
-                    keys=p.keys,
-                    hashed_keys=frozenset(k for k in p.keys if supervision_key(k).hashed),
-                    fixture=fx,
-                    paths={k: supervision_ref_path(supervision_key(k), spec, fx) for k in p.keys},
+            refs = {
+                name: KeyRef(
+                    key=name,
+                    form=supervision_key(name).form,
+                    path=supervision_ref_path(supervision_key(name), p.cfg, fx),
                 )
-            )
+                for name in p.keys
+            }
+            out.append(SupervisionEntry(point=p.name, cfg=p.cfg, spec=spec, fixture=fx, refs=refs))
     return out
 
 
@@ -229,7 +230,7 @@ def _assert_no_defaults(cls: type) -> None:
 
 
 def _validate() -> None:
-    for cls in (TargetsConfig, ObsConfig, PartialEmitSpec):
+    for cls in (TargetsConfig, ObsConfig, MetricsConfig, PartialEmitSpec):
         _assert_no_defaults(cls)
 
     for names in (
@@ -247,15 +248,15 @@ def _validate() -> None:
         f"keysets vs SUPERVISION_KEYS: missing {emitted - declared}, unused {declared - emitted}"
     )
 
-    dep_fields = {f.name for f in fields(TargetsConfig)} | {f.name for f in fields(PartialEmitSpec)}
+    dep_fields = {f.name for f in fields(TargetsConfig)}
     for key in SUPERVISION_KEYS:
         bad = set(key.deps) - dep_fields
-        assert not bad, f"{key.name}: unknown dependency fields {bad}"
+        assert not bad, f"{key.name}: unknown TargetsConfig fields {bad}"
 
-    for p in OBS_POINTS:
-        ObsConfig(**p.cfg)
     for p in SUPERVISION_POINTS:
-        spec_for(p)
+        assert ("alive_mask" in p.keys) == spec_for(p).emit_alive_mask, (
+            f"{p.name}: alive_mask in keys must match the derived emit_alive_mask"
+        )
 
 
 _KEYS_BY_NAME = {k.name: k for k in SUPERVISION_KEYS}

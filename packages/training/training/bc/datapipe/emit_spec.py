@@ -37,30 +37,38 @@ class EmitSpec:
 
     @property
     def partial(self) -> PartialEmitSpec:
-        return PartialEmitSpec(
-            targets=self.targets,
-            emit_alive_mask=self.emit_alive_mask,
-            attach_sim_frame=self.attach_sim_frame,
-        )
+        return PartialEmitSpec(targets=self.targets, emit_alive_mask=self.emit_alive_mask)
 
 
 @dataclass(frozen=True, kw_only=True)
 class PartialEmitSpec:
-    """Partial emit spec with `obs` and `emit_frame_info` left open.
-    Used for analysis."""
+    """The part of the spec the emission tail and the per-game precompute read.
+    `obs` and the packing flags are left open."""
 
     targets: TargetsConfig
     emit_alive_mask: bool
-    attach_sim_frame: bool
 
-    def to_spec(self, obs: ObsConfig, *, emit_frame_info: bool) -> EmitSpec:
+    def to_spec(
+        self, obs: ObsConfig, *, emit_frame_info: bool, attach_sim_frame: bool
+    ) -> EmitSpec:
         return EmitSpec(
             obs=obs,
             targets=self.targets,
             emit_alive_mask=self.emit_alive_mask,
             emit_frame_info=emit_frame_info,
-            attach_sim_frame=self.attach_sim_frame,
+            attach_sim_frame=attach_sim_frame,
         )
+
+
+def partial_emit_spec_from(targets: TargetsConfig, metrics: MetricsConfig) -> PartialEmitSpec:
+    # TODO: `alive_mask` is emitted when either the loss needs it (time_bin) or
+    # metrics request it. If more keys end up wanted by several configs, this
+    # "who requires which key" logic needs a proper home rather than an `or` here.
+    return PartialEmitSpec(
+        targets=targets,
+        emit_alive_mask=metrics.include_alive_mask
+        or does_elim_head_need_alive_mask(targets.elim_variant),
+    )
 
 
 def base_emit_spec(obs: ObsConfig) -> EmitSpec:
@@ -81,13 +89,8 @@ def emit_spec_from(
     emit_frame_info: bool,
     attach_sim_frame: bool = False,
 ) -> EmitSpec:
-    return EmitSpec(
-        obs=arch.obs,
-        targets=targets_cfg_from(arch),
-        emit_alive_mask=metrics.include_alive_mask
-        or does_elim_head_need_alive_mask(arch.elim_head_variant),
-        emit_frame_info=emit_frame_info,
-        attach_sim_frame=attach_sim_frame,
+    return partial_emit_spec_from(targets_cfg_from(arch), metrics).to_spec(
+        arch.obs, emit_frame_info=emit_frame_info, attach_sim_frame=attach_sim_frame
     )
 
 

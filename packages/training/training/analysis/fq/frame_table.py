@@ -185,20 +185,19 @@ def build_frame_table(
         samples = cap_by_games(samples, max_games)
     subset_to_full = np.array([full_pos[(p, k)] for p, k in samples], dtype=np.int64)
     # TODO(fq-emit-spec-partial-fix): `fq` currently requires the alive mask and
-    # an attached sim for all tables, whether or not the analysis uses them.
-    # It should support False for emit_alive_mask and attach_sim_frame.
-    # Currently "alive_mask" is read unconditionally (without good reason).
-    # The sim frame flag is not intrinsically needed either: `gid` can be built
-    # other ways (e.g. sample_idx). And the other sim-frame reads
-    # (sim, t, raw_order) are only consumed by derivers that already need the sim.
-    assert spec.emit.emit_alive_mask and spec.emit.attach_sim_frame, (
-        "fq requires emit_alive_mask and attach_sim_frame"
-        " — see TODO(fq-emit-spec-partial-fix) above"
+    # attaches the sim frame for all tables, whether or not the analysis uses them.
+    # It should support False for both. Currently "alive_mask" is read
+    # unconditionally (without good reason). The sim frame is not intrinsically
+    # needed either: `gid` can be built other ways (e.g. sample_idx). And the other
+    # sim-frame reads (sim, t, raw_order) are only consumed by derivers that
+    # already need the sim.
+    assert spec.emit.emit_alive_mask, (
+        "fq requires emit_alive_mask — see TODO(fq-emit-spec-partial-fix) above"
     )
     ds = IterableDataset(
         samples=samples,
         seed=0,
-        spec=spec.emit.to_spec(obs_cfg, emit_frame_info=True),
+        spec=spec.emit.to_spec(obs_cfg, emit_frame_info=True, attach_sim_frame=True),
         shuffle_buffer_size=0,
     )
 

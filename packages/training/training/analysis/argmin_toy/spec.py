@@ -39,7 +39,6 @@ ARGMIN_TOY = FrameTableSpec(
     emit=PartialEmitSpec(
         targets=TARGETS_CFG_NO_ELIM,
         emit_alive_mask=True,
-        attach_sim_frame=True,
     ),
     emit_cols={"alive_mask": "alive"},
     derivers=[ARMY_SIM, LAND_SIM, CAPTURED],

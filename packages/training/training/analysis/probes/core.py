@@ -81,7 +81,6 @@ def emit_partial_for(needs: FrameNeeds) -> PartialEmitSpec:
             elim_variant=ElimHeadVariant.coerce(needs.elim_variant), elim_bin_edges=None
         ),
         emit_alive_mask=needs.alive_mask,
-        attach_sim_frame=False,
     )
 
 
@@ -224,7 +223,9 @@ def cache_probe_features(
     ds = IterableDataset(
         samples=samples,
         seed=seed,
-        spec=emit_partial_for(task.frame_needs).to_spec(obs_cfg, emit_frame_info=False),
+        spec=emit_partial_for(task.frame_needs).to_spec(
+            obs_cfg, emit_frame_info=False, attach_sim_frame=False
+        ),
     )
 
     obs_buf: list[torch.Tensor] = []

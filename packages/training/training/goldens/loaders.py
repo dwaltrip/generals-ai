@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from pathlib import Path
 
 import numpy as np
 
 from training.bc.datapipe.sim_types import CorpusGame, PerspectiveMeta, SimGame
 from training.goldens.hashes import ObsDigest
-from training.goldens.registry import FIXTURES_DIR, FixtureRecord
+from training.goldens.registry import FIXTURES_DIR, FixtureRecord, KeyRef
 
 
 def load_fixture(fixture: FixtureRecord) -> tuple[SimGame, PerspectiveMeta]:
@@ -25,11 +26,11 @@ def load_obs_digest(path: Path) -> ObsDigest | None:
         return ObsDigest(frame_hashes=z["frame_hashes"], channel_hashes=z["channel_hashes"])
 
 
-def load_supervision_reference(paths: dict[str, Path]) -> dict[str, np.ndarray] | None:
+def load_supervision_reference(refs: Mapping[str, KeyRef]) -> dict[str, np.ndarray] | None:
     out = {}
-    for key, path in paths.items():
-        arr = load_array(path)
+    for ref in refs.values():
+        arr = load_array(ref.path)
         if arr is None:
             return None
-        out[key] = arr
+        out[ref.key] = arr
     return out

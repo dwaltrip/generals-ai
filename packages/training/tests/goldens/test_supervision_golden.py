@@ -10,13 +10,13 @@ from training.goldens.registry import SupervisionEntry, supervision_entries
     "entry", supervision_entries(), ids=lambda e: f"{e.point}-{e.fixture.id}"
 )
 def test_supervision_golden(entry: SupervisionEntry) -> None:
-    ref = load_supervision_reference(entry.paths)
+    ref = load_supervision_reference(entry.refs)
     if ref is None:
         label = f"{entry.point}-{entry.fixture.id}"
         pytest.fail(f"unblessed: no supervision references for {label}, run regen")
 
     game, persp = load_fixture(entry.fixture)
-    got = to_stored(compute_supervision(game, persp, entry.spec), entry.hashed_keys)
+    got = to_stored(compute_supervision(game, persp, entry.spec), entry.refs)
 
     mismatch = compare_supervision(got, ref, entry.keys)
     if mismatch is not None:

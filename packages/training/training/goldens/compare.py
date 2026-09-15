@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 import numpy as np
 
 from training.goldens.hashes import ObsDigest, hash_along_first_axis
+from training.goldens.registry import KeyRef, RefForm
 
 
 def same_bytes(a: np.ndarray, b: np.ndarray) -> bool:
@@ -14,12 +16,16 @@ def same_bytes(a: np.ndarray, b: np.ndarray) -> bool:
 # --- Stored form ---
 
 
-def stored_form(key: str, arr: np.ndarray, hashed_keys: frozenset[str]) -> np.ndarray:
-    return hash_along_first_axis(arr) if key in hashed_keys else arr
+def stored_form(form: RefForm, arr: np.ndarray) -> np.ndarray:
+    match form:
+        case RefForm.FULL:
+            return arr
+        case RefForm.FRAME_HASHES:
+            return hash_along_first_axis(arr)
 
 
-def to_stored(raw: dict[str, np.ndarray], hashed_keys: frozenset[str]) -> dict[str, np.ndarray]:
-    return {key: stored_form(key, arr, hashed_keys) for key, arr in raw.items()}
+def to_stored(raw: dict[str, np.ndarray], refs: Mapping[str, KeyRef]) -> dict[str, np.ndarray]:
+    return {key: stored_form(refs[key].form, arr) for key, arr in raw.items()}
 
 
 # --- Per-key row diff, shared by the tests and regen ---

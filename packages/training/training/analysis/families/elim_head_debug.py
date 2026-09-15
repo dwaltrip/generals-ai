@@ -50,7 +50,6 @@ ELIM_HEAD_DEBUG = FrameTableSpec(
     emit=PartialEmitSpec(
         targets=TARGETS_CFG_ELIM_NEXT_DEATH,
         emit_alive_mask=True,
-        attach_sim_frame=True,
     ),
     emit_cols={
         "alive_mask": "alive",

@@ -89,7 +89,6 @@ def test_captured_column_implications(samples: list[tuple[Path, int]]) -> None:
         emit=PartialEmitSpec(
             targets=TARGETS_CFG_NO_ELIM,
             emit_alive_mask=True,
-            attach_sim_frame=True,
         ),
         emit_cols={"alive_mask": "alive"},
         derivers=[ARMY_SIM, CAPTURED],

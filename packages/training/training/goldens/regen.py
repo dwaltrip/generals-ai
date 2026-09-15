@@ -88,7 +88,7 @@ def _plan_supervision(
         groups: dict[tuple[Any, ...], list[SupervisionEntry]] = defaultdict(list)
         for e in entries:
             if key.name in e.keys:
-                groups[group_id(key, e.spec)].append(e)
+                groups[group_id(key, e.cfg)].append(e)
 
         group_arrays: dict[tuple[Any, ...], np.ndarray] = {}
         for gid, members in groups.items():
@@ -105,11 +105,11 @@ def _plan_supervision(
                 print("Either the dependency table is stale or the code diverged. Nothing written.")
                 sys.exit(1)
 
-            stored = stored_form(key.name, base, members[0].hashed_keys)
+            stored = stored_form(key.form, base)
             group_arrays[gid] = stored
             planned.append(
                 _PlannedFile(
-                    path=members[0].paths[key.name],
+                    path=members[0].refs[key.name].path,
                     array=stored,
                     members=tuple(m.point for m in members),
                 )
@@ -129,13 +129,13 @@ def _plan_supervision(
 def _write_supervision(fx: FixtureRecord, planned: list[_PlannedFile], warnings: list[str]) -> None:
     fixture_dir = REFERENCES_DIR / "supervision" / fx.id
     fixture_dir.mkdir(parents=True, exist_ok=True)
-    written_new: dict[Path, bytes] = {}
+    written_new: dict[Path, np.ndarray] = {}
     for item in planned:
         old = load_array(item.path)
         status = _status(item.path.stem, old, item.array)
         np.save(item.path, item.array)
         if old is None:
-            written_new[item.path] = item.array.tobytes()
+            written_new[item.path] = item.array
         print(f"  {status:12s} {_rel(item.path)}   <- {', '.join(item.members)}")
     for line in warnings:
         print(line)
@@ -144,7 +144,7 @@ def _write_supervision(fx: FixtureRecord, planned: list[_PlannedFile], warnings:
     for path in sorted(fixture_dir.iterdir()):
         if path in expected:
             continue
-        kind = "moved" if any(path.read_bytes() == b for b in written_new.values()) else "removed"
+        kind = "moved" if any(same_bytes(np.load(path), a) for a in written_new.values()) else "removed"
         path.unlink()
         print(f"  {kind:12s} {_rel(path)}")
 
