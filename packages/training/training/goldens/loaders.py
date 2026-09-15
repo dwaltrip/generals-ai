@@ -1,18 +1,12 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
 
 from training.bc.datapipe.sim_types import GameMeta, PerspectiveMeta
+from training.goldens.hashes import ObsDigest
 from training.goldens.registry import FIXTURES_DIR, FixtureRecord
-
-
-@dataclass(frozen=True)
-class ObsReference:
-    frame_hashes: np.ndarray
-    channel_hashes: np.ndarray
 
 
 def _load_npz(path: Path) -> dict[str, np.ndarray]:
@@ -36,11 +30,11 @@ def load_array(path: Path) -> np.ndarray | None:
     return np.load(path) if path.exists() else None
 
 
-def load_obs_reference(path: Path) -> ObsReference | None:
+def load_obs_digest(path: Path) -> ObsDigest | None:
     if not path.exists():
         return None
     z = _load_npz(path)
-    return ObsReference(frame_hashes=z["frame_hashes"], channel_hashes=z["channel_hashes"])
+    return ObsDigest(frame_hashes=z["frame_hashes"], channel_hashes=z["channel_hashes"])
 
 
 def load_supervision_reference(paths: dict[str, Path]) -> dict[str, np.ndarray] | None:

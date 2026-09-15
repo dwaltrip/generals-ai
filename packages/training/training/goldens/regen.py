@@ -17,10 +17,9 @@ from typing import Any
 import numpy as np
 
 from training.bc.datapipe.sim_types import GameMeta
-from training.bc.datapipe.walk import walk
-from training.goldens.compare import same_bytes, stored_form
-from training.goldens.hashes import hash_channels, hash_frames
-from training.goldens.loaders import load_array, load_fixture, load_obs_reference, perspective_for
+from training.goldens.compare import compare_obs, diff_rows, same_bytes, stored_form
+from training.goldens.compute import compute_obs, compute_supervision
+from training.goldens.loaders import load_array, load_fixture, load_obs_digest, perspective_for
 from training.goldens.registry import (
     FIXTURES,
     REFERENCES_DIR,
@@ -31,22 +30,13 @@ from training.goldens.registry import (
     obs_entries,
     supervision_entries,
 )
-from training.goldens.supervision_compute import compute_supervision
 
 
-def _first_diff(a: np.ndarray, b: np.ndarray) -> str:
-    if a.shape != b.shape or a.dtype != b.dtype:
-        return f"shape/dtype {a.shape} {a.dtype} vs {b.shape} {b.dtype}"
-    rows = np.nonzero((a != b).reshape(a.shape[0], -1).any(axis=1))[0]
-    return f"{rows.size} of {a.shape[0]} frames, first t={int(rows[0])}"
-
-
-def _status(old: np.ndarray | None, new: np.ndarray) -> str:
+def _status(key: str, old: np.ndarray | None, new: np.ndarray) -> str:
     if old is None:
         return "new"
-    if same_bytes(old, new):
-        return "unchanged"
-    return f"changed ({_first_diff(new, old)})"
+    diff = diff_rows(key, new, old)
+    return "unchanged" if diff is None else f"changed ({diff.summary()})"
 
 
 def _rel(path: Path) -> str:
@@ -55,23 +45,19 @@ def _rel(path: Path) -> str:
 
 def _regen_obs(fx: FixtureRecord, sim, game_meta: GameMeta, persp) -> None:
     for entry in (e for e in obs_entries() if e.fixture == fx):
-        frames = list(walk(sim, game_meta, persp, entry.cfg))
-        frame_hashes, channel_hashes = hash_frames(frames), hash_channels(frames)
-        old = load_obs_reference(entry.ref_path)
+        digest = compute_obs(sim, game_meta, persp, entry.cfg)
+        old = load_obs_digest(entry.ref_path)
         if old is None:
             status = "new"
-        elif same_bytes(old.frame_hashes, frame_hashes) and same_bytes(old.channel_hashes, channel_hashes):
-            status = "unchanged"
         else:
-            ticks = np.nonzero(old.frame_hashes != frame_hashes)[0] if old.frame_hashes.shape == frame_hashes.shape else None
-            chans = np.nonzero(old.channel_hashes != channel_hashes)[0] if old.channel_hashes.shape == channel_hashes.shape else None
-            status = (
-                f"changed ({ticks.size} ticks, first t={int(ticks[0])}, channels={chans.tolist()})"
-                if ticks is not None and chans is not None and ticks.size
-                else f"changed (shape {frame_hashes.shape} vs {old.frame_hashes.shape})"
-            )
+            mismatch = compare_obs(digest, old)
+            status = "unchanged" if mismatch is None else f"changed ({mismatch.summary()})"
         entry.ref_path.parent.mkdir(parents=True, exist_ok=True)
-        np.savez(entry.ref_path, frame_hashes=frame_hashes, channel_hashes=channel_hashes)
+        np.savez(
+            entry.ref_path,
+            frame_hashes=digest.frame_hashes,
+            channel_hashes=digest.channel_hashes,
+        )
         print(f"  {status:12s} {_rel(entry.ref_path)}")
 
 
@@ -86,7 +72,7 @@ def _plan_supervision(
     fx: FixtureRecord, sim, game_meta: GameMeta, persp
 ) -> tuple[list[_PlannedFile], list[str]]:
     entries = [e for e in supervision_entries() if e.fixture == fx]
-    got = {e.point: compute_supervision(sim, game_meta, persp, e) for e in entries}
+    got = {e.point: compute_supervision(sim, game_meta, persp, e.spec) for e in entries}
 
     for e in entries:
         if set(got[e.point]) != set(e.keys):
@@ -113,7 +99,9 @@ def _plan_supervision(
                 print(f"\ncontradiction on fixture {fx.id}: key {key.name!r} deps={key.deps}")
                 print(f"  agree:  {', '.join(agree)}")
                 for p in differ:
-                    print(f"  differs: {p} ({_first_diff(got[p][key.name], base)})")
+                    diff = diff_rows(key.name, got[p][key.name], base)
+                    assert diff is not None
+                    print(f"  differs: {p} ({diff.summary()})")
                 print("Either the dependency table is stale or the code diverged. Nothing written.")
                 sys.exit(1)
 
@@ -144,7 +132,7 @@ def _write_supervision(fx: FixtureRecord, planned: list[_PlannedFile], warnings:
     written_new: dict[Path, bytes] = {}
     for item in planned:
         old = load_array(item.path)
-        status = _status(old, item.array)
+        status = _status(item.path.stem, old, item.array)
         np.save(item.path, item.array)
         if old is None:
             written_new[item.path] = item.array.tobytes()
