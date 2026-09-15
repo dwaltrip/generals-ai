@@ -2,9 +2,16 @@
 Produce and write golden references for all registry entries.
 Run from packages/training:
     uv run python -m training.goldens.regen
-"""
 
-# NOTE: Current status is semi-prototypish, vibe-cded by Claude.
+Every fixture is computed and checked before anything is written, so a
+contradiction leaves the references untouched. Afterward, files under the
+references tree that no entry claims are deleted and reported.
+
+TODO: still to build: the fire report beyond per-file status lines, choosing
+the baseline to diff against, the boundary-record skeleton, and the
+identical-groups check done once per key across all fixtures (today it runs
+per fixture, which is the wrong granularity: see 9.13-1).
+"""
 
 from __future__ import annotations
 
@@ -19,6 +26,7 @@ import numpy as np
 from training.bc.datapipe.sim_types import PerspectiveMeta, SimGame
 from training.goldens.compare import compare_obs, diff_rows, same_bytes, stored_form
 from training.goldens.compute import compute_obs, compute_supervision
+from training.goldens.hashes import ObsDigest
 from training.goldens.loaders import load_array, load_fixture, load_obs_digest
 from training.goldens.registry import (
     FIXTURES,
@@ -32,45 +40,45 @@ from training.goldens.registry import (
 )
 
 
-def _status(key: str, old: np.ndarray | None, new: np.ndarray) -> str:
-    if old is None:
-        return "new"
-    diff = diff_rows(key, new, old)
-    return "unchanged" if diff is None else f"changed ({diff.summary()})"
+@dataclass(frozen=True)
+class _ObsFile:
+    path: Path
+    digest: ObsDigest
+
+
+@dataclass(frozen=True)
+class _SupervisionFile:
+    path: Path
+    array: np.ndarray
+    members: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class _FixturePlan:
+    header: str
+    obs: list[_ObsFile]
+    supervision: list[_SupervisionFile]
+    warnings: list[str]
 
 
 def _rel(path: Path) -> str:
     return str(path.relative_to(REFERENCES_DIR))
 
 
-def _regen_obs(fx: FixtureRecord, game: SimGame, persp: PerspectiveMeta) -> None:
-    for entry in (e for e in obs_entries() if e.fixture == fx):
-        digest = compute_obs(game, persp, entry.cfg)
-        old = load_obs_digest(entry.ref_path)
-        if old is None:
-            status = "new"
-        else:
-            mismatch = compare_obs(digest, old)
-            status = "unchanged" if mismatch is None else f"changed ({mismatch.summary()})"
-        entry.ref_path.parent.mkdir(parents=True, exist_ok=True)
-        np.savez(
-            entry.ref_path,
-            frame_hashes=digest.frame_hashes,
-            channel_hashes=digest.channel_hashes,
-        )
-        print(f"  {status:12s} {_rel(entry.ref_path)}")
+# --- Plan ---
 
 
-@dataclass(frozen=True)
-class _PlannedFile:
-    path: Path
-    array: np.ndarray
-    members: tuple[str, ...]
+def _plan_obs(fx: FixtureRecord, game: SimGame, persp: PerspectiveMeta) -> list[_ObsFile]:
+    return [
+        _ObsFile(path=e.ref_path, digest=compute_obs(game, persp, e.cfg))
+        for e in obs_entries()
+        if e.fixture == fx
+    ]
 
 
 def _plan_supervision(
     fx: FixtureRecord, game: SimGame, persp: PerspectiveMeta
-) -> tuple[list[_PlannedFile], list[str]]:
+) -> tuple[list[_SupervisionFile], list[str]]:
     entries = [e for e in supervision_entries() if e.fixture == fx]
     got = {e.point: compute_supervision(game, persp, e.spec) for e in entries}
 
@@ -82,7 +90,7 @@ def _plan_supervision(
             )
             sys.exit(1)
 
-    planned: list[_PlannedFile] = []
+    planned: list[_SupervisionFile] = []
     warnings: list[str] = []
     for key in SUPERVISION_KEYS:
         groups: dict[tuple[Any, ...], list[SupervisionEntry]] = defaultdict(list)
@@ -108,7 +116,7 @@ def _plan_supervision(
             stored = stored_form(key.form, base)
             group_arrays[gid] = stored
             planned.append(
-                _PlannedFile(
+                _SupervisionFile(
                     path=members[0].refs[key.name].path,
                     array=stored,
                     members=tuple(m.point for m in members),
@@ -126,42 +134,79 @@ def _plan_supervision(
     return planned, warnings
 
 
-def _write_supervision(fx: FixtureRecord, planned: list[_PlannedFile], warnings: list[str]) -> None:
-    fixture_dir = REFERENCES_DIR / "supervision" / fx.id
-    fixture_dir.mkdir(parents=True, exist_ok=True)
-    written_new: dict[Path, np.ndarray] = {}
-    for item in planned:
-        old = load_array(item.path)
-        status = _status(item.path.stem, old, item.array)
-        np.save(item.path, item.array)
-        if old is None:
-            written_new[item.path] = item.array
-        print(f"  {status:12s} {_rel(item.path)}   <- {', '.join(item.members)}")
-    for line in warnings:
-        print(line)
+# --- Write ---
 
-    expected = {item.path for item in planned}
-    for path in sorted(fixture_dir.iterdir()):
-        if path in expected:
+
+def _write_obs(files: list[_ObsFile]) -> None:
+    for item in files:
+        old = load_obs_digest(item.path)
+        if old is None:
+            status = "new"
+        else:
+            mismatch = compare_obs(item.digest, old)
+            status = "unchanged" if mismatch is None else f"changed ({mismatch.summary()})"
+        item.path.parent.mkdir(parents=True, exist_ok=True)
+        np.savez(
+            item.path,
+            frame_hashes=item.digest.frame_hashes,
+            channel_hashes=item.digest.channel_hashes,
+        )
+        print(f"  {status:12s} {_rel(item.path)}")
+
+
+def _write_supervision(files: list[_SupervisionFile], written_new: dict[Path, np.ndarray]) -> None:
+    for item in files:
+        old = load_array(item.path)
+        if old is None:
+            status = "new"
+            written_new[item.path] = item.array
+        else:
+            diff = diff_rows(item.path.stem, item.array, old)
+            status = "unchanged" if diff is None else f"changed ({diff.summary()})"
+        item.path.parent.mkdir(parents=True, exist_ok=True)
+        np.save(item.path, item.array)
+        print(f"  {status:12s} {_rel(item.path)}   <- {', '.join(item.members)}")
+
+
+def _remove_orphans(expected: set[Path], written_new: dict[Path, np.ndarray]) -> None:
+    # A supervision orphan whose contents match a file written as new this run
+    # is a renamed group file (its representative point changed), reported as
+    # "moved". Anything else is "removed".
+    for path in sorted(p for p in REFERENCES_DIR.rglob("*") if p.is_file()):
+        if path in expected or path.name.startswith("."):
             continue
-        kind = "moved" if any(same_bytes(np.load(path), a) for a in written_new.values()) else "removed"
+        moved = path.suffix == ".npy" and any(
+            same_bytes(np.load(path), a) for a in written_new.values()
+        )
         path.unlink()
-        print(f"  {kind:12s} {_rel(path)}")
+        print(f"  {'moved' if moved else 'removed':12s} {_rel(path)}")
 
 
 def main() -> None:
-    # Compute and check every fixture before writing anything, so a
-    # contradiction leaves the references untouched.
-    loaded = []
+    plans: list[_FixturePlan] = []
     for fx in FIXTURES:
         game, persp = load_fixture(fx)
-        planned, warnings = _plan_supervision(fx, game, persp)
-        loaded.append((fx, game, persp, planned, warnings))
+        supervision, warnings = _plan_supervision(fx, game, persp)
+        plans.append(
+            _FixturePlan(
+                header=f"== {fx.id}  T={game.T} end_t={persp.end_t}  ({fx.note})",
+                obs=_plan_obs(fx, game, persp),
+                supervision=supervision,
+                warnings=warnings,
+            )
+        )
 
-    for fx, game, persp, planned, warnings in loaded:
-        print(f"== {fx.id}  T={game.T} end_t={persp.end_t}  ({fx.note})")
-        _regen_obs(fx, game, persp)
-        _write_supervision(fx, planned, warnings)
+    written_new: dict[Path, np.ndarray] = {}
+    for plan in plans:
+        print(plan.header)
+        _write_obs(plan.obs)
+        _write_supervision(plan.supervision, written_new)
+        for line in plan.warnings:
+            print(line)
+
+    expected = {f.path for p in plans for f in p.obs}
+    expected |= {f.path for p in plans for f in p.supervision}
+    _remove_orphans(expected, written_new)
 
 
 if __name__ == "__main__":
