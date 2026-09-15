@@ -238,7 +238,7 @@ def scoreboard_row(ownership_row: np.ndarray, armies_row: np.ndarray, P: int):
 
 
 def init_memory(
-    sim: dict[str, np.ndarray],
+    sim: Mapping[str, np.ndarray],
     perspective_slot: int,
     H: int,
     W: int,
@@ -293,7 +293,7 @@ def init_memory_live_fog_only(
 @timer.timed("step_memory")
 def step_memory(
     state: MemoryState,
-    sim: dict[str, np.ndarray],
+    sim: Mapping[str, np.ndarray],
     t: int,
     vis: np.ndarray,
     perspective_slot: int,
@@ -426,7 +426,7 @@ def step_memory(
 
 def _append_dense_history_pair(
     state: MemoryState,
-    sim: dict[str, np.ndarray],
+    sim: Mapping[str, np.ndarray],
     t: int,
     new_view: PerspectiveView,
     H: int,

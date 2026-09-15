@@ -29,7 +29,6 @@ from pathlib import Path
 import random
 from typing import TYPE_CHECKING
 
-import numpy as np
 import torch
 from torch.utils.data import DataLoader, default_collate
 from torch.utils.data import IterableDataset as TorchIterableDataset
@@ -37,10 +36,10 @@ from torch.utils.data import IterableDataset as TorchIterableDataset
 from training.bc import bfs
 from training.bc.datapipe.emit_spec import EmitSpec
 from training.bc.datapipe.encode_frame import encode_frame
-from training.bc.obs import init_memory, step_memory
 from training.bc.datapipe.precompute import precompute_for
 from training.bc.datapipe.sample import FrameMeta
-from training.bc.datapipe.sim_types import GameMeta
+from training.bc.datapipe.sim_types import CorpusGame
+from training.bc.obs import init_memory, step_memory
 from training.bc.visibility import compute_visibility
 from training.shared.timing import timer
 
@@ -292,52 +291,44 @@ class IterableDataset(TorchIterableDataset):
 
     def _walk(self, groups: list[PerspectivesByGame]) -> Iterator[dict[str, torch.Tensor]]:
         for g in groups:
-            meta_path = g.sim_path.with_name(g.sim_path.stem + ".meta.npz")
-
             # Timer: per-game volume read + npz DEFLATE decompression.
-            # `np.load` is lazy and the dict comprehensions cause the actual read+inflate.
-            # So the timer call needs to include the comprehensions (not just `load`).
             with timer.section("data_load"):
-                with np.load(g.sim_path) as sim_npz:
-                    sim = {key: sim_npz[key] for key in sim_npz.files}
-                with np.load(meta_path) as meta_npz:
-                    meta = {key: meta_npz[key] for key in meta_npz.files}
+                corpus = CorpusGame.load(g.sim_path)
+            game = corpus.sim
 
-            game_meta = GameMeta.from_npz(sim, meta)
-
-            pre = precompute_for(self._spec.partial, sim)
+            pre = precompute_for(self._spec.partial, game)
 
             for k in g.perspective_ks:
-                perspective = game_meta.perspectives[k]
+                perspective = corpus.perspectives[k]
 
                 with timer.section("perspective_setup"):
                     state = init_memory(
-                        sim,
+                        game,
                         perspective.slot,
-                        game_meta.H,
-                        game_meta.W,
+                        game.H,
+                        game.W,
                         self._spec.obs,
                     )
                     bfs_cache = bfs.init_bfs_cache()
 
                 for t in range(perspective.end_t):
                     vis = compute_visibility(
-                        sim["ownership"][t],
+                        game.ownership[t],
                         perspective.slot,
-                        game_meta.H,
-                        game_meta.W,
+                        game.H,
+                        game.W,
                     )
-                    step_memory(state, sim, t, vis, perspective.slot, game_meta.H, game_meta.W)
+                    step_memory(state, game, t, vis, perspective.slot, game.H, game.W)
 
                     frame_meta = None
                     if self._spec.emit_frame_info:
                         frame_meta = FrameMeta(
                             frame_t=torch.tensor(t, dtype=torch.int64),
                             players_alive=torch.tensor(
-                                game_meta.count_players_alive_at(t),
+                                game.count_players_alive_at(t),
                                 dtype=torch.int64,
                             ),
-                            p_start=torch.tensor(game_meta.p_start, dtype=torch.int64),
+                            p_start=torch.tensor(game.p_start, dtype=torch.int64),
                             sample_idx=torch.tensor(
                                 self._sample_index[(g.sim_path, k)], dtype=torch.int64
                             ),
@@ -346,9 +337,8 @@ class IterableDataset(TorchIterableDataset):
                     # Timer: reference span over the build_obs/mask/tail child seams.
                     with timer.section("encode_frame", grouped=False):
                         sample = encode_frame(
-                            sim,
+                            game,
                             t,
-                            game_meta,
                             perspective,
                             frame_meta,
                             vis,

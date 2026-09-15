@@ -1,33 +1,113 @@
-"""Domain objects over the raw sim/meta dicts.
+"""Domain objects for one recorded game.
 
-They represent the main nested layers or views of a game. Listed outermost first:
+Listed outermost first:
 
-- Game level: GameMeta
-- Player perspective level (for the given game): PerspectiveMeta
-- Frame level (one frame in the game, for the given perspective): SimFrame
+- `CorpusGame`: a parsed corpus game: the sim output plus its curated perspectives.
+- `SimGame`: the replay parser's sim output (`<id>.npz`), one field per array.
+- `PerspectiveMeta`: one curated player perspective of the game (from `<id>.meta.npz`).
+- `SimFrame`: one frame of the game, seen through a perspective's slot order.
 
-The construction inputs differ:
+Producers (the walk core, the emission tail, the per-game precompute) take a
+`SimGame` and a `PerspectiveMeta`. Only `CorpusGame` knows the curated list.
 
-`GameMeta` and `PerspectiveMeta` need the full replay-parser npz pair (sim + meta),
-so only code reading parser output can build them. The live path (`inference.py`)
-does not load or construct a meta dict.
-
-`SimFrame` only needs a sim dict, and accepts either of its two shapes:
-    - replay-parser output npz files: These are completed games. The sim dict has
-      the "full" set of keys, and all values are `ndarray`.
-    - The live path's hand-built dict: These games are still in progress. This sim
-      dict has a subset of the keys, and the time-indexed history fields are Python
-      lists of `ndarray` snapshots, appended per tick, as they occur. This is in
-      contrast to their npz counterparts, which are single pre-stacked `ndarray`s.
+The kernels under `bc.obs`, `bc.mask`, and `bc.targets` are shared with live
+inference, which builds its own sim dict as the game progresses (a subset of
+the keys, with the per-tick fields as growing lists). So the kernels take a
+`Mapping[str, ...]`, which both `SimGame` and the live dict satisfy.
 """
 
-from collections.abc import Mapping
-from dataclasses import dataclass
+from collections.abc import Iterator, Mapping
+from dataclasses import dataclass, fields
+from functools import cached_property
+from pathlib import Path
 from typing import Any
 
 import numpy as np
 
 from training.bc.slots import SlotOrder
+from training.bc.utils import meta_path_for
+
+
+@dataclass(frozen=True, eq=False)
+class SimGame(Mapping[str, np.ndarray]):
+    # The parser's output schema, in the order `write_sim_output` writes it
+    # (replay-parser/replay_parser/output.py). Values are kept as loaded.
+    replay_id: np.ndarray
+    version: np.ndarray
+    map_width: np.ndarray
+    map_height: np.ndarray
+    mountains: np.ndarray
+    initial_cities: np.ndarray
+    initial_city_armies: np.ndarray
+    initial_neutrals: np.ndarray
+    initial_neutral_armies: np.ndarray
+    initial_generals: np.ndarray
+    ownership: np.ndarray             # [T, H*W] int8
+    armies: np.ndarray                # [T, H*W] int16
+    cities: np.ndarray
+    cities_present_at: np.ndarray
+    death_events: np.ndarray          # [n, 2] (t, slot)
+    capture_events: np.ndarray        # [n, 3] (t, captor, captured)
+    neutralize_events: np.ndarray     # [n, 2] (t, slot)
+    actions_source: np.ndarray
+    actions_dest: np.ndarray
+    actions_is50: np.ndarray
+
+    @classmethod
+    def from_npz(cls, path: Path) -> SimGame:
+        names = _sim_field_names()
+        with np.load(path) as z:
+            assert set(z.files) == set(names), (
+                f"{path}: keys {sorted(set(z.files) ^ set(names))} differ from SimGame's fields"
+            )
+            return cls(**{name: z[name] for name in names})
+
+    @property
+    def T(self) -> int:
+        return self.ownership.shape[0]
+
+    @property
+    def H(self) -> int:
+        return int(self.map_height)
+
+    @property
+    def W(self) -> int:
+        return int(self.map_width)
+
+    @cached_property
+    def deaths(self) -> np.ndarray:
+        # Sorted death ticks for every eliminated player.
+        if self.death_events.size == 0:
+            return np.zeros(0, dtype=np.int64)
+        return np.sort(self.death_events[:, 0])
+
+    @cached_property
+    def p_start(self) -> int:
+        # The meta npz doesn't report player count, so we derive it from board
+        # presence on game tick 0 (all players start with a single tile).
+        # TODO: Fix this, we shouldn't have to do this. meta.npz should have player count.
+        return int((np.unique(self.ownership[0]) >= 0).sum())
+
+    def count_players_alive_at(self, t: int) -> int:
+        # A player eliminated at frame `t` is counted as dead in that same frame.
+        # This is why we pin to the "right" side.
+        return self.p_start - int(np.searchsorted(self.deaths, t, side="right"))
+
+    # TODO(sim-typing): temporary Mapping shim. The kernels still read
+    # `sim["key"]`, and live inference passes its own dict. Remove when the
+    # kernels switch to attribute access (planned with the inference refactor).
+    def __getitem__(self, key: str) -> np.ndarray:
+        return getattr(self, key)
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(_sim_field_names())
+
+    def __len__(self) -> int:
+        return len(_sim_field_names())
+
+
+def _sim_field_names() -> tuple[str, ...]:
+    return tuple(f.name for f in fields(SimGame))
 
 
 @dataclass(frozen=True)
@@ -63,65 +143,37 @@ class PerspectiveMeta:
 
 
 @dataclass(frozen=True)
-class GameMeta:
-    # tick count — length of the sim arrays' time axis
-    T: int
-    H: int
-    W: int
-    # number of starting players
-    p_start: int
-    # sorted death timesteps
-    deaths: np.ndarray
-    # every perspective recorded in the meta npz, keyed by `perspective_k`
+class CorpusGame:
+    sim: SimGame
+    # Every perspective recorded in the meta npz, keyed by `perspective_k`.
     perspectives: dict[int, PerspectiveMeta]
 
     @classmethod
-    def from_npz(cls, sim: dict[str, np.ndarray], meta: dict[str, np.ndarray]) -> GameMeta:
-        T = sim["ownership"].shape[0]
-        H = int(sim["map_height"])
-        W = int(sim["map_width"])
-
-        # Death ticks for every eliminated player (rows are (t, slot)).
-        # We need the full sim data, as the meta only stores `elim_timestep`
-        # for curated perspectives.
-        deaths = (
-            np.sort(sim["death_events"][:, 0])
-            if sim["death_events"].size
-            else np.zeros(0, dtype=np.int64)
-        )
-        # The meta npz doesn't report player count, so we derive it from board
-        # presence on game tick 0 (all players start with a single tile).
-        # TODO: Fix this, we shouldn't have to do this. meta.npz should have player count.
-        p_start = int((np.unique(sim["ownership"][0]) >= 0).sum())
-
+    def load(cls, sim_path: Path) -> CorpusGame:
+        sim = SimGame.from_npz(sim_path)
+        with np.load(meta_path_for(sim_path)) as z:
+            meta = {key: z[key] for key in z.files}
         num_recorded = len(meta["perspective_player_ids"])
-        perspectives_by_k = {
-            k: PerspectiveMeta.from_meta(meta, k, T) for k in range(num_recorded)
-        }
-        return GameMeta(
-            T=T,
-            H=H,
-            W=W,
-            p_start=p_start,
-            deaths=deaths,
-            perspectives=perspectives_by_k,
-        )
+        perspectives = {k: PerspectiveMeta.from_meta(meta, k, sim.T) for k in range(num_recorded)}
+        return cls(sim=sim, perspectives=perspectives)
 
-    def count_players_alive_at(self, t: int) -> int:
-        # A player eliminated at frame `t` is counted as dead in that same frame.
-        # This is why we pin to the "right" side.
-        return self.p_start - int(np.searchsorted(self.deaths, t, side="right"))
+    def perspective_for_slot(self, slot: int) -> PerspectiveMeta:
+        matches = [p for p in self.perspectives.values() if p.slot == slot]
+        assert len(matches) == 1, (
+            f"slot {slot}: expected one recorded perspective, found {len(matches)}"
+        )
+        return matches[0]
 
 
 @dataclass(frozen=True)
 class SimFrame:
     """Raw sim-domain context for a single frame.
 
-    Holds the per-game `sim` dict, which is shared by reference across frames
+    Holds the per-game sim mapping, which is shared by reference across frames
     and should be treated as read-only. Also holds this frame's indexing.
     """
-    # The value type is `Any` because two different sim-dict shapes are valid here.
-    # See "construction inputs" above, in the module docstring.
+    # `Any` because two sim shapes are valid here: `SimGame`, and the live
+    # path's hand-built dict (see the module docstring).
     sim: Mapping[str, Any]
     # `t` is not entirely perspective-specific. But in general, it doesn't make
     # sense to construct a `SimFrame` for ticks where the player is eliminated.

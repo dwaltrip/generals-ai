@@ -9,6 +9,8 @@ the policy softmax and at inference time to constrain sampled moves.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+
 import numpy as np
 
 from training.bc import actions
@@ -26,7 +28,7 @@ def build_board_mask(H: int, W: int) -> np.ndarray:
 
 @timer.timed("build_mask")
 def build_mask(
-    sim: dict[str, np.ndarray],
+    sim: Mapping[str, np.ndarray],
     t: int,
     perspective_slot: int,
     H: int,

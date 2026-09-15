@@ -6,7 +6,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from training.bc import bfs
-from training.bc.datapipe.sim_types import GameMeta, PerspectiveMeta, SimFrame
+from training.bc.datapipe.sim_types import PerspectiveMeta, SimFrame, SimGame
 from training.bc.mask import build_board_mask
 from training.bc.obs import build_obs, init_memory, step_memory
 from training.bc.obs_config import ObsConfig
@@ -27,30 +27,26 @@ class PerspectiveWalk:
     def __init__(
         self,
         obs_cfg: ObsConfig,
-        sim: dict[str, np.ndarray],
-        game_meta: GameMeta,
+        game: SimGame,
         slot_order: SlotOrder,
     ) -> None:
-        H, W = game_meta.H, game_meta.W
-        self._sim = sim
+        self._game = game
         self._slot_order = slot_order
-        self._game_meta = game_meta
-        self._state = init_memory(sim, slot_order.perspective, H, W, obs_cfg)
+        self._state = init_memory(game, slot_order.perspective, game.H, game.W, obs_cfg)
         self._bfs_cache = bfs.init_bfs_cache()
-        self._board_mask = build_board_mask(H, W)
+        self._board_mask = build_board_mask(game.H, game.W)
         self._next_t = 0
 
     def frame(self, t: int) -> WalkFrame:
         assert t == self._next_t, f"out of order: expected t={self._next_t}, got t={t}"
         self._next_t += 1
 
-        sim, slot = self._sim, self._slot_order.perspective
-        H, W = self._game_meta.H, self._game_meta.W
+        game, slot = self._game, self._slot_order.perspective
+        H, W = game.H, game.W
 
-        # TODO: pass `GameMeta` or similar to kernels, instead of bare H and W
-        vis = compute_visibility(sim["ownership"][t], slot, H, W)
-        step_memory(self._state, sim, t, vis, slot, H, W)
-        sim_frame = SimFrame(sim=sim, t=t, slot_order=self._slot_order)
+        vis = compute_visibility(game.ownership[t], slot, H, W)
+        step_memory(self._state, game, t, vis, slot, H, W)
+        sim_frame = SimFrame(sim=game, t=t, slot_order=self._slot_order)
         return WalkFrame(
             t=t,
             obs=build_obs(sim_frame, vis, self._state, self._bfs_cache, H, W),
@@ -59,11 +55,10 @@ class PerspectiveWalk:
 
 
 def walk(
-    sim: dict[str, np.ndarray],
-    game_meta: GameMeta,
+    game: SimGame,
     perspective: PerspectiveMeta,
     obs_cfg: ObsConfig,
 ) -> Iterator[WalkFrame]:
-    w = PerspectiveWalk(obs_cfg, sim, game_meta, perspective.slot_order)
+    w = PerspectiveWalk(obs_cfg, game, perspective.slot_order)
     for t in range(perspective.end_t):
         yield w.frame(t)

@@ -8,7 +8,7 @@ from training.bc.aux_heads.registry import spec_for
 from training.bc.constants import W_PADDED
 from training.bc.datapipe.emit_spec import PartialEmitSpec
 from training.bc.datapipe.precompute import EmitPrecompute
-from training.bc.datapipe.sim_types import GameMeta, PerspectiveMeta
+from training.bc.datapipe.sim_types import PerspectiveMeta, SimGame
 from training.bc.mask import build_mask
 from training.bc.player_status import make_alive_mask
 from training.bc.targets.core_targets import policy_pass_target, value_target
@@ -38,16 +38,15 @@ class FrameSupervision:
 
 
 def emit_tail(
-    sim: dict[str, np.ndarray],
+    game: SimGame,
     t: int,
-    game: GameMeta,
     perspective: PerspectiveMeta,
     spec: PartialEmitSpec,
     pre: EmitPrecompute,
 ) -> FrameSupervision:
     raw_order = list(perspective.slot_order.order)
 
-    is_pass, flat_idx = policy_pass_target(sim, perspective.slot, t, game.W, W_PADDED)
+    is_pass, flat_idx = policy_pass_target(game, perspective.slot, t, game.W, W_PADDED)
 
     alive_mask = None
     if spec.emit_alive_mask:
@@ -66,7 +65,7 @@ def emit_tail(
         }
 
     return FrameSupervision(
-        legality_mask=build_mask(sim, t, perspective.slot, game.H, game.W),
+        legality_mask=build_mask(game, t, perspective.slot, game.H, game.W),
         action_target=np.asarray(flat_idx, dtype=np.int64),
         is_pass=np.asarray(is_pass, dtype=np.bool_),
         value_target=np.asarray(value_target(perspective.placement), dtype=np.int64),

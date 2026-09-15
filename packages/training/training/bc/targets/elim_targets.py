@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 import numpy as np
@@ -42,7 +43,7 @@ class ElimCtx:
 
 
 def make_elim_ctx(
-    sim: dict[str, np.ndarray],
+    sim: Mapping[str, np.ndarray],
     edges: tuple[int, ...] | None
 ) -> ElimCtx:
     edges_arr = np.asarray(edges, dtype=np.int64) if edges is not None else None

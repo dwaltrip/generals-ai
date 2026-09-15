@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+
 import numpy as np
 
 from training.bc import actions
@@ -17,7 +19,7 @@ def value_target(placement: int) -> int:
 # and then delegates to `actions.encode`. That file needs a look.
 # It wasn't touched in any of the July / Aug refactors.
 def policy_pass_target(
-    sim: dict[str, np.ndarray],
+    sim: Mapping[str, np.ndarray],
     perspective_slot: int,
     t: int,
     W: int,

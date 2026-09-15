@@ -16,10 +16,10 @@ from typing import Any
 
 import numpy as np
 
-from training.bc.datapipe.sim_types import GameMeta
+from training.bc.datapipe.sim_types import PerspectiveMeta, SimGame
 from training.goldens.compare import compare_obs, diff_rows, same_bytes, stored_form
 from training.goldens.compute import compute_obs, compute_supervision
-from training.goldens.loaders import load_array, load_fixture, load_obs_digest, perspective_for
+from training.goldens.loaders import load_array, load_fixture, load_obs_digest
 from training.goldens.registry import (
     FIXTURES,
     REFERENCES_DIR,
@@ -43,9 +43,9 @@ def _rel(path: Path) -> str:
     return str(path.relative_to(REFERENCES_DIR))
 
 
-def _regen_obs(fx: FixtureRecord, sim, game_meta: GameMeta, persp) -> None:
+def _regen_obs(fx: FixtureRecord, game: SimGame, persp: PerspectiveMeta) -> None:
     for entry in (e for e in obs_entries() if e.fixture == fx):
-        digest = compute_obs(sim, game_meta, persp, entry.cfg)
+        digest = compute_obs(game, persp, entry.cfg)
         old = load_obs_digest(entry.ref_path)
         if old is None:
             status = "new"
@@ -69,10 +69,10 @@ class _PlannedFile:
 
 
 def _plan_supervision(
-    fx: FixtureRecord, sim, game_meta: GameMeta, persp
+    fx: FixtureRecord, game: SimGame, persp: PerspectiveMeta
 ) -> tuple[list[_PlannedFile], list[str]]:
     entries = [e for e in supervision_entries() if e.fixture == fx]
-    got = {e.point: compute_supervision(sim, game_meta, persp, e.spec) for e in entries}
+    got = {e.point: compute_supervision(game, persp, e.spec) for e in entries}
 
     for e in entries:
         if set(got[e.point]) != set(e.keys):
@@ -154,15 +154,13 @@ def main() -> None:
     # contradiction leaves the references untouched.
     loaded = []
     for fx in FIXTURES:
-        sim, meta = load_fixture(fx)
-        game_meta = GameMeta.from_npz(sim, meta)
-        persp = perspective_for(game_meta, fx.slot)
-        planned, warnings = _plan_supervision(fx, sim, game_meta, persp)
-        loaded.append((fx, sim, game_meta, persp, planned, warnings))
+        game, persp = load_fixture(fx)
+        planned, warnings = _plan_supervision(fx, game, persp)
+        loaded.append((fx, game, persp, planned, warnings))
 
-    for fx, sim, game_meta, persp, planned, warnings in loaded:
-        print(f"== {fx.id}  T={game_meta.T} end_t={persp.end_t}  ({fx.note})")
-        _regen_obs(fx, sim, game_meta, persp)
+    for fx, game, persp, planned, warnings in loaded:
+        print(f"== {fx.id}  T={game.T} end_t={persp.end_t}  ({fx.note})")
+        _regen_obs(fx, game, persp)
         _write_supervision(fx, planned, warnings)
 
 
