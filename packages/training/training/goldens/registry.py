@@ -83,9 +83,11 @@ OBS_POINTS = [
 # (metrics column requests) are held at their null value.
 _METRICS = MetricsConfig(include_alive_mask=False)
 
-# NOTE: This list is append only! Reference filenames depend on the order.
+# NOTE: This is intended to be append-only. Reference filenames depend on the order.
 # The "representative point" for a key is the first one in this list that emits it.
 # See `representative` below.
+# If the points were re-ordered, regen would report they had "moved" and we would
+# need to re-bless.
 SUPERVISION_POINTS = [
     SupervisionPoint(
         name="core",

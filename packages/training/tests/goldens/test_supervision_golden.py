@@ -1,6 +1,6 @@
 import pytest
 
-from training.goldens.compare import compare_supervision, to_stored
+from training.goldens.compare import compare_supervision
 from training.goldens.compute import compute_supervision
 from training.goldens.loaders import load_fixture, load_supervision_reference
 from training.goldens.registry import SupervisionEntry, supervision_entries
@@ -16,8 +16,8 @@ def test_supervision_golden(entry: SupervisionEntry) -> None:
         pytest.fail(f"unblessed: no supervision references for {label}, run regen")
 
     game, persp = load_fixture(entry.fixture)
-    got = to_stored(compute_supervision(game, persp, entry.spec), entry.refs)
+    raw = compute_supervision(game, persp, entry.spec)
 
-    mismatch = compare_supervision(got, ref, entry.keys)
+    mismatch = compare_supervision(raw, ref, entry.refs)
     if mismatch is not None:
         pytest.fail(mismatch.summary())

@@ -24,7 +24,7 @@ from typing import Any
 import numpy as np
 
 from training.bc.datapipe.sim_types import PerspectiveMeta, SimGame
-from training.goldens.compare import compare_obs, diff_rows, same_bytes, stored_form
+from training.goldens.compare import compare_obs, diff_rows, keyset_diff, same_bytes, stored_form
 from training.goldens.compute import compute_obs, compute_supervision
 from training.goldens.hashes import ObsDigest
 from training.goldens.loaders import load_array, load_fixture, load_obs_digest
@@ -83,11 +83,8 @@ def _plan_supervision(
     got = {e.point: compute_supervision(game, persp, e.spec) for e in entries}
 
     for e in entries:
-        if set(got[e.point]) != set(e.keys):
-            print(
-                f"keyset mismatch for {e.point}: extra {set(got[e.point]) - set(e.keys)},"
-                f" missing {set(e.keys) - set(got[e.point])}"
-            )
+        if (kd := keyset_diff(got[e.point], e.keys)) is not None:
+            print(f"keyset mismatch for {e.point}: {kd.summary()}")
             sys.exit(1)
 
     planned: list[_SupervisionFile] = []

@@ -49,6 +49,9 @@ class ObsHasher:
         self._frame_hashes.append(_hash64(obs.tobytes()))
         if self._channel_hashers is None:
             self._channel_hashers = [_new_hasher() for _ in range(obs.shape[0])]
+        assert obs.shape[0] == len(self._channel_hashers), (
+            f"channel count changed mid-walk: {obs.shape[0]} vs {len(self._channel_hashers)}"
+        )
         for c, h in enumerate(self._channel_hashers):
             h.update(obs[c].tobytes())
 

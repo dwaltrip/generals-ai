@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 
 import numpy as np
@@ -24,8 +24,23 @@ def stored_form(form: RefForm, arr: np.ndarray) -> np.ndarray:
             return hash_along_first_axis(arr)
 
 
-def to_stored(raw: dict[str, np.ndarray], refs: Mapping[str, KeyRef]) -> dict[str, np.ndarray]:
-    return {key: stored_form(refs[key].form, arr) for key, arr in raw.items()}
+# --- Keyset diff, shared by the tests and regen ---
+
+
+@dataclass(frozen=True)
+class KeysetDiff:
+    extra: frozenset[str]    # emitted but not declared
+    missing: frozenset[str]  # declared but not emitted
+
+    def summary(self) -> str:
+        return f"emitted keys differ. extra: {set(self.extra)}, missing: {set(self.missing)}"
+
+
+def keyset_diff(emitted: Iterable[str], declared: Iterable[str]) -> KeysetDiff | None:
+    emitted, declared = set(emitted), set(declared)
+    if emitted == declared:
+        return None
+    return KeysetDiff(extra=frozenset(emitted - declared), missing=frozenset(declared - emitted))
 
 
 # --- Per-key row diff, shared by the tests and regen ---
@@ -55,7 +70,11 @@ def diff_rows(key: str, got: np.ndarray, ref: np.ndarray) -> KeyDiff | None:
             total_rows=got.shape[0],
             note=f"shape/dtype {got.shape} {got.dtype} vs ref {ref.shape} {ref.dtype}",
         )
-    rows = np.nonzero((got != ref).reshape(got.shape[0], -1).any(axis=1))[0]
+    # Rows are compared by their bytes, matching `same_bytes`. Comparing values
+    # would differ for floats: NaN never equals itself, and -0.0 equals 0.0.
+    got_b = np.ascontiguousarray(got).view(np.uint8).reshape(got.shape[0], -1)
+    ref_b = np.ascontiguousarray(ref).view(np.uint8).reshape(ref.shape[0], -1)
+    rows = np.nonzero((got_b != ref_b).any(axis=1))[0]
     if rows.size == 0:
         return None
     return KeyDiff(key=key, changed_rows=rows, total_rows=got.shape[0])
@@ -106,29 +125,26 @@ def compare_obs(got: ObsDigest, ref: ObsDigest) -> ObsMismatch | None:
 
 @dataclass(frozen=True)
 class SupervisionMismatch:
-    diffs: tuple[KeyDiff, ...]
-    note: str | None = None
+    keyset: KeysetDiff | None = None
+    diffs: tuple[KeyDiff, ...] = ()
 
     def summary(self) -> str:
+        if self.keyset:
+            return f"supervision mismatch: {self.keyset.summary()}"
         lines = [f"supervision mismatch: keys {[d.key for d in self.diffs]}"]
-        lines += [f"  {d.summary()}" for d in self.diffs]
-        if self.note:
-            lines.append(f"  note: {self.note}")
-        return "\n".join(lines)
+        return "\n".join(lines + [f"  {d.summary()}" for d in self.diffs])
 
 
 def compare_supervision(
-    got: dict[str, np.ndarray],
+    raw: dict[str, np.ndarray],
     ref: dict[str, np.ndarray],
-    keys: tuple[str, ...],
+    refs: Mapping[str, KeyRef],
 ) -> SupervisionMismatch | None:
-    # `got` is in stored form (see `to_stored`).
-    if set(got) != set(keys):
-        extra = set(got) - set(keys)
-        missing = set(keys) - set(got)
-        return SupervisionMismatch(
-            diffs=(),
-            note=f"emitted keys differ. extra: {extra}, missing: {missing}",
-        )
-    diffs = tuple(d for key in keys if (d := diff_rows(key, got[key], ref[key])) is not None)
+    if (kd := keyset_diff(raw, refs)) is not None:
+        return SupervisionMismatch(keyset=kd)
+    diffs = tuple(
+        d
+        for key, r in refs.items()
+        if (d := diff_rows(key, stored_form(r.form, raw[key]), ref[key])) is not None
+    )
     return SupervisionMismatch(diffs=diffs) if diffs else None
