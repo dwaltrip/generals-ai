@@ -51,7 +51,7 @@ class KeyDiff:
     key: str
     changed_rows: np.ndarray   # indices along the first axis (ticks, for per-frame arrays)
     total_rows: int
-    note: str | None = None    # set when shapes or dtypes differ; rows are then empty
+    note: str | None = None    # set when shapes or dtypes differ, in which case rows is empty
 
     def summary(self) -> str:
         if self.note:

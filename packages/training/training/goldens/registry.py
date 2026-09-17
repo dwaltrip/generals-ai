@@ -57,18 +57,16 @@ class SupervisionPoint:
 @dataclass(frozen=True, kw_only=True)
 class SupervisionKey:
     name: str
-    # TargetsConfig fields this key's bytes depend on. Points that agree on
-    # these fields share one stored reference. Regen verifies the claim.
+    # TargetsConfig fields that are inputs for the key (it "depends" on them).
     deps: tuple[str, ...]
     form: RefForm
 
 
 # --- Registry data ---
 #
-# A point is a config value: the stored config for one guarded surface. Every
-# config here is written out as a literal. Never reference a named config
-# constant (e.g. OBS_CONFIG_DEFAULTS): the registry pins values so that prod's
-# defaults can move without re-describing what is guarded.
+# A point is a config value: the stored config for one guarded surface. Configs
+# are written out as literals, never as a reference to a named constant such as
+# OBS_CONFIG_DEFAULTS, so that a point stays fixed when prod's defaults move.
 
 OBS_POINTS = [
     ObsPoint(
@@ -81,10 +79,9 @@ OBS_POINTS = [
     ),
 ]
 
-# The metrics surface is not guarded. A point holds every config field that
-# affects the bytes of an emitted key. Fields that only add or remove columns
-# (metrics column requests) are held at their null value.
-_METRICS = MetricsConfig(include_alive_mask=False)
+# The metrics surface is not guarded for now. The focus is obs and targets.
+# We need a MetricsConfig to run the guarded code, so we use an "inert" one.
+_INERT_METRICS_CFG = MetricsConfig(include_alive_mask=False)
 
 # NOTE: This is intended to be append-only. Reference filenames depend on the order.
 # The "representative point" for a key is the first one in this list that emits it.
@@ -151,7 +148,7 @@ class KeyRef:
 
 
 def partial_spec_for(point: SupervisionPoint) -> PartialEmitSpec:
-    return partial_emit_spec_from(point.cfg, _METRICS)
+    return partial_emit_spec_from(point.cfg, _INERT_METRICS_CFG)
 
 
 @dataclass(frozen=True)

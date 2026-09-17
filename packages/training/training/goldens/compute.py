@@ -11,6 +11,12 @@ from training.bc.obs_config import ObsConfig
 from training.goldens.hashes import ObsDigest, ObsHasher
 
 
+# The obs goldens guard the bytes of the obs tensor as produced during training.
+# Hashes per frame and per channel are enough to robustly detect changes and tell
+# us where to look (which ticks and channels were affected).
+# Higher fidelity alternatives were considered (storing the full tensor or hashing
+# frames x channels), but the storage cost would be burdensome for a small gain
+# (e.g. knowing the exact frame on which a channel changed).
 def compute_obs(game: SimGame, persp: PerspectiveMeta, cfg: ObsConfig) -> ObsDigest:
     hasher = ObsHasher()
     for frame in walk(game, persp, cfg):

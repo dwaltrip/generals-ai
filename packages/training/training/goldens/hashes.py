@@ -6,9 +6,9 @@ import hashlib
 import numpy as np
 
 
-# Hash: sha256 truncated to its first 8 bytes, read as little-endian uint64.
-# Canonical bytes are the array's C-order buffer in its emitted dtype.
-# Picked over blake2b-8 by timing on the M1 (about 2x faster, hardware SHA).
+# The hash is sha256 truncated to 8 bytes, read as a little-endian uint64, over
+# the array's C-order bytes in its emitted dtype. Chosen over blake2b for speed
+# (hardware SHA on the M1).
 
 
 def _new_hasher():
@@ -37,9 +37,8 @@ class ObsDigest:
 
 
 class ObsHasher:
-    # Feed one [C, H, W] frame per call, in tick order. A channel's digest over
-    # the whole walk equals the hash of its [T, H, W] history in C-order, since
-    # that history's bytes are the per-frame [H, W] bytes concatenated.
+    # Iteratively update the hash one frame at a time. Otherwise, the frames
+    # would be stacked in memory (up to a few hundred MB per walk).
     def __init__(self) -> None:
         self._frame_hashes: list[int] = []
         self._channel_hashers: list | None = None

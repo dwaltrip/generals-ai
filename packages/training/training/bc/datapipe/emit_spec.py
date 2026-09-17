@@ -1,9 +1,9 @@
 """EmitSpec: complete contract for what the dataset walk emits.
 
-This is intended to only own knobs that affect the output for a single frame.
+Holds only the settings that affect the output for a single frame.
 Orchestration params (e.g. shuffling, workers) are specifically not included.
 
-The builders below own the canonical derivation from the training config.
+The builders below derive it from the training config.
 """
 
 from __future__ import annotations

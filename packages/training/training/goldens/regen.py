@@ -1,17 +1,14 @@
 """
 Produce and write golden references for all registry entries.
+Every fixture is computed and checked before anything is written.
+
 Run from packages/training:
     uv run python -m training.goldens.regen
-
-Every fixture is computed and checked before anything is written, so a
-contradiction leaves the references untouched. Afterward, files under the
-references tree that no entry claims are deleted and reported.
-
-TODO: still to build: the fire report beyond per-file status lines, choosing
-the baseline to diff against, the boundary-record skeleton, and the
-identical-groups check done once per key across all fixtures (today it runs
-per fixture, which is the wrong granularity: see 9.13-1).
 """
+
+# TODO: still to build: the fire report, choosing the baseline to diff against,
+# the boundary-record skeleton, and the identical-groups check across fixtures
+# (it runs per fixture today, which is the wrong granularity).
 
 from __future__ import annotations
 
@@ -64,7 +61,7 @@ class _FixturePlan:
 
 
 class RegenAbort(Exception):
-    # Raised during planning. The message is the report; nothing has been written.
+    # Raised during planning before anything is written.
     pass
 
 
@@ -94,9 +91,8 @@ def _plan_supervision(
             raise RegenAbort(f"keyset mismatch for {e.point.name}: {kd.summary()}")
 
     planned: list[_SupervisionFile] = []
-    # TODO: warnings are preformatted strings built here and printed by main,
-    # so presentation leaks into planning. Revisit with the second-pass redesign
-    # of this check (see the module docstring).
+    # TODO: warnings are preformatted strings built during planning (mix of concerns).
+    # Revisit with the second pass of this check.
     warnings: list[str] = []
     for key in SUPERVISION_KEYS:
         groups: dict[GroupId, list[SupervisionEntry]] = defaultdict(list)
@@ -177,10 +173,9 @@ def _write_obs(files: list[_ObsFile]) -> None:
 
 
 # Returns the "new" arrays (references blessed for the first time)
-# TODO: the per-file status (new / unchanged / changed) is decided here at write
-# time, where the old file is last observable. It could be decided during
-# planning instead, which would leave the writers as pure save-and-print.
-# Consider with the fire report (see the module docstring).
+# TODO: per-file status (new / unchanged / changed) is decided at write time.
+# Deciding it during planning would leave the writers as pure save-and-print.
+# Consider with the fire report.
 def _write_supervision(files: list[_SupervisionFile]) -> list[np.ndarray]:
     written_new = []
     for item in files:
@@ -198,9 +193,10 @@ def _write_supervision(files: list[_SupervisionFile]) -> list[np.ndarray]:
 
 
 def _remove_orphans(expected: set[Path], written_new: list[np.ndarray]) -> None:
-    # A supervision orphan whose contents match a file written as new this run
-    # is a renamed group file (its representative point changed), reported as
-    # "moved". Anything else is "removed".
+    # "moved" means the reference was removed and then regenerated identically
+    # with a different filepath. Most likely, the representative point changed,
+    # e.g. the points were re-ordered or one was removed.
+    # NOTE: There are other less common scenarios that can also cause this.
     for path in sorted(p for p in REFERENCES_DIR.rglob("*") if p.is_file()):
         if path in expected or path.name.startswith("."):
             continue

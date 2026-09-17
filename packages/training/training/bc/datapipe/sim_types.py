@@ -8,12 +8,11 @@ Listed outermost first:
 - `SimFrame`: one frame of the game, seen through a perspective's slot order.
 
 Producers (the walk core, the emission tail, the per-game precompute) take a
-`SimGame` and a `PerspectiveMeta`. Only `CorpusGame` knows the curated list.
+`SimGame` and a `PerspectiveMeta`. The curated list is held only by `CorpusGame`.
 
 The kernels under `bc.obs`, `bc.mask`, and `bc.targets` are shared with live
-inference, which builds its own sim dict as the game progresses (a subset of
-the keys, with the per-tick fields as growing lists). So the kernels take a
-`Mapping[str, ...]`, which both `SimGame` and the live dict satisfy.
+inference, which builds its own sim dict as the game progresses.
+They take a `Mapping[str, ...]`, which both `SimGame` and the live dict satisfy.
 """
 
 from collections.abc import Iterator, Mapping
@@ -30,8 +29,7 @@ from training.bc.utils import meta_path_for
 
 @dataclass(frozen=True, eq=False)
 class SimGame(Mapping[str, np.ndarray]):
-    # The parser's output schema, in the order `write_sim_output` writes it
-    # (replay-parser/replay_parser/output.py). Values are kept as loaded.
+    # The parser's output schema (replay_parser/output.py)
     replay_id: np.ndarray
     version: np.ndarray
     map_width: np.ndarray
@@ -42,13 +40,13 @@ class SimGame(Mapping[str, np.ndarray]):
     initial_neutrals: np.ndarray
     initial_neutral_armies: np.ndarray
     initial_generals: np.ndarray
-    ownership: np.ndarray             # [T, H*W] int8
-    armies: np.ndarray                # [T, H*W] int16
+    ownership: np.ndarray
+    armies: np.ndarray
     cities: np.ndarray
     cities_present_at: np.ndarray
-    death_events: np.ndarray          # [n, 2] (t, slot)
-    capture_events: np.ndarray        # [n, 3] (t, captor, captured)
-    neutralize_events: np.ndarray     # [n, 2] (t, slot)
+    death_events: np.ndarray
+    capture_events: np.ndarray
+    neutralize_events: np.ndarray
     actions_source: np.ndarray
     actions_dest: np.ndarray
     actions_is50: np.ndarray
