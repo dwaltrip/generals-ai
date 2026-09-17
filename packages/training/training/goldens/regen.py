@@ -7,13 +7,13 @@ Run from packages/training:
 """
 
 # TODO: still to build: the fire report, choosing the baseline to diff against,
-# the boundary-record skeleton, and the identical-groups check across fixtures
-# (it runs per fixture today, which is the wrong granularity).
+# and the boundary-record skeleton.
 
 from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import dataclass
+from itertools import combinations
 from pathlib import Path
 import sys
 
@@ -33,6 +33,7 @@ from training.goldens.registry import (
     SupervisionEntry,
     group_id,
     obs_entries,
+    representative,
     supervision_entries,
 )
 
@@ -45,8 +46,11 @@ class _ObsFile:
 
 @dataclass(frozen=True)
 class _SupervisionFile:
+    # One (key, group) on one fixture.
     path: Path
     array: np.ndarray
+    key: str
+    gid: GroupId
     members: tuple[str, ...]
 
 
@@ -57,7 +61,6 @@ class _FixturePlan:
     end_t: int
     obs: list[_ObsFile]
     supervision: list[_SupervisionFile]
-    warnings: list[str]
 
 
 class RegenAbort(Exception):
@@ -82,7 +85,7 @@ def _plan_obs(fx: FixtureRecord, game: SimGame, persp: PerspectiveMeta) -> list[
 
 def _plan_supervision(
     fx: FixtureRecord, game: SimGame, persp: PerspectiveMeta
-) -> tuple[list[_SupervisionFile], list[str]]:
+) -> list[_SupervisionFile]:
     entries = [e for e in supervision_entries() if e.fixture == fx]
     got = {e.point.name: compute_supervision(game, persp, e.spec) for e in entries}
 
@@ -91,16 +94,12 @@ def _plan_supervision(
             raise RegenAbort(f"keyset mismatch for {e.point.name}: {kd.summary()}")
 
     planned: list[_SupervisionFile] = []
-    # TODO: warnings are preformatted strings built during planning (mix of concerns).
-    # Revisit with the second pass of this check.
-    warnings: list[str] = []
     for key in SUPERVISION_KEYS:
         groups: dict[GroupId, list[SupervisionEntry]] = defaultdict(list)
         for e in entries:
             if key.name in e.point.keys:
                 groups[group_id(key, e.point.cfg)].append(e)
 
-        group_arrays: dict[GroupId, np.ndarray] = {}
         for gid, members in groups.items():
             names = [m.point.name for m in members]
             base = got[names[0]][key.name]
@@ -118,38 +117,46 @@ def _plan_supervision(
                 lines.append("Either the dependency table is stale or the code diverged.")
                 raise RegenAbort("\n".join(lines))
 
-            stored = stored_form(key.form, base)
-            group_arrays[gid] = stored
             planned.append(
                 _SupervisionFile(
                     path=members[0].refs[key.name].path,
-                    array=stored,
+                    array=stored_form(key.form, base),
+                    key=key.name,
+                    gid=gid,
                     members=tuple(names),
                 )
             )
-
-        gids = list(group_arrays)
-        for i in range(len(gids)):
-            for j in range(i + 1, len(gids)):
-                if same_bytes(group_arrays[gids[i]], group_arrays[gids[j]]):
-                    warnings.append(
-                        f"  warning: {key.name} groups {gids[i]} and {gids[j]} are byte-identical"
-                        " on this fixture (over-declared deps, or unexercised)"
-                    )
-    return planned, warnings
+    return planned
 
 
 def _plan_fixture(fx: FixtureRecord) -> _FixturePlan:
     game, persp = load_fixture(fx)
-    supervision, warnings = _plan_supervision(fx, game, persp)
     return _FixturePlan(
         fixture=fx,
         T=game.T,
         end_t=persp.end_t,
         obs=_plan_obs(fx, game, persp),
-        supervision=supervision,
-        warnings=warnings,
+        supervision=_plan_supervision(fx, game, persp),
     )
+
+
+# Two groups of a key may agree on one fixture (nothing in it exercises the
+# fields they differ on). Agreeing on every fixture means either an over-declared
+# dep or a fixture coverage gap, so the check is per key across all fixtures.
+def _check_identical_groups(plans: list[_FixturePlan]) -> list[str]:
+    warnings = []
+    for key in SUPERVISION_KEYS:
+        per_fx = [{f.gid: f.array for f in p.supervision if f.key == key.name} for p in plans]
+        gids = list(per_fx[0])
+        assert all(set(fx) == set(gids) for fx in per_fx), f"{key.name}: groups differ by fixture"
+        for a, b in combinations(gids, 2):
+            if all(same_bytes(fx[a], fx[b]) for fx in per_fx):
+                warnings.append(
+                    f"  warning: {key.name}: groups {representative(key, a)} and"
+                    f" {representative(key, b)} are byte-identical on every fixture"
+                    " (over-declared deps, or a fixture coverage gap)"
+                )
+    return warnings
 
 
 # --- Write ---
@@ -218,8 +225,9 @@ def main() -> int:
         print(f"== {fx.id}  T={plan.T} end_t={plan.end_t}  ({fx.note})")
         _write_obs(plan.obs)
         written_new += _write_supervision(plan.supervision)
-        for line in plan.warnings:
-            print(line)
+
+    for line in _check_identical_groups(plans):
+        print(line)
 
     expected = {f.path for p in plans for f in p.obs}
     expected |= {f.path for p in plans for f in p.supervision}
