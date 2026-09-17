@@ -55,10 +55,17 @@ class _SupervisionFile:
 
 @dataclass(frozen=True)
 class _FixturePlan:
-    header: str
+    fixture: FixtureRecord
+    T: int
+    end_t: int
     obs: list[_ObsFile]
     supervision: list[_SupervisionFile]
     warnings: list[str]
+
+
+class RegenAbort(Exception):
+    # Raised during planning. The message is the report; nothing has been written.
+    pass
 
 
 def _rel(path: Path) -> str:
@@ -84,10 +91,12 @@ def _plan_supervision(
 
     for e in entries:
         if (kd := keyset_diff(got[e.point.name], e.point.keys)) is not None:
-            print(f"keyset mismatch for {e.point.name}: {kd.summary()}")
-            sys.exit(1)
+            raise RegenAbort(f"keyset mismatch for {e.point.name}: {kd.summary()}")
 
     planned: list[_SupervisionFile] = []
+    # TODO: warnings are preformatted strings built here and printed by main,
+    # so presentation leaks into planning. Revisit with the second-pass redesign
+    # of this check (see the module docstring).
     warnings: list[str] = []
     for key in SUPERVISION_KEYS:
         groups: dict[tuple[Any, ...], list[SupervisionEntry]] = defaultdict(list)
@@ -102,14 +111,16 @@ def _plan_supervision(
             agree = [n for n in names if same_bytes(got[n][key.name], base)]
             differ = [n for n in names if n not in agree]
             if differ:
-                print(f"\ncontradiction on fixture {fx.id}: key {key.name!r} deps={key.deps}")
-                print(f"  agree:  {', '.join(agree)}")
+                lines = [
+                    f"contradiction on fixture {fx.id}: key {key.name!r} deps={key.deps}",
+                    f"  agree:  {', '.join(agree)}",
+                ]
                 for p in differ:
                     diff = diff_rows(key.name, got[p][key.name], base)
                     assert diff is not None
-                    print(f"  differs: {p} ({diff.summary()})")
-                print("Either the dependency table is stale or the code diverged. Nothing written.")
-                sys.exit(1)
+                    lines.append(f"  differs: {p} ({diff.summary()})")
+                lines.append("Either the dependency table is stale or the code diverged.")
+                raise RegenAbort("\n".join(lines))
 
             stored = stored_form(key.form, base)
             group_arrays[gid] = stored
@@ -132,6 +143,19 @@ def _plan_supervision(
     return planned, warnings
 
 
+def _plan_fixture(fx: FixtureRecord) -> _FixturePlan:
+    game, persp = load_fixture(fx)
+    supervision, warnings = _plan_supervision(fx, game, persp)
+    return _FixturePlan(
+        fixture=fx,
+        T=game.T,
+        end_t=persp.end_t,
+        obs=_plan_obs(fx, game, persp),
+        supervision=supervision,
+        warnings=warnings,
+    )
+
+
 # --- Write ---
 
 
@@ -152,60 +176,60 @@ def _write_obs(files: list[_ObsFile]) -> None:
         print(f"  {status:12s} {_rel(item.path)}")
 
 
-def _write_supervision(files: list[_SupervisionFile], written_new: dict[Path, np.ndarray]) -> None:
+# Returns the "new" arrays (references blessed for the first time)
+# TODO: the per-file status (new / unchanged / changed) is decided here at write
+# time, where the old file is last observable. It could be decided during
+# planning instead, which would leave the writers as pure save-and-print.
+# Consider with the fire report (see the module docstring).
+def _write_supervision(files: list[_SupervisionFile]) -> list[np.ndarray]:
+    written_new = []
     for item in files:
         old = load_array(item.path)
         if old is None:
             status = "new"
-            written_new[item.path] = item.array
+            written_new.append(item.array)
         else:
             diff = diff_rows(item.path.stem, item.array, old)
             status = "unchanged" if diff is None else f"changed ({diff.summary()})"
         item.path.parent.mkdir(parents=True, exist_ok=True)
         np.save(item.path, item.array)
         print(f"  {status:12s} {_rel(item.path)}   <- {', '.join(item.members)}")
+    return written_new
 
 
-def _remove_orphans(expected: set[Path], written_new: dict[Path, np.ndarray]) -> None:
+def _remove_orphans(expected: set[Path], written_new: list[np.ndarray]) -> None:
     # A supervision orphan whose contents match a file written as new this run
     # is a renamed group file (its representative point changed), reported as
     # "moved". Anything else is "removed".
     for path in sorted(p for p in REFERENCES_DIR.rglob("*") if p.is_file()):
         if path in expected or path.name.startswith("."):
             continue
-        moved = path.suffix == ".npy" and any(
-            same_bytes(np.load(path), a) for a in written_new.values()
-        )
+        moved = path.suffix == ".npy" and any(same_bytes(np.load(path), a) for a in written_new)
         path.unlink()
         print(f"  {'moved' if moved else 'removed':12s} {_rel(path)}")
 
 
-def main() -> None:
-    plans: list[_FixturePlan] = []
-    for fx in FIXTURES:
-        game, persp = load_fixture(fx)
-        supervision, warnings = _plan_supervision(fx, game, persp)
-        plans.append(
-            _FixturePlan(
-                header=f"== {fx.id}  T={game.T} end_t={persp.end_t}  ({fx.note})",
-                obs=_plan_obs(fx, game, persp),
-                supervision=supervision,
-                warnings=warnings,
-            )
-        )
+def main() -> int:
+    try:
+        plans = [_plan_fixture(fx) for fx in FIXTURES]
+    except RegenAbort as e:
+        print(f"\n{e}\nNothing written.")
+        return 1
 
-    written_new: dict[Path, np.ndarray] = {}
+    written_new: list[np.ndarray] = []
     for plan in plans:
-        print(plan.header)
+        fx = plan.fixture
+        print(f"== {fx.id}  T={plan.T} end_t={plan.end_t}  ({fx.note})")
         _write_obs(plan.obs)
-        _write_supervision(plan.supervision, written_new)
+        written_new += _write_supervision(plan.supervision)
         for line in plan.warnings:
             print(line)
 
     expected = {f.path for p in plans for f in p.obs}
     expected |= {f.path for p in plans for f in p.supervision}
     _remove_orphans(expected, written_new)
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
