@@ -70,7 +70,7 @@ def _rel(path: Path) -> str:
 
 def _plan_obs(fx: FixtureRecord, game: SimGame, persp: PerspectiveMeta) -> list[_ObsFile]:
     return [
-        _ObsFile(path=e.ref_path, digest=compute_obs(game, persp, e.cfg))
+        _ObsFile(path=e.ref_path, digest=compute_obs(game, persp, e.point.cfg))
         for e in obs_entries()
         if e.fixture == fx
     ]
@@ -80,11 +80,11 @@ def _plan_supervision(
     fx: FixtureRecord, game: SimGame, persp: PerspectiveMeta
 ) -> tuple[list[_SupervisionFile], list[str]]:
     entries = [e for e in supervision_entries() if e.fixture == fx]
-    got = {e.point: compute_supervision(game, persp, e.spec) for e in entries}
+    got = {e.point.name: compute_supervision(game, persp, e.spec) for e in entries}
 
     for e in entries:
-        if (kd := keyset_diff(got[e.point], e.keys)) is not None:
-            print(f"keyset mismatch for {e.point}: {kd.summary()}")
+        if (kd := keyset_diff(got[e.point.name], e.point.keys)) is not None:
+            print(f"keyset mismatch for {e.point.name}: {kd.summary()}")
             sys.exit(1)
 
     planned: list[_SupervisionFile] = []
@@ -92,14 +92,15 @@ def _plan_supervision(
     for key in SUPERVISION_KEYS:
         groups: dict[tuple[Any, ...], list[SupervisionEntry]] = defaultdict(list)
         for e in entries:
-            if key.name in e.keys:
-                groups[group_id(key, e.cfg)].append(e)
+            if key.name in e.point.keys:
+                groups[group_id(key, e.point.cfg)].append(e)
 
         group_arrays: dict[tuple[Any, ...], np.ndarray] = {}
         for gid, members in groups.items():
-            base = got[members[0].point][key.name]
-            agree = [m.point for m in members if same_bytes(got[m.point][key.name], base)]
-            differ = [m.point for m in members if m.point not in agree]
+            names = [m.point.name for m in members]
+            base = got[names[0]][key.name]
+            agree = [n for n in names if same_bytes(got[n][key.name], base)]
+            differ = [n for n in names if n not in agree]
             if differ:
                 print(f"\ncontradiction on fixture {fx.id}: key {key.name!r} deps={key.deps}")
                 print(f"  agree:  {', '.join(agree)}")
@@ -116,7 +117,7 @@ def _plan_supervision(
                 _SupervisionFile(
                     path=members[0].refs[key.name].path,
                     array=stored,
-                    members=tuple(m.point for m in members),
+                    members=tuple(names),
                 )
             )
 

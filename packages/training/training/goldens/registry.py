@@ -147,29 +147,34 @@ class KeyRef:
     path: Path
 
 
+def spec_for(point: SupervisionPoint) -> PartialEmitSpec:
+    return partial_emit_spec_from(point.cfg, _METRICS)
+
+
 @dataclass(frozen=True)
 class ObsEntry:
-    point: str
-    cfg: ObsConfig
+    point: ObsPoint
     fixture: FixtureRecord
     ref_path: Path
+
+    @property
+    def id(self) -> str:
+        return f"{self.point.name}-{self.fixture.id}"
 
 
 @dataclass(frozen=True)
 class SupervisionEntry:
-    point: str
-    cfg: TargetsConfig
-    spec: PartialEmitSpec
+    point: SupervisionPoint
     fixture: FixtureRecord
     refs: dict[str, KeyRef]
 
     @property
-    def keys(self) -> tuple[str, ...]:
-        return tuple(self.refs)
+    def id(self) -> str:
+        return f"{self.point.name}-{self.fixture.id}"
 
-
-def spec_for(point: SupervisionPoint) -> PartialEmitSpec:
-    return partial_emit_spec_from(point.cfg, _METRICS)
+    @property
+    def spec(self) -> PartialEmitSpec:
+        return spec_for(self.point)
 
 
 def group_id(key: SupervisionKey, cfg: TargetsConfig) -> tuple[Any, ...]:
@@ -198,7 +203,7 @@ def supervision_ref_path(key: SupervisionKey, cfg: TargetsConfig, fixture: Fixtu
 
 def obs_entries() -> list[ObsEntry]:
     return [
-        ObsEntry(point=p.name, cfg=p.cfg, fixture=fx, ref_path=obs_ref_path(p.name, fx))
+        ObsEntry(point=p, fixture=fx, ref_path=obs_ref_path(p.name, fx))
         for p in OBS_POINTS
         for fx in FIXTURES
     ]
@@ -207,17 +212,14 @@ def obs_entries() -> list[ObsEntry]:
 def supervision_entries() -> list[SupervisionEntry]:
     out = []
     for p in SUPERVISION_POINTS:
-        spec = spec_for(p)
         for fx in FIXTURES:
-            refs = {
-                name: KeyRef(
-                    key=name,
-                    form=supervision_key(name).form,
-                    path=supervision_ref_path(supervision_key(name), p.cfg, fx),
+            refs = {}
+            for name in p.keys:
+                key = supervision_key(name)
+                refs[name] = KeyRef(
+                    key=name, form=key.form, path=supervision_ref_path(key, p.cfg, fx)
                 )
-                for name in p.keys
-            }
-            out.append(SupervisionEntry(point=p.name, cfg=p.cfg, spec=spec, fixture=fx, refs=refs))
+            out.append(SupervisionEntry(point=p, fixture=fx, refs=refs))
     return out
 
 
