@@ -19,7 +19,6 @@ from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
 import sys
-from typing import Any
 
 import numpy as np
 
@@ -33,6 +32,7 @@ from training.goldens.registry import (
     REFERENCES_DIR,
     SUPERVISION_KEYS,
     FixtureRecord,
+    GroupId,
     SupervisionEntry,
     group_id,
     obs_entries,
@@ -99,12 +99,12 @@ def _plan_supervision(
     # of this check (see the module docstring).
     warnings: list[str] = []
     for key in SUPERVISION_KEYS:
-        groups: dict[tuple[Any, ...], list[SupervisionEntry]] = defaultdict(list)
+        groups: dict[GroupId, list[SupervisionEntry]] = defaultdict(list)
         for e in entries:
             if key.name in e.point.keys:
                 groups[group_id(key, e.point.cfg)].append(e)
 
-        group_arrays: dict[tuple[Any, ...], np.ndarray] = {}
+        group_arrays: dict[GroupId, np.ndarray] = {}
         for gid, members in groups.items():
             names = [m.point.name for m in members]
             base = got[names[0]][key.name]

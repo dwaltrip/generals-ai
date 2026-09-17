@@ -299,7 +299,7 @@ class IterableDataset(TorchIterableDataset):
             pre = precompute_for(self._spec.partial, game)
 
             for k in g.perspective_ks:
-                perspective = corpus.perspectives[k]
+                perspective = corpus.perspective(k)
 
                 with timer.section("perspective_setup"):
                     state = init_memory(

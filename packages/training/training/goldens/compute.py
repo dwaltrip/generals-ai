@@ -19,12 +19,13 @@ def compute_obs(game: SimGame, persp: PerspectiveMeta, cfg: ObsConfig) -> ObsDig
 
 
 def compute_supervision(
-    game: SimGame, persp: PerspectiveMeta, spec: PartialEmitSpec
+    game: SimGame,
+    persp: PerspectiveMeta,
+    spec: PartialEmitSpec,
 ) -> dict[str, np.ndarray]:
-    T = persp.end_t
-    assert T > 0, f"perspective has zero frames (end_t={T})"
+    assert persp.end_t > 0, f"perspective has zero frames (end_t={persp.end_t})"
 
     pre = precompute_for(spec, game)
-    per_t = [emit_tail(game, t, persp, spec, pre).to_dict() for t in range(T)]
+    per_t = [emit_tail(game, t, persp, spec, pre).to_dict() for t in range(persp.end_t)]
     # Every key is stacked per frame over t, including scalars like value_target.
     return {key: np.stack([d[key] for d in per_t]) for key in per_t[0]}

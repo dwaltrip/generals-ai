@@ -1,9 +1,9 @@
 from __future__ import annotations
 
+from collections.abc import Hashable
 from dataclasses import MISSING, dataclass, fields
 from enum import Enum
 from pathlib import Path
-from typing import Any
 
 from training.bc.aux_heads.elim_head_meta import ElimHeadVariant
 from training.bc.config.metrics_config import MetricsConfig
@@ -13,6 +13,9 @@ from training.bc.obs_config import ObsConfig
 
 
 REP_SEP = "@"
+
+# The values of a key's dependency fields, taken from one point's config.
+GroupId = tuple[Hashable, ...]
 
 DATA_ROOT = Path(__file__).resolve().parents[2] / "tests" / "goldens"
 FIXTURES_DIR = DATA_ROOT / "fixtures"
@@ -147,7 +150,7 @@ class KeyRef:
     path: Path
 
 
-def spec_for(point: SupervisionPoint) -> PartialEmitSpec:
+def partial_spec_for(point: SupervisionPoint) -> PartialEmitSpec:
     return partial_emit_spec_from(point.cfg, _METRICS)
 
 
@@ -174,14 +177,14 @@ class SupervisionEntry:
 
     @property
     def spec(self) -> PartialEmitSpec:
-        return spec_for(self.point)
+        return partial_spec_for(self.point)
 
 
-def group_id(key: SupervisionKey, cfg: TargetsConfig) -> tuple[Any, ...]:
+def group_id(key: SupervisionKey, cfg: TargetsConfig) -> GroupId:
     return tuple(getattr(cfg, f) for f in key.deps)
 
 
-def representative(key: SupervisionKey, gid: tuple[Any, ...]) -> str:
+def representative(key: SupervisionKey, gid: GroupId) -> str:
     for point in SUPERVISION_POINTS:
         if key.name in point.keys and group_id(key, point.cfg) == gid:
             return point.name
@@ -234,7 +237,7 @@ def _assert_no_defaults(cls: type) -> None:
 
 
 def _validate() -> None:
-    for cls in (TargetsConfig, ObsConfig, MetricsConfig, PartialEmitSpec):
+    for cls in (TargetsConfig, ObsConfig, MetricsConfig):
         _assert_no_defaults(cls)
 
     for names in (
@@ -258,7 +261,7 @@ def _validate() -> None:
         assert not bad, f"{key.name}: unknown TargetsConfig fields {bad}"
 
     for p in SUPERVISION_POINTS:
-        assert ("alive_mask" in p.keys) == spec_for(p).emit_alive_mask, (
+        assert ("alive_mask" in p.keys) == partial_spec_for(p).emit_alive_mask, (
             f"{p.name}: alive_mask in keys must match the derived emit_alive_mask"
         )
 

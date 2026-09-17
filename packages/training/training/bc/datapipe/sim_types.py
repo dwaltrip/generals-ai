@@ -145,8 +145,8 @@ class PerspectiveMeta:
 @dataclass(frozen=True)
 class CorpusGame:
     sim: SimGame
-    # Every perspective recorded in the meta npz, keyed by `perspective_k`.
-    perspectives: dict[int, PerspectiveMeta]
+    # Every perspective recorded in the meta npz, in recorded order.
+    _perspectives: tuple[PerspectiveMeta, ...]
 
     @classmethod
     def load(cls, sim_path: Path) -> CorpusGame:
@@ -154,11 +154,16 @@ class CorpusGame:
         with np.load(meta_path_for(sim_path)) as z:
             meta = {key: z[key] for key in z.files}
         num_recorded = len(meta["perspective_player_ids"])
-        perspectives = {k: PerspectiveMeta.from_meta(meta, k, sim.T) for k in range(num_recorded)}
-        return cls(sim=sim, perspectives=perspectives)
+        perspectives = tuple(PerspectiveMeta.from_meta(meta, k, sim.T) for k in range(num_recorded))
+        return cls(sim=sim, _perspectives=perspectives)
+
+    def perspective(self, k: int) -> PerspectiveMeta:
+        # `k` is a position in the parser's recorded list (`perspective_k` in
+        # the manifest), which the meta npz arrays follow.
+        return self._perspectives[k]
 
     def perspective_for_slot(self, slot: int) -> PerspectiveMeta:
-        matches = [p for p in self.perspectives.values() if p.slot == slot]
+        matches = [p for p in self._perspectives if p.slot == slot]
         assert len(matches) == 1, (
             f"slot {slot}: expected one recorded perspective, found {len(matches)}"
         )
