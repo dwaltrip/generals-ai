@@ -1,14 +1,15 @@
 import pytest
 
+from training.goldens import store
 from training.goldens.compare import compare_obs
 from training.goldens.compute import compute_obs
-from training.goldens.loaders import load_fixture, load_obs_digest
+from training.goldens.loaders import load_fixture
 from training.goldens.registry import ObsEntry, obs_entries
 
 
 @pytest.mark.parametrize("entry", obs_entries(), ids=lambda e: e.id)
 def test_obs_golden(entry: ObsEntry) -> None:
-    ref = load_obs_digest(entry.ref_path)
+    ref = store.load_obs(entry.ref)
     if ref is None:
         pytest.fail(f"unblessed: no obs references for {entry.id}, run regen")
 

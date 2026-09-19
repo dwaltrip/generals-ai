@@ -14,19 +14,18 @@ from __future__ import annotations
 from collections import defaultdict
 from dataclasses import dataclass
 from itertools import combinations
-from pathlib import Path
 import sys
 
 import numpy as np
 
 from training.bc.datapipe.sim_types import PerspectiveMeta, SimGame
+from training.goldens import store
 from training.goldens.compare import compare_obs, diff_rows, keyset_diff, same_bytes, stored_form
 from training.goldens.compute import compute_obs, compute_supervision
 from training.goldens.hashes import ObsDigest
-from training.goldens.loaders import load_array, load_fixture, load_obs_digest
+from training.goldens.loaders import load_fixture
 from training.goldens.registry import (
     FIXTURES,
-    REFERENCES_DIR,
     SUPERVISION_KEYS,
     FixtureRecord,
     GroupId,
@@ -36,18 +35,19 @@ from training.goldens.registry import (
     representative,
     supervision_entries,
 )
+from training.goldens.store import RefId, Surface
 
 
 @dataclass(frozen=True)
 class _ObsFile:
-    path: Path
+    ref: RefId
     digest: ObsDigest
 
 
 @dataclass(frozen=True)
 class _SupervisionFile:
     # One (key, group) on one fixture.
-    path: Path
+    ref: RefId
     array: np.ndarray
     key: str
     gid: GroupId
@@ -68,16 +68,12 @@ class RegenAbort(Exception):
     pass
 
 
-def _rel(path: Path) -> str:
-    return str(path.relative_to(REFERENCES_DIR))
-
-
 # --- Plan ---
 
 
 def _plan_obs(fx: FixtureRecord, game: SimGame, persp: PerspectiveMeta) -> list[_ObsFile]:
     return [
-        _ObsFile(path=e.ref_path, digest=compute_obs(game, persp, e.point.cfg))
+        _ObsFile(ref=e.ref, digest=compute_obs(game, persp, e.point.cfg))
         for e in obs_entries()
         if e.fixture == fx
     ]
@@ -119,7 +115,7 @@ def _plan_supervision(
 
             planned.append(
                 _SupervisionFile(
-                    path=members[0].refs[key.name].path,
+                    ref=members[0].refs[key.name].ref,
                     array=stored_form(key.form, base),
                     key=key.name,
                     gid=gid,
@@ -164,19 +160,14 @@ def _check_identical_groups(plans: list[_FixturePlan]) -> list[str]:
 
 def _write_obs(files: list[_ObsFile]) -> None:
     for item in files:
-        old = load_obs_digest(item.path)
+        old = store.load_obs(item.ref)
         if old is None:
             status = "new"
         else:
             mismatch = compare_obs(item.digest, old)
             status = "unchanged" if mismatch is None else f"changed ({mismatch.summary()})"
-        item.path.parent.mkdir(parents=True, exist_ok=True)
-        np.savez(
-            item.path,
-            frame_hashes=item.digest.frame_hashes,
-            channel_hashes=item.digest.channel_hashes,
-        )
-        print(f"  {status:12s} {_rel(item.path)}")
+        store.save_obs(item.ref, item.digest)
+        print(f"  {status:12s} {store.rel(item.ref)}")
 
 
 # Returns the "new" arrays (references blessed for the first time)
@@ -186,30 +177,37 @@ def _write_obs(files: list[_ObsFile]) -> None:
 def _write_supervision(files: list[_SupervisionFile]) -> list[np.ndarray]:
     written_new = []
     for item in files:
-        old = load_array(item.path)
+        old = store.load_supervision(item.ref)
         if old is None:
             status = "new"
             written_new.append(item.array)
         else:
-            diff = diff_rows(item.path.stem, item.array, old)
+            diff = diff_rows(item.key, item.array, old)
             status = "unchanged" if diff is None else f"changed ({diff.summary()})"
-        item.path.parent.mkdir(parents=True, exist_ok=True)
-        np.save(item.path, item.array)
-        print(f"  {status:12s} {_rel(item.path)}   <- {', '.join(item.members)}")
+        store.save_supervision(item.ref, item.array)
+        print(f"  {status:12s} {store.rel(item.ref)}   <- {', '.join(item.members)}")
     return written_new
 
 
-def _remove_orphans(expected: set[Path], written_new: list[np.ndarray]) -> None:
+def _remove_orphans(expected: set[RefId], written_new: list[np.ndarray]) -> None:
     # "moved" means the reference was removed and then regenerated identically
     # with a different filepath. Most likely, the representative point changed,
     # e.g. the points were re-ordered or one was removed.
     # NOTE: There are other less common scenarios that can also cause this.
-    for path in sorted(p for p in REFERENCES_DIR.rglob("*") if p.is_file()):
-        if path in expected or path.name.startswith("."):
+    listing = store.list_refs()
+    for rid in listing.refs:
+        if rid in expected:
             continue
-        moved = path.suffix == ".npy" and any(same_bytes(np.load(path), a) for a in written_new)
+        moved = False
+        if rid.surface is Surface.SUPERVISION:
+            old = store.load_supervision(rid)
+            assert old is not None
+            moved = any(same_bytes(old, a) for a in written_new)
+        store.remove(rid)
+        print(f"  {'moved' if moved else 'removed':12s} {store.rel(rid)}")
+    for path in listing.unrecognized:
         path.unlink()
-        print(f"  {'moved' if moved else 'removed':12s} {_rel(path)}")
+        print(f"  {'removed':12s} {path.name} (unrecognized file)")
 
 
 def main() -> int:
@@ -229,8 +227,8 @@ def main() -> int:
     for line in _check_identical_groups(plans):
         print(line)
 
-    expected = {f.path for p in plans for f in p.obs}
-    expected |= {f.path for p in plans for f in p.supervision}
+    expected = {f.ref for p in plans for f in p.obs}
+    expected |= {f.ref for p in plans for f in p.supervision}
     _remove_orphans(expected, written_new)
     return 0
 

@@ -3,23 +3,17 @@ from __future__ import annotations
 from collections.abc import Hashable
 from dataclasses import MISSING, dataclass, fields
 from enum import Enum
-from pathlib import Path
 
 from training.bc.aux_heads.elim_head_meta import ElimHeadVariant
 from training.bc.config.metrics_config import MetricsConfig
 from training.bc.config.targets_config import TargetsConfig
 from training.bc.datapipe.emit_spec import PartialEmitSpec, partial_emit_spec_from
 from training.bc.obs_config import ObsConfig
+from training.goldens.store import REP_SEP, RefId, Surface
 
-
-REP_SEP = "@"
 
 # The values of a key's dependency fields, taken from one point's config.
 GroupId = tuple[Hashable, ...]
-
-DATA_ROOT = Path(__file__).resolve().parents[2] / "tests" / "goldens"
-FIXTURES_DIR = DATA_ROOT / "fixtures"
-REFERENCES_DIR = DATA_ROOT / "references"
 
 
 # --- Types ---
@@ -144,7 +138,7 @@ FIXTURES = [
 class KeyRef:
     key: str
     form: RefForm
-    path: Path
+    ref: RefId
 
 
 def partial_spec_for(point: SupervisionPoint) -> PartialEmitSpec:
@@ -155,7 +149,7 @@ def partial_spec_for(point: SupervisionPoint) -> PartialEmitSpec:
 class ObsEntry:
     point: ObsPoint
     fixture: FixtureRecord
-    ref_path: Path
+    ref: RefId
 
     @property
     def id(self) -> str:
@@ -192,18 +186,18 @@ def supervision_key(name: str) -> SupervisionKey:
     return _KEYS_BY_NAME[name]
 
 
-def obs_ref_path(point: str, fixture: FixtureRecord) -> Path:
-    return REFERENCES_DIR / "obs" / point / f"{fixture.id}.npz"
+def obs_ref(point: ObsPoint, fixture: FixtureRecord) -> RefId:
+    return RefId(Surface.OBS, point=point.name, fixture=fixture.id)
 
 
-def supervision_ref_path(key: SupervisionKey, cfg: TargetsConfig, fixture: FixtureRecord) -> Path:
+def supervision_ref(key: SupervisionKey, cfg: TargetsConfig, fixture: FixtureRecord) -> RefId:
     rep = representative(key, group_id(key, cfg))
-    return REFERENCES_DIR / "supervision" / fixture.id / f"{rep}{REP_SEP}{key.name}.npy"
+    return RefId(Surface.SUPERVISION, point=rep, fixture=fixture.id, key=key.name)
 
 
 def obs_entries() -> list[ObsEntry]:
     return [
-        ObsEntry(point=p, fixture=fx, ref_path=obs_ref_path(p.name, fx))
+        ObsEntry(point=p, fixture=fx, ref=obs_ref(p, fx))
         for p in OBS_POINTS
         for fx in FIXTURES
     ]
@@ -216,9 +210,7 @@ def supervision_entries() -> list[SupervisionEntry]:
             refs = {}
             for name in p.keys:
                 key = supervision_key(name)
-                refs[name] = KeyRef(
-                    key=name, form=key.form, path=supervision_ref_path(key, p.cfg, fx)
-                )
+                refs[name] = KeyRef(key=name, form=key.form, ref=supervision_ref(key, p.cfg, fx))
             out.append(SupervisionEntry(point=p, fixture=fx, refs=refs))
     return out
 
