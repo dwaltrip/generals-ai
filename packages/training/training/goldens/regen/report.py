@@ -1,15 +1,8 @@
-"""
-Renderers over a Plan. Pure functions from the plan to text.
-
-The regen report (9.18-1 section 8): summary first, warnings near the top, then
-obs pivoted by point and supervision pivoted by key. Unchanged obs points get
-one line each, unchanged supervision keys are omitted.
-"""
+"""Build a regen report, using regen Plan as an input."""
 
 from __future__ import annotations
 
 from collections import Counter, defaultdict
-from pathlib import Path
 
 import numpy as np
 
@@ -30,7 +23,7 @@ _W_FX = 16     # fixture column
 _W_CH = 30     # channel column
 
 
-def render_report(plan: Plan, root: Path) -> str:
+def render_report(plan: Plan) -> str:
     lines = ["regen: compared against the references on disk before this run", ""]
     lines.append(_headline(plan))
     lines.append("")
@@ -41,7 +34,7 @@ def render_report(plan: Plan, root: Path) -> str:
         lines.append("")
         lines += _supervision_section(plan)
         lines.append("")
-    lines += _stray_files(plan, root)
+    lines += _stray_files(plan)
     return "\n".join(lines).rstrip() + "\n"
 
 
@@ -74,11 +67,8 @@ def render_warning(w: IdenticalGroups) -> str:
 # --- Per-fixture span ---
 
 
-# The four-case rendering of changed indices, plus the case where the axis
-# length itself changed.
-def _span(changed: np.ndarray | None, total: int, counts: tuple[int, int], what: str) -> str:
-    if changed is None:
-        return f"{what} count {counts[0]} to {counts[1]}"
+# Description of the changed ticks, along an axis of length `total`.
+def _ticks(changed: np.ndarray, total: int) -> str:
     k = int(changed.size)
     if k == 0:
         return "unchanged"
@@ -93,13 +83,24 @@ def _span(changed: np.ndarray | None, total: int, counts: tuple[int, int], what:
 
 
 def _obs_frames(d: ObsMismatch) -> str:
-    return _span(d.changed_frames, d.n_frames[1], d.n_frames, "frame")
+    if d.changed_frames is None:
+        return f"frame count {d.ref.n_frames} to {d.got.n_frames}"
+    return _ticks(d.changed_frames, d.ref.n_frames)
 
 
 def _rows(d: KeyDiff) -> str:
-    if d.note:
-        return d.note
-    return _span(d.changed_rows, d.total_rows, (d.total_rows, d.total_rows), "row")
+    if d.changed_rows is None:
+        return _render_layout_change(d)
+    return _ticks(d.changed_rows, d.ref.shape[0])
+
+
+def _render_layout_change(d: KeyDiff) -> str:
+    ref, got = d.ref, d.got
+    if ref.shape == got.shape:
+        return f"dtype {ref.dtype} to {got.dtype}"
+    if ref.dtype == got.dtype and ref.shape[1:] == got.shape[1:]:
+        return f"row count {ref.shape[0]} to {got.shape[0]}"
+    return f"layout {ref.shape} {ref.dtype} to {got.shape} {got.dtype}"
 
 
 # --- Obs, pivoted by point ---
@@ -163,7 +164,7 @@ def _obs_status(i: PlannedObs) -> str:
             return _obs_frames(i.diff)
         case Status.MOVED:
             assert i.moved_from is not None
-            return f"moved from {store.rel(i.moved_from)}"
+            return f"moved from {store.rel_path(i.moved_from)}"
         case Status.NEW:
             return "new, no baseline"
         case Status.UNCHANGED:
@@ -179,7 +180,8 @@ def _obs_channels(changed: list[PlannedObs]) -> list[str]:
     for i in changed:
         assert i.diff is not None
         if i.diff.changed_channels is None:
-            old, new = i.diff.n_channels
+            old = i.diff.ref.n_channels
+            new = i.diff.got.n_channels
             lines.append(
                 f"      layout changed, {old} to {new} channels, no per-channel diff"
                 f"   ({i.entry.fixture.id})"
@@ -250,7 +252,7 @@ def _supervision_status(i: PlannedSupervision) -> str:
             return _rows(i.diff)
         case Status.MOVED:
             assert i.moved_from is not None
-            return f"moved from {store.rel(i.moved_from)}"
+            return f"moved from {store.rel_path(i.moved_from)}"
         case Status.NEW:
             return "new, no baseline"
         case Status.UNCHANGED:
@@ -271,19 +273,16 @@ def _points_with(items: list[PlannedSupervision], status: Status | None) -> list
 
 def _byte_matches(plan: Plan, surface: Surface) -> list[str]:
     return [
-        f"  note: new {store.rel(new)} has identical bytes to removed {store.rel(old)}"
+        f"  note: new {store.rel_path(new)} has identical bytes to removed {store.rel_path(old)}"
         for new, old in plan.byte_matches
         if new.surface is surface
     ]
 
 
-def _stray_files(plan: Plan, root: Path) -> list[str]:
-    lines = []
-    for path in plan.unrecognized:
-        rel = path.relative_to(root).as_posix()
-        lines.append(f"unrecognized reference path, left in place: {rel}")
+def _stray_files(plan: Plan) -> list[str]:
+    lines = [f"unrecognized reference path, left in place: {p}" for p in plan.unrecognized]
     if plan.ignored:
-        names = ", ".join(p.relative_to(root).as_posix() for p in plan.ignored)
+        names = ", ".join(str(p) for p in plan.ignored)
         lines.append(f"ignored {len(plan.ignored)} non-reference file(s): {names}")
     return lines
 

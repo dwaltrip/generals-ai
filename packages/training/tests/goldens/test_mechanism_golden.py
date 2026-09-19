@@ -2,9 +2,9 @@
 Pins the goldens machinery itself against synthetic input: the obs hashing,
 the stored forms, and the set digest. No fixture or guarded code is involved.
 
-If the golden tests fire and this test fails too, the goldens' own mechanism
-changed. Re-pin the literals in the same commit and record the revision as
-mechanism-change (9.18-1 section 11).
+This test fails if the behavior of the core machinery has changed. This is either
+a bug or an intentional change. Intentional changes require a revision record with
+"mechanism-change" as the "kind". The hard-coded values below must also be updated.
 """
 
 from pathlib import Path
@@ -16,6 +16,8 @@ from training.goldens.hashes import ObsHasher
 from training.goldens.registry import RefForm
 from training.goldens.store import set_digest
 
+
+# TODO: Pull the hard-code values below out into module constants (or something).
 
 def _frames() -> list[np.ndarray]:
     base = np.arange(12, dtype=np.float16).reshape(3, 2, 2)

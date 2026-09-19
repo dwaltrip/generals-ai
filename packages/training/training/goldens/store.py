@@ -1,14 +1,12 @@
 """
-The on-disk layout of a references tree, and reading and writing it.
+This module owns the on-disk storage and I/O of the golden references.
+The file structure layout:
 
     obs/<point>/<fixture>.npz
     supervision/<fixture>/<point>@<key>.npy
 
 For supervision, <point> is the representative point for the key (see
-registry.representative). Nothing here imports the registry.
-
-Every function that touches disk takes the tree's root, defaulting to the
-committed tree, so a test or a second tool can point it elsewhere.
+registry.representative).
 """
 
 from __future__ import annotations
@@ -47,7 +45,7 @@ class RefId:
 # --- Paths ---
 
 
-def _rel_path(rid: RefId) -> Path:
+def rel_path(rid: RefId) -> Path:
     match rid.surface:
         case Surface.OBS:
             return Path("obs") / rid.point / f"{rid.fixture}.npz"
@@ -56,11 +54,7 @@ def _rel_path(rid: RefId) -> Path:
 
 
 def ref_path(rid: RefId, root: Path = REFERENCES_DIR) -> Path:
-    return root / _rel_path(rid)
-
-
-def rel(rid: RefId) -> str:
-    return _rel_path(rid).as_posix()
+    return root / rel_path(rid)
 
 
 def parse_ref_path(path: Path, root: Path = REFERENCES_DIR) -> RefId | None:
@@ -96,25 +90,28 @@ def _reference_files_under(root: Path) -> list[Path]:
     return [p for p in _files_under(root) if is_reference_file(p)]
 
 
+# The references found under a root. Includes any stray files.
 @dataclass(frozen=True)
-class Listing:
+class ReferenceSet:
+    root: Path
     refs: list[RefId]
-    unrecognized: list[Path]  # reference files whose path doesn't parse
-    ignored: list[Path]       # everything else on the tree
+    unrecognized: list[Path]  # npz / npy files with an invalid path, relative to root
+    ignored: list[Path]       # unexpected non-reference files, relative to root
 
 
-def list_refs(root: Path = REFERENCES_DIR) -> Listing:
+def build_ref_set(root: Path = REFERENCES_DIR) -> ReferenceSet:
     refs, unrecognized, ignored = [], [], []
     for path in _files_under(root):
+        rel = path.relative_to(root)
         if not is_reference_file(path):
-            ignored.append(path)
+            ignored.append(rel)
             continue
         rid = parse_ref_path(path, root)
         if rid is None:
-            unrecognized.append(path)
+            unrecognized.append(rel)
         else:
             refs.append(rid)
-    return Listing(refs=refs, unrecognized=unrecognized, ignored=ignored)
+    return ReferenceSet(root=root, refs=refs, unrecognized=unrecognized, ignored=ignored)
 
 
 # --- Read / write ---

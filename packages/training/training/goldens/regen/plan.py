@@ -1,7 +1,4 @@
-"""
-Planning for regen: compute every reference, classify each against the tree
-on disk, and detect moves and orphans. Nothing here writes or prints.
-"""
+"""Plan step for regen: compute and classify references, detect changes."""
 
 from __future__ import annotations
 
@@ -39,15 +36,15 @@ from training.goldens.registry import (
     obs_entries,
     supervision_entries,
 )
+from training.goldens.render import render_key_diff, render_keyset_diff
 from training.goldens.store import RefId, Surface
 
 
 class Status(Enum):
-    NEW = "new"              # no reference on disk
+    NEW = "new"
     UNCHANGED = "unchanged"
     CHANGED = "changed"
-    MOVED = "moved"          # new at this path, and an orphan with the same fixture and key
-                             # (only the point differs) has identical content
+    MOVED = "moved"
 
 
 @dataclass(frozen=True)
@@ -102,13 +99,14 @@ class IdenticalGroups:
 
 @dataclass(frozen=True)
 class Plan:
+    root: Path                              # the tree this plan was made against
     fixtures: list[FixtureInfo]
     obs: list[PlannedObs]
     supervision: list[PlannedSupervision]
-    removed: list[RefId]                    # orphans with no matching planned content
+    removed: list[RefId]                    # orphans without matching "plan" content
     byte_matches: list[tuple[RefId, RefId]] # (new file, removed file) with identical content
-    unrecognized: list[Path]                # reference files whose path doesn't parse
-    ignored: list[Path]                     # non-reference files on the tree
+    unrecognized: list[Path]                # npz / npy files with an invalid path, relative to root
+    ignored: list[Path]                     # unexpected non-reference files, relative to root
     warnings: list[IdenticalGroups]
 
     def is_noop(self) -> bool:
@@ -171,7 +169,7 @@ def _plan_supervision(
 
     for e in entries:
         if (kd := keyset_diff(got[e.point.name], e.point.keys)) is not None:
-            raise RegenAbort(f"keyset mismatch for {e.point.name}: {kd.summary()}")
+            raise RegenAbort(f"keyset mismatch for {e.point.name}: {render_keyset_diff(kd)}")
 
     planned: list[PlannedSupervision] = []
     for key in SUPERVISION_KEYS:
@@ -193,7 +191,7 @@ def _plan_supervision(
                 for p in differ:
                     diff = diff_rows(key.name, got[p][key.name], base)
                     assert diff is not None
-                    lines.append(f"  differs: {p} ({diff.summary()})")
+                    lines.append(f"  differs: {p} ({render_key_diff(diff)})")
                 lines.append("Either the dependency table is stale or the code diverged.")
                 raise RegenAbort("\n".join(lines))
 
@@ -228,19 +226,20 @@ def assemble(parts: list[FixturePlan], root: Path = REFERENCES_DIR) -> Plan:
     supervision = [s for p in parts for s in p.supervision]
     warnings = _check_identical_groups([p.supervision for p in parts])
 
-    listing = store.list_refs(root)
+    stored = store.build_ref_set(root)
     planned_refs = {o.ref for o in obs} | {s.ref for s in supervision}
-    orphans = [r for r in listing.refs if r not in planned_refs]
+    orphans = [r for r in stored.refs if r not in planned_refs]
     obs, supervision, removed, byte_matches = _detect_moves(obs, supervision, orphans, root)
 
     return Plan(
+        root=root,
         fixtures=[p.info for p in parts],
         obs=obs,
         supervision=supervision,
         removed=removed,
         byte_matches=byte_matches,
-        unrecognized=listing.unrecognized,
-        ignored=listing.ignored,
+        unrecognized=stored.unrecognized,
+        ignored=stored.ignored,
         warnings=warnings,
     )
 
@@ -272,12 +271,13 @@ def _same_digest(a: ObsDigest, b: ObsDigest) -> bool:
     )
 
 
-# A new file whose content matches an orphan with the same fixture and key is a
-# move: the reference was regenerated identically under a different point name,
-# most likely because the representative point changed (points re-ordered or one
-# removed). Each orphan is matched at most once. Content that matches an orphan
-# with a different fixture or key is not a move, since two keys can legitimately
-# hold identical arrays, so it is reported as a byte match instead.
+# Detect and assign `Status.MOVED`.
+# Moved refs are planned refs with a new, currently vacant path that matches an
+# orphan on everything but the point (including content). This occurs with point
+# renames, or if the representative point changes (supervision only).
+# Each orphan is matched at most once. Content that matches an orphan but has a
+# different fixture or key is not considered "moved", as two keys can legitimately
+# contain identical data. That case is reported as a "byte match" instead.
 def _detect_moves(
     obs: list[PlannedObs],
     supervision: list[PlannedSupervision],

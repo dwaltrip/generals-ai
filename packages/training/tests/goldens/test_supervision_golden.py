@@ -4,6 +4,7 @@ from training.goldens.compare import compare_supervision
 from training.goldens.compute import compute_supervision
 from training.goldens.loaders import load_fixture, load_supervision_reference
 from training.goldens.registry import SupervisionEntry, supervision_entries
+from training.goldens.render import render_supervision_mismatch
 
 
 @pytest.mark.parametrize("entry", supervision_entries(), ids=lambda e: e.id)
@@ -22,4 +23,4 @@ def test_supervision_golden(entry: SupervisionEntry) -> None:
 
     mismatch = compare_supervision(raw, ref, entry.refs)
     if mismatch is not None:
-        pytest.fail(mismatch.summary())
+        pytest.fail(render_supervision_mismatch(mismatch))

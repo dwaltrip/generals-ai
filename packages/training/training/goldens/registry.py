@@ -117,7 +117,11 @@ SUPERVISION_KEYS = [
     SupervisionKey(name="is_pass", deps=(), form=RefForm.FULL),
     SupervisionKey(name="value_target", deps=(), form=RefForm.FULL),
     SupervisionKey(name="alive_mask", deps=(), form=RefForm.FULL),
-    SupervisionKey(name="elim_bin_target", deps=("elim_variant", "elim_bin_edges"), form=RefForm.FULL),
+    SupervisionKey(
+        name="elim_bin_target",
+        deps=("elim_variant", "elim_bin_edges"),
+        form=RefForm.FULL,
+    ),
     SupervisionKey(name="next_elim_target", deps=("elim_variant",), form=RefForm.FULL),
     SupervisionKey(name="next_elim_dt", deps=("elim_variant",), form=RefForm.FULL),
     SupervisionKey(name="next_elim_removal_dt", deps=("elim_variant",), form=RefForm.FULL),

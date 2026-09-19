@@ -37,9 +37,9 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     if not args.dry_run:
-        apply(plan, root)
+        apply(plan)
     print()
-    print(render_report(plan, root), end="")
+    print(render_report(plan), end="")
     if args.dry_run:
         print("\ndry run: nothing written")
     return 0

@@ -5,6 +5,7 @@ from training.goldens.compare import compare_obs
 from training.goldens.compute import compute_obs
 from training.goldens.loaders import load_fixture
 from training.goldens.registry import ObsEntry, obs_entries
+from training.goldens.render import render_obs_mismatch
 
 
 @pytest.mark.parametrize("entry", obs_entries(), ids=lambda e: e.id)
@@ -18,4 +19,4 @@ def test_obs_golden(entry: ObsEntry) -> None:
 
     mismatch = compare_obs(got, ref)
     if mismatch is not None:
-        pytest.fail(mismatch.summary())
+        pytest.fail(render_obs_mismatch(mismatch))

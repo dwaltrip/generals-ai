@@ -13,7 +13,11 @@ def same_bytes(a: np.ndarray, b: np.ndarray) -> bool:
     return a.dtype == b.dtype and a.shape == b.shape and a.tobytes() == b.tobytes()
 
 
-# --- Stored form ---
+def _changed_indices_1d(a: np.ndarray, b: np.ndarray) -> np.ndarray | None:
+    assert a.ndim == 1 and b.ndim == 1
+    if a.size == b.size:
+        return np.nonzero(a != b)[0]
+    return None
 
 
 def stored_form(form: RefForm, arr: np.ndarray) -> np.ndarray:
@@ -24,52 +28,44 @@ def stored_form(form: RefForm, arr: np.ndarray) -> np.ndarray:
             return hash_along_first_axis(arr)
 
 
-# --- Keyset diff, shared by the tests and regen ---
-
-
 @dataclass(frozen=True)
 class KeysetDiff:
-    extra: frozenset[str]    # emitted but not declared
-    missing: frozenset[str]  # declared but not emitted
-
-    def summary(self) -> str:
-        return f"emitted keys differ. extra: {set(self.extra)}, missing: {set(self.missing)}"
+    extra: frozenset[str]
+    missing: frozenset[str]
 
 
 def keyset_diff(emitted: Iterable[str], declared: Iterable[str]) -> KeysetDiff | None:
     emitted, declared = set(emitted), set(declared)
     if emitted == declared:
         return None
-    return KeysetDiff(extra=frozenset(emitted - declared), missing=frozenset(declared - emitted))
+    return KeysetDiff(
+        extra=frozenset(emitted - declared),
+        missing=frozenset(declared - emitted),
+    )
 
 
-# --- Per-key row diff, shared by the tests and regen ---
+@dataclass(frozen=True)
+class ArrayLayout:
+    shape: tuple[int, ...]
+    dtype: np.dtype
+
+    @classmethod
+    def of(cls, arr: np.ndarray) -> ArrayLayout:
+        return cls(shape=arr.shape, dtype=arr.dtype)
 
 
 @dataclass(frozen=True)
 class KeyDiff:
     key: str
-    changed_rows: np.ndarray   # indices along the first axis (ticks, for per-frame arrays)
-    total_rows: int
-    note: str | None = None    # set when shapes or dtypes differ, in which case rows is empty
-
-    def summary(self) -> str:
-        if self.note:
-            return f"{self.key}: {self.note}"
-        return (
-            f"{self.key}: {self.changed_rows.size} of {self.total_rows} rows changed,"
-            f" first t={int(self.changed_rows[0])}"
-        )
+    ref: ArrayLayout
+    got: ArrayLayout
+    changed_rows: np.ndarray | None   # indices along the first axis. None when the layouts differ.
 
 
 def diff_rows(key: str, got: np.ndarray, ref: np.ndarray) -> KeyDiff | None:
-    if got.shape != ref.shape or got.dtype != ref.dtype:
-        return KeyDiff(
-            key=key,
-            changed_rows=np.empty(0, dtype=np.int64),
-            total_rows=got.shape[0],
-            note=f"shape/dtype {got.shape} {got.dtype} vs ref {ref.shape} {ref.dtype}",
-        )
+    ref_layout, got_layout = ArrayLayout.of(ref), ArrayLayout.of(got)
+    if ref_layout != got_layout:
+        return KeyDiff(key=key, ref=ref_layout, got=got_layout, changed_rows=None)
     # Rows are compared by their bytes, matching `same_bytes`. Comparing values
     # would differ for floats: NaN never equals itself, and -0.0 equals 0.0.
     got_b = np.ascontiguousarray(got).view(np.uint8).reshape(got.shape[0], -1)
@@ -77,49 +73,42 @@ def diff_rows(key: str, got: np.ndarray, ref: np.ndarray) -> KeyDiff | None:
     rows = np.nonzero((got_b != ref_b).any(axis=1))[0]
     if rows.size == 0:
         return None
-    return KeyDiff(key=key, changed_rows=rows, total_rows=got.shape[0])
+    return KeyDiff(key=key, ref=ref_layout, got=got_layout, changed_rows=rows)
 
 
 # --- Obs ---
 
 
 @dataclass(frozen=True)
+class ObsShape:
+    n_frames: int
+    n_channels: int
+
+    @classmethod
+    def of(cls, digest: ObsDigest) -> ObsShape:
+        return cls(n_frames=digest.frame_hashes.size, n_channels=digest.channel_hashes.size)
+
+
+@dataclass(frozen=True)
 class ObsMismatch:
-    n_frames: tuple[int, int]             # (ref, got)
-    n_channels: tuple[int, int]
+    ref: ObsShape
+    got: ObsShape
     changed_frames: np.ndarray | None     # None when the frame counts differ
     changed_channels: np.ndarray | None   # None when the channel counts differ
 
-    def summary(self) -> str:
-        parts = []
-        if self.changed_frames is None:
-            parts.append(f"frame count {self.n_frames[0]} -> {self.n_frames[1]}")
-        elif self.changed_frames.size:
-            parts.append(
-                f"{self.changed_frames.size} of {self.n_frames[1]} frames changed"
-                f" (first t={int(self.changed_frames[0])})"
-            )
-        if self.changed_channels is None:
-            parts.append(f"channel count {self.n_channels[0]} -> {self.n_channels[1]}")
-        elif self.changed_channels.size:
-            parts.append(f"channels {self.changed_channels.tolist()}")
-        return "obs mismatch: " + ", ".join(parts)
 
-
-# Frames and channels are compared independently. An axis whose length changed
-# has no index diff.
+# Frames and channels are compared independently.
+# Diffs are only computed when the arrays have matching size.
 def compare_obs(got: ObsDigest, ref: ObsDigest) -> ObsMismatch | None:
-    n_frames = (ref.frame_hashes.size, got.frame_hashes.size)
-    n_channels = (ref.channel_hashes.size, got.channel_hashes.size)
-    frames = channels = None
-    if n_frames[0] == n_frames[1]:
-        frames = np.nonzero(got.frame_hashes != ref.frame_hashes)[0]
-    if n_channels[0] == n_channels[1]:
-        channels = np.nonzero(got.channel_hashes != ref.channel_hashes)[0]
+    frames = _changed_indices_1d(got.frame_hashes, ref.frame_hashes)
+    channels = _changed_indices_1d(got.channel_hashes, ref.channel_hashes)
     if frames is not None and channels is not None and frames.size == 0 and channels.size == 0:
         return None
     return ObsMismatch(
-        n_frames=n_frames, n_channels=n_channels, changed_frames=frames, changed_channels=channels
+        ref=ObsShape.of(ref),
+        got=ObsShape.of(got),
+        changed_frames=frames,
+        changed_channels=channels,
     )
 
 
@@ -130,12 +119,6 @@ def compare_obs(got: ObsDigest, ref: ObsDigest) -> ObsMismatch | None:
 class SupervisionMismatch:
     keyset: KeysetDiff | None = None
     diffs: tuple[KeyDiff, ...] = ()
-
-    def summary(self) -> str:
-        if self.keyset:
-            return f"supervision mismatch: {self.keyset.summary()}"
-        lines = [f"supervision mismatch: keys {[d.key for d in self.diffs]}"]
-        return "\n".join(lines + [f"  {d.summary()}" for d in self.diffs])
 
 
 def compare_supervision(

@@ -1,18 +1,13 @@
-"""
-The write step: save what the plan says to save, remove what it says to remove.
-Nothing else on the tree is touched.
-"""
+"""Apply the regen plan. Here we update the on-disk references."""
 
 from __future__ import annotations
 
-from pathlib import Path
-
 from training.goldens import store
-from training.goldens.paths import REFERENCES_DIR
 from training.goldens.regen.plan import Plan, Status
 
 
-def apply(plan: Plan, root: Path = REFERENCES_DIR) -> None:
+def apply(plan: Plan) -> None:
+    root = plan.root
     for o in plan.obs:
         if o.status is not Status.UNCHANGED:
             store.save_obs(o.ref, o.digest, root)
