@@ -85,39 +85,42 @@ def diff_rows(key: str, got: np.ndarray, ref: np.ndarray) -> KeyDiff | None:
 
 @dataclass(frozen=True)
 class ObsMismatch:
-    changed_ticks: np.ndarray
-    changed_channels: np.ndarray
-    note: str | None = None
+    n_frames: tuple[int, int]             # (ref, got)
+    n_channels: tuple[int, int]
+    changed_frames: np.ndarray | None     # None when the frame counts differ
+    changed_channels: np.ndarray | None   # None when the channel counts differ
 
     def summary(self) -> str:
-        note = f"\n  note: {self.note}" if self.note else ""
-        first = int(self.changed_ticks[0]) if self.changed_ticks.size else -1
-        return (
-            f"obs mismatch: {self.changed_ticks.size} ticks changed" +
-            f" (first t={first}), channels={self.changed_channels.tolist()}" +
-            note
-        )
+        parts = []
+        if self.changed_frames is None:
+            parts.append(f"frame count {self.n_frames[0]} -> {self.n_frames[1]}")
+        elif self.changed_frames.size:
+            parts.append(
+                f"{self.changed_frames.size} of {self.n_frames[1]} frames changed"
+                f" (first t={int(self.changed_frames[0])})"
+            )
+        if self.changed_channels is None:
+            parts.append(f"channel count {self.n_channels[0]} -> {self.n_channels[1]}")
+        elif self.changed_channels.size:
+            parts.append(f"channels {self.changed_channels.tolist()}")
+        return "obs mismatch: " + ", ".join(parts)
 
 
+# Frames and channels are compared independently. An axis whose length changed
+# has no index diff.
 def compare_obs(got: ObsDigest, ref: ObsDigest) -> ObsMismatch | None:
-    if (
-        got.frame_hashes.shape != ref.frame_hashes.shape
-        or got.channel_hashes.shape != ref.channel_hashes.shape
-    ):
-        return ObsMismatch(
-            changed_ticks=np.empty(0, dtype=np.int64),
-            changed_channels=np.empty(0, dtype=np.int64),
-            note=(
-                f"shape mismatch: frames {got.frame_hashes.shape} vs ref"
-                f" {ref.frame_hashes.shape}, channels {got.channel_hashes.shape}"
-                f" vs ref {ref.channel_hashes.shape}"
-            ),
-        )
-    changed_ticks = np.nonzero(got.frame_hashes != ref.frame_hashes)[0]
-    changed_channels = np.nonzero(got.channel_hashes != ref.channel_hashes)[0]
-    if changed_ticks.size == 0 and changed_channels.size == 0:
+    n_frames = (ref.frame_hashes.size, got.frame_hashes.size)
+    n_channels = (ref.channel_hashes.size, got.channel_hashes.size)
+    frames = channels = None
+    if n_frames[0] == n_frames[1]:
+        frames = np.nonzero(got.frame_hashes != ref.frame_hashes)[0]
+    if n_channels[0] == n_channels[1]:
+        channels = np.nonzero(got.channel_hashes != ref.channel_hashes)[0]
+    if frames is not None and channels is not None and frames.size == 0 and channels.size == 0:
         return None
-    return ObsMismatch(changed_ticks=changed_ticks, changed_channels=changed_channels)
+    return ObsMismatch(
+        n_frames=n_frames, n_channels=n_channels, changed_frames=frames, changed_channels=channels
+    )
 
 
 # --- Supervision ---
