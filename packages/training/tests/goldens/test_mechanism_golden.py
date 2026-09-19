@@ -46,15 +46,16 @@ def test_stored_forms() -> None:
 def test_set_digest(tmp_path: Path) -> None:
     (tmp_path / "a").mkdir()
     (tmp_path / "a" / "x.npy").write_bytes(b"xyz")
-    (tmp_path / "b.txt").write_bytes(b"hello")
-    assert set_digest(tmp_path) == "a9fe98c8383528cb"
+    (tmp_path / "b.npz").write_bytes(b"hello")
+    assert set_digest(tmp_path) == "8b4ec8d27113912a"
 
-    # Dotfiles and dot-directories are skipped.
+    # Dotfiles, dot-directories, and non-reference files are outside the digest.
     (tmp_path / ".DS_Store").write_bytes(b"junk")
     (tmp_path / ".hidden").mkdir()
     (tmp_path / ".hidden" / "c").write_bytes(b"junk")
-    assert set_digest(tmp_path) == "a9fe98c8383528cb"
+    (tmp_path / "README.md").write_bytes(b"notes")
+    assert set_digest(tmp_path) == "8b4ec8d27113912a"
 
     # The path is part of the digest, so a moved file changes it.
-    (tmp_path / "b.txt").rename(tmp_path / "a" / "b.txt")
-    assert set_digest(tmp_path) != "a9fe98c8383528cb"
+    (tmp_path / "b.npz").rename(tmp_path / "a" / "b.npz")
+    assert set_digest(tmp_path) != "8b4ec8d27113912a"

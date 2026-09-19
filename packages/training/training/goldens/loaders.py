@@ -15,11 +15,11 @@ def load_fixture(fixture: FixtureRecord) -> tuple[SimGame, PerspectiveMeta]:
     return corpus.sim, corpus.perspective_for_slot(fixture.slot)
 
 
-def load_supervision_reference(refs: Mapping[str, KeyRef]) -> dict[str, np.ndarray] | None:
+# Returns the arrays found on disk, which may be a subset of `refs`.
+def load_supervision_reference(refs: Mapping[str, KeyRef]) -> dict[str, np.ndarray]:
     out = {}
     for ref in refs.values():
         arr = store.load_supervision(ref.ref)
-        if arr is None:
-            return None
-        out[ref.key] = arr
+        if arr is not None:
+            out[ref.key] = arr
     return out

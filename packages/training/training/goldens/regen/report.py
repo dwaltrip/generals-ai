@@ -5,7 +5,7 @@ Renderers over a Plan. Pure functions from the plan to text.
 from __future__ import annotations
 
 from training.goldens import store
-from training.goldens.regen.plan import Plan, Status
+from training.goldens.regen.plan import IdenticalGroups, Plan, Status
 from training.goldens.store import RefId
 
 
@@ -20,10 +20,24 @@ def render_file_lines(plan: Plan) -> list[str]:
         lines.append(f"{line}   <- {', '.join(item.points)}")
     for rid in plan.removed:
         lines.append(f"  {'removed':12s} {store.rel(rid)}")
+    for new, old in plan.byte_matches:
+        lines.append(
+            f"  note: new {store.rel(new)} has identical bytes to removed {store.rel(old)}"
+        )
     for path in plan.unrecognized:
-        lines.append(f"  {'removed':12s} {path.name} (unrecognized file)")
-    lines += plan.warnings
+        lines.append(f"  unrecognized reference path, left in place: {path}")
+    if plan.ignored:
+        names = ", ".join(p.name for p in plan.ignored)
+        lines.append(f"  ignored {len(plan.ignored)} non-reference file(s): {names}")
+    lines += [render_warning(w) for w in plan.warnings]
     return lines
+
+
+def render_warning(w: IdenticalGroups) -> str:
+    return (
+        f"warning: {w.key}: groups {w.points_a[0]} and {w.points_b[0]} are byte-identical"
+        " on every fixture (over-declared deps, or a fixture coverage gap)"
+    )
 
 
 def _line(status: Status, ref: RefId, diff, moved_from: RefId | None) -> str:
