@@ -111,6 +111,19 @@ class Plan:
     ignored: list[Path]                     # non-reference files on the tree
     warnings: list[IdenticalGroups]
 
+    def is_noop(self) -> bool:
+        items = [*self.obs, *self.supervision]
+        return all(i.status is Status.UNCHANGED for i in items) and not self.removed
+
+    # Surfaces with changed bytes (a fire), as opposed to new, moved, or removed files.
+    def changed_surfaces(self) -> set[Surface]:
+        out = set()
+        if any(o.status is Status.CHANGED for o in self.obs):
+            out.add(Surface.OBS)
+        if any(s.status is Status.CHANGED for s in self.supervision):
+            out.add(Surface.SUPERVISION)
+        return out
+
 
 class RegenAbort(Exception):
     # Raised during planning before anything is written.
