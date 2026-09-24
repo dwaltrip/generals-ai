@@ -5,8 +5,8 @@ The file structure layout:
     obs/<point>/<fixture>.npz
     supervision/<fixture>/<point>@<key>.npy
 
-For supervision, <point> is the representative point for the key (see
-registry.representative).
+For supervision, <point> is the key group's representative point (see
+registry.KeyGroup.representative).
 """
 
 from __future__ import annotations

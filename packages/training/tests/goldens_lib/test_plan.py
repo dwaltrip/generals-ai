@@ -10,12 +10,16 @@ import numpy as np
 
 from training.goldens import store
 from training.goldens.regen.plan import PlannedSupervision, RefStatus, _detect_moves
-from training.goldens.registry import FixtureRecord, RefForm, SupervisionKey
+from training.goldens.registry import FixtureRecord, KeyGroup, RefForm, SupervisionKey
 from training.goldens.store import RefId, Surface
 
 
 def _key(name: str) -> SupervisionKey:
     return SupervisionKey(name=name, deps=(), form=RefForm.FULL)
+
+
+def _group(point: str, key: str) -> KeyGroup:
+    return KeyGroup(key=_key(key), gid=(), points=(point,))
 
 
 def _rid(point: str, key: str, fixture: str = "fx-s1") -> RefId:
@@ -24,11 +28,8 @@ def _rid(point: str, key: str, fixture: str = "fx-s1") -> RefId:
 
 def _new(point: str, key: str, array: np.ndarray) -> PlannedSupervision:
     return PlannedSupervision(
-        ref=_rid(point, key),
-        key=_key(key),
+        group=_group(point, key),
         fixture=FixtureRecord(replay_id="fx", perspective_slot=1, note=""),
-        gid=(),
-        points=(point,),
         array=array,
         status=RefStatus.NEW,
     )

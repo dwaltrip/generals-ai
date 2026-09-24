@@ -15,6 +15,7 @@ from training.goldens.regen.plan import (
     RefStatus,
     RegenPlan,
 )
+from training.goldens.registry import KeyGroup
 from training.goldens.store import RefId, Surface
 
 
@@ -59,7 +60,7 @@ def _warnings(plan: RegenPlan) -> list[str]:
 
 def render_warning(w: IdenticalGroups) -> str:
     return (
-        f"{w.key}: groups {w.points_a[0]} and {w.points_b[0]} are byte-identical"
+        f"{w.a.key.name}: groups {w.a.representative} and {w.b.representative} are byte-identical"
         " on every fixture (over-declared deps, or a fixture coverage gap)"
     )
 
@@ -203,16 +204,16 @@ def _obs_channels(changed: list[PlannedObs]) -> list[str]:
 
 
 def _supervision_section(plan: RegenPlan) -> list[str]:
-    # One block per (key, group), which is one file per fixture. Keys whose
+    # One block per key group, which is one file per fixture. Groups whose
     # files are all unchanged are omitted.
     blocks = []
-    by_file: dict[tuple[str, tuple[str, ...]], list[PlannedSupervision]] = defaultdict(list)
+    by_group: dict[KeyGroup, list[PlannedSupervision]] = defaultdict(list)
     for item in plan.supervision:
-        by_file[(item.key.name, item.points)].append(item)
-    for (key, points), items in by_file.items():
+        by_group[item.group].append(item)
+    for group, items in by_group.items():
         if all(i.status is RefStatus.UNCHANGED for i in items):
             continue
-        blocks.append(f"  {key:<{_W_NAME}} {', '.join(points)}")
+        blocks.append(f"  {group.key.name:<{_W_NAME}} {', '.join(group.points)}")
         for i in items:
             blocks.append(f"    {i.fixture.id:<{_W_FX}} {_supervision_status(i)}")
 
@@ -263,7 +264,7 @@ def _points_with(items: list[PlannedSupervision], status: RefStatus | None) -> l
     seen: dict[str, None] = {}
     for i in items:
         if status is None or i.status is status:
-            for p in i.points:
+            for p in i.group.points:
                 seen.setdefault(p, None)
     return list(seen)
 

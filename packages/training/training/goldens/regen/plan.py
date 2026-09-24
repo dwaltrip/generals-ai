@@ -26,13 +26,10 @@ from training.goldens.hashes import ObsDigest
 from training.goldens.loaders import load_fixture
 from training.goldens.paths import REFERENCES_DIR
 from training.goldens.registry import (
-    SUPERVISION_KEYS,
     FixtureRecord,
-    GroupId,
+    KeyGroup,
     ObsEntry,
-    SupervisionEntry,
-    SupervisionKey,
-    group_id,
+    key_groups,
     obs_entries,
     supervision_entries,
 )
@@ -62,16 +59,16 @@ class PlannedObs:
 
 @dataclass(frozen=True)
 class PlannedSupervision:
-    # One (key, group) on one fixture.
-    ref: RefId
-    key: SupervisionKey
+    group: KeyGroup
     fixture: FixtureRecord
-    gid: GroupId
-    points: tuple[str, ...]           # the points sharing this file, registry order
     array: np.ndarray                 # stored form
     status: RefStatus
     diff: KeyDiff | None = None       # set iff CHANGED
     moved_from: RefId | None = None   # set iff MOVED
+
+    @property
+    def ref(self) -> RefId:
+        return self.group.ref(self.fixture)
 
 
 @dataclass(frozen=True)
@@ -92,9 +89,8 @@ class FixturePlan:
 # every fixture: an over-declared dep, or a fixture coverage gap.
 @dataclass(frozen=True)
 class IdenticalGroups:
-    key: str
-    points_a: tuple[str, ...]
-    points_b: tuple[str, ...]
+    a: KeyGroup
+    b: KeyGroup
 
 
 @dataclass(frozen=True)
@@ -172,50 +168,42 @@ def _plan_supervision(
             raise RegenAbort(f"keyset mismatch for {e.point.name}: {render_keyset_diff(kd)}")
 
     planned: list[PlannedSupervision] = []
-    for key in SUPERVISION_KEYS:
-        groups: dict[GroupId, list[SupervisionEntry]] = defaultdict(list)
-        for e in entries:
-            if key.name in e.point.keys:
-                groups[group_id(key, e.point.cfg)].append(e)
+    for group in key_groups():
+        key = group.key
+        arrays = {p: got[p][key.name] for p in group.points}
+        _check_agreement(fx, group, arrays)
 
-        for gid, members in groups.items():
-            names = [m.point.name for m in members]
-            base = got[names[0]][key.name]
-            agree = [n for n in names if same_bytes(got[n][key.name], base)]
-            differ = [n for n in names if n not in agree]
-            if differ:
-                lines = [
-                    f"contradiction on fixture {fx.id}: key {key.name!r} deps={key.deps}",
-                    f"  agree:  {', '.join(agree)}",
-                ]
-                for p in differ:
-                    diff = diff_rows(key.name, got[p][key.name], base)
-                    assert diff is not None
-                    lines.append(f"  differs: {p} ({render_key_diff(diff)})")
-                lines.append("Either the dependency table is stale or the code diverged.")
-                raise RegenAbort("\n".join(lines))
-
-            ref = members[0].refs[key.name].ref
-            array = stored_form(key.form, base)
-            old = store.load_supervision(ref, root)
-            if old is None:
-                status, diff = RefStatus.NEW, None
-            else:
-                diff = diff_rows(key.name, array, old)
-                status = RefStatus.UNCHANGED if diff is None else RefStatus.CHANGED
-            planned.append(
-                PlannedSupervision(
-                    ref=ref,
-                    key=key,
-                    fixture=fx,
-                    gid=gid,
-                    points=tuple(names),
-                    array=array,
-                    status=status,
-                    diff=diff,
-                )
-            )
+        array = stored_form(key.form, arrays[group.representative])
+        old = store.load_supervision(group.ref(fx), root)
+        if old is None:
+            status, diff = RefStatus.NEW, None
+        else:
+            diff = diff_rows(key.name, array, old)
+            status = RefStatus.UNCHANGED if diff is None else RefStatus.CHANGED
+        planned.append(
+            PlannedSupervision(group=group, fixture=fx, array=array, status=status, diff=diff)
+        )
     return planned
+
+
+# The dependency table claims every point in a group emits the same bytes.
+def _check_agreement(fx: FixtureRecord, group: KeyGroup, arrays: dict[str, np.ndarray]) -> None:
+    key = group.key
+    base = arrays[group.representative]
+    agree = [p for p in group.points if same_bytes(arrays[p], base)]
+    differ = [p for p in group.points if p not in agree]
+    if not differ:
+        return
+    lines = [
+        f"contradiction on fixture {fx.id}: key {key.name!r} deps={key.deps}",
+        f"  agree:  {', '.join(agree)}",
+    ]
+    for p in differ:
+        diff = diff_rows(key.name, arrays[p], base)
+        assert diff is not None
+        lines.append(f"  differs: {p} ({render_key_diff(diff)})")
+    lines.append("Either the dependency table is stale or the code diverged.")
+    raise RegenAbort("\n".join(lines))
 
 
 # --- Across fixtures ---
@@ -224,7 +212,7 @@ def _plan_supervision(
 def assemble(parts: list[FixturePlan], root: Path = REFERENCES_DIR) -> RegenPlan:
     obs = [o for p in parts for o in p.obs]
     supervision = [s for p in parts for s in p.supervision]
-    warnings = _check_identical_groups([p.supervision for p in parts])
+    warnings = _check_identical_groups(supervision)
 
     stored = store.build_ref_set(root)
     planned_refs = {o.ref for o in obs} | {s.ref for s in supervision}
@@ -247,21 +235,17 @@ def assemble(parts: list[FixturePlan], root: Path = REFERENCES_DIR) -> RegenPlan
 # Two groups of a key may agree on one fixture (nothing in it exercises the
 # fields they differ on). Agreeing on every fixture is what the warning is for,
 # so the check is per key across all fixtures.
-def _check_identical_groups(per_fixture: list[list[PlannedSupervision]]) -> list[IdenticalGroups]:
-    if not per_fixture:
-        return []
+def _check_identical_groups(supervision: list[PlannedSupervision]) -> list[IdenticalGroups]:
+    # Each group's arrays, in fixture order.
+    arrays: dict[KeyGroup, list[np.ndarray]] = defaultdict(list)
+    for s in supervision:
+        arrays[s.group].append(s.array)
     warnings = []
-    key_names = list(dict.fromkeys(item.key.name for item in per_fixture[0]))
-    for key in key_names:
-        per_fx = [{f.gid: f for f in items if f.key.name == key} for items in per_fixture]
-        gids = list(per_fx[0])
-        assert all(set(fx) == set(gids) for fx in per_fx), f"{key}: groups differ by fixture"
-        for a, b in combinations(gids, 2):
-            if all(same_bytes(fx[a].array, fx[b].array) for fx in per_fx):
-                first = per_fx[0]
-                warnings.append(
-                    IdenticalGroups(key=key, points_a=first[a].points, points_b=first[b].points)
-                )
+    for a, b in combinations(arrays, 2):
+        if a.key == b.key and all(
+            same_bytes(x, y) for x, y in zip(arrays[a], arrays[b], strict=True)
+        ):
+            warnings.append(IdenticalGroups(a=a, b=b))
     return warnings
 
 
@@ -313,7 +297,7 @@ def _detect_moves(
     for s in supervision:
         if s.status is RefStatus.NEW:
             for rid, old_sup in sup_orphans.items():
-                if same_slot(rid, s.fixture.id, s.key.name) and same_bytes(old_sup, s.array):
+                if same_slot(rid, s.fixture.id, s.group.key.name) and same_bytes(old_sup, s.array):
                     s = replace(s, status=RefStatus.MOVED, moved_from=rid)
                     del sup_orphans[rid]
                     break

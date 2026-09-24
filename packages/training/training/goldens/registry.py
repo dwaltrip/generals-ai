@@ -78,8 +78,8 @@ OBS_POINTS = [
 _INERT_METRICS_CFG = MetricsConfig(include_alive_mask=False)
 
 # NOTE: This is intended to be append-only. Reference filenames depend on the order.
-# The "representative point" for a key is the first one in this list that emits it.
-# See `representative` below.
+# A key group's files are named after its first point in this list. See
+# `KeyGroup.representative` below.
 # If the points were re-ordered, regen would report they had "moved" and we would
 # need to re-bless.
 SUPERVISION_POINTS = [
@@ -185,24 +185,38 @@ def group_id(key: SupervisionKey, cfg: TargetsConfig) -> GroupId:
     return tuple(getattr(cfg, f) for f in key.deps)
 
 
-def representative(key: SupervisionKey, gid: GroupId) -> str:
-    for point in SUPERVISION_POINTS:
-        if key.name in point.keys and group_id(key, point.cfg) == gid:
-            return point.name
-    raise KeyError(f"no point emits {key.name!r} with group {gid!r}")
+# The points that emit a key and agree on its deps. They share one reference
+# file per fixture.
+@dataclass(frozen=True)
+class KeyGroup:
+    key: SupervisionKey
+    gid: GroupId
+    points: tuple[str, ...]   # registry order
+
+    # The group's first registered point. Its files are named after this point.
+    @property
+    def representative(self) -> str:
+        return self.points[0]
+
+    def ref(self, fixture: FixtureRecord) -> RefId:
+        return RefId(
+            Surface.SUPERVISION, point=self.representative, fixture=fixture.id, key=self.key.name
+        )
 
 
-def supervision_key(name: str) -> SupervisionKey:
-    return _KEYS_BY_NAME[name]
+def key_groups() -> list[KeyGroup]:
+    out = []
+    for key in SUPERVISION_KEYS:
+        by_gid: dict[GroupId, list[str]] = {}
+        for p in SUPERVISION_POINTS:
+            if key.name in p.keys:
+                by_gid.setdefault(group_id(key, p.cfg), []).append(p.name)
+        out += [KeyGroup(key=key, gid=gid, points=tuple(points)) for gid, points in by_gid.items()]
+    return out
 
 
 def obs_ref(point: ObsPoint, fixture: FixtureRecord) -> RefId:
     return RefId(Surface.OBS, point=point.name, fixture=fixture.id)
-
-
-def supervision_ref(key: SupervisionKey, cfg: TargetsConfig, fixture: FixtureRecord) -> RefId:
-    rep = representative(key, group_id(key, cfg))
-    return RefId(Surface.SUPERVISION, point=rep, fixture=fixture.id, key=key.name)
 
 
 def obs_entries() -> list[ObsEntry]:
@@ -214,13 +228,14 @@ def obs_entries() -> list[ObsEntry]:
 
 
 def supervision_entries() -> list[SupervisionEntry]:
+    group_of = {(g.key.name, p): g for g in key_groups() for p in g.points}
     out = []
     for p in SUPERVISION_POINTS:
         for fx in FIXTURES:
             refs = {}
             for name in p.keys:
-                key = supervision_key(name)
-                refs[name] = KeyRef(key=name, form=key.form, ref=supervision_ref(key, p.cfg, fx))
+                g = group_of[(name, p.name)]
+                refs[name] = KeyRef(key=name, form=g.key.form, ref=g.ref(fx))
             out.append(SupervisionEntry(point=p, fixture=fx, refs=refs))
     return out
 
