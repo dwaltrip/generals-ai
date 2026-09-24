@@ -40,7 +40,7 @@ from training.goldens.render import render_key_diff, render_keyset_diff
 from training.goldens.store import RefId, Surface
 
 
-class Status(Enum):
+class RefStatus(Enum):
     NEW = "new"
     UNCHANGED = "unchanged"
     CHANGED = "changed"
@@ -51,7 +51,7 @@ class Status(Enum):
 class PlannedObs:
     entry: ObsEntry
     digest: ObsDigest
-    status: Status
+    status: RefStatus
     diff: ObsMismatch | None = None   # set iff CHANGED
     moved_from: RefId | None = None   # set iff MOVED
 
@@ -69,7 +69,7 @@ class PlannedSupervision:
     gid: GroupId
     points: tuple[str, ...]           # the points sharing this file, registry order
     array: np.ndarray                 # stored form
-    status: Status
+    status: RefStatus
     diff: KeyDiff | None = None       # set iff CHANGED
     moved_from: RefId | None = None   # set iff MOVED
 
@@ -98,7 +98,7 @@ class IdenticalGroups:
 
 
 @dataclass(frozen=True)
-class Plan:
+class RegenPlan:
     root: Path                              # the tree this plan was made against
     fixtures: list[FixtureInfo]
     obs: list[PlannedObs]
@@ -111,14 +111,14 @@ class Plan:
 
     def is_noop(self) -> bool:
         items = [*self.obs, *self.supervision]
-        return all(i.status is Status.UNCHANGED for i in items) and not self.removed
+        return all(i.status is RefStatus.UNCHANGED for i in items) and not self.removed
 
     # Surfaces with changed bytes (a fire), as opposed to new, moved, or removed files.
     def changed_surfaces(self) -> set[Surface]:
         out = set()
-        if any(o.status is Status.CHANGED for o in self.obs):
+        if any(o.status is RefStatus.CHANGED for o in self.obs):
             out.add(Surface.OBS)
-        if any(s.status is Status.CHANGED for s in self.supervision):
+        if any(s.status is RefStatus.CHANGED for s in self.supervision):
             out.add(Surface.SUPERVISION)
         return out
 
@@ -153,10 +153,10 @@ def _plan_obs(
         digest = compute_obs(game, persp, e.point.cfg)
         old = store.load_obs(e.ref, root)
         if old is None:
-            planned.append(PlannedObs(entry=e, digest=digest, status=Status.NEW))
+            planned.append(PlannedObs(entry=e, digest=digest, status=RefStatus.NEW))
             continue
         diff = compare_obs(digest, old)
-        status = Status.UNCHANGED if diff is None else Status.CHANGED
+        status = RefStatus.UNCHANGED if diff is None else RefStatus.CHANGED
         planned.append(PlannedObs(entry=e, digest=digest, status=status, diff=diff))
     return planned
 
@@ -199,10 +199,10 @@ def _plan_supervision(
             array = stored_form(key.form, base)
             old = store.load_supervision(ref, root)
             if old is None:
-                status, diff = Status.NEW, None
+                status, diff = RefStatus.NEW, None
             else:
                 diff = diff_rows(key.name, array, old)
-                status = Status.UNCHANGED if diff is None else Status.CHANGED
+                status = RefStatus.UNCHANGED if diff is None else RefStatus.CHANGED
             planned.append(
                 PlannedSupervision(
                     ref=ref,
@@ -221,7 +221,7 @@ def _plan_supervision(
 # --- Across fixtures ---
 
 
-def assemble(parts: list[FixturePlan], root: Path = REFERENCES_DIR) -> Plan:
+def assemble(parts: list[FixturePlan], root: Path = REFERENCES_DIR) -> RegenPlan:
     obs = [o for p in parts for o in p.obs]
     supervision = [s for p in parts for s in p.supervision]
     warnings = _check_identical_groups([p.supervision for p in parts])
@@ -231,7 +231,7 @@ def assemble(parts: list[FixturePlan], root: Path = REFERENCES_DIR) -> Plan:
     orphans = [r for r in stored.refs if r not in planned_refs]
     obs, supervision, removed, byte_matches = _detect_moves(obs, supervision, orphans, root)
 
-    return Plan(
+    return RegenPlan(
         root=root,
         fixtures=[p.info for p in parts],
         obs=obs,
@@ -271,7 +271,7 @@ def _same_digest(a: ObsDigest, b: ObsDigest) -> bool:
     )
 
 
-# Detect and assign `Status.MOVED`.
+# Detect and assign `RefStatus.MOVED`.
 # Moved refs are planned refs with a new, currently vacant path that matches an
 # orphan on everything but the point (including content). This occurs with point
 # renames, or if the representative point changes (supervision only).
@@ -301,32 +301,32 @@ def _detect_moves(
 
     out_obs = []
     for o in obs:
-        if o.status is Status.NEW:
+        if o.status is RefStatus.NEW:
             for rid, old_obs in obs_orphans.items():
                 if same_slot(rid, o.entry.fixture.id, None) and _same_digest(old_obs, o.digest):
-                    o = replace(o, status=Status.MOVED, moved_from=rid)
+                    o = replace(o, status=RefStatus.MOVED, moved_from=rid)
                     del obs_orphans[rid]
                     break
         out_obs.append(o)
 
     out_sup = []
     for s in supervision:
-        if s.status is Status.NEW:
+        if s.status is RefStatus.NEW:
             for rid, old_sup in sup_orphans.items():
                 if same_slot(rid, s.fixture.id, s.key.name) and same_bytes(old_sup, s.array):
-                    s = replace(s, status=Status.MOVED, moved_from=rid)
+                    s = replace(s, status=RefStatus.MOVED, moved_from=rid)
                     del sup_orphans[rid]
                     break
         out_sup.append(s)
 
     byte_matches: list[tuple[RefId, RefId]] = []
     for o in out_obs:
-        if o.status is Status.NEW:
+        if o.status is RefStatus.NEW:
             for rid, old_obs in obs_orphans.items():
                 if _same_digest(old_obs, o.digest):
                     byte_matches.append((o.ref, rid))
     for s in out_sup:
-        if s.status is Status.NEW:
+        if s.status is RefStatus.NEW:
             for rid, old_sup in sup_orphans.items():
                 if same_bytes(old_sup, s.array):
                     byte_matches.append((s.ref, rid))

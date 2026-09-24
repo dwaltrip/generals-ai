@@ -21,7 +21,7 @@ from settings import INTERMEDIATE_DIR
 from training.bc.filters import eligible_perspectives
 from training.bc.splits import load_curated_names
 from training.bc.utils import list_sim_paths, meta_path_for
-from training.goldens.registry import FIXTURES_DIR
+from training.goldens.paths import FIXTURES_DIR
 
 
 def main(seed: int, n: int) -> None:
@@ -43,7 +43,11 @@ def main(seed: int, n: int) -> None:
         shutil.copy(sim_path, FIXTURES_DIR / sim_path.name)
         shutil.copy(meta_path, FIXTURES_DIR / meta_path.name)
         note = "throwaway pick" + (f", eliminated at t={elim_t}" if elim_t != -1 else ", survivor")
-        print(f'    FixtureRecord(replay_id="{sim_path.stem}", slot={slot}, note="{note}"),')
+        print('    FixtureRecord(' +
+            f'replay_id="{sim_path.stem}",' +
+            f'perspective_slot={slot},' +
+            f'note="{note}"),'
+        )
         picked += 1
         if picked >= n:
             break

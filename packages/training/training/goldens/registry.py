@@ -27,12 +27,12 @@ class RefForm(Enum):
 @dataclass(frozen=True, kw_only=True)
 class FixtureRecord:
     replay_id: str
-    slot: int
+    perspective_slot: int
     note: str
 
     @property
     def id(self) -> str:
-        return f"{self.replay_id}-s{self.slot}"
+        return f"{self.replay_id}-s{self.perspective_slot}"
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -129,9 +129,15 @@ SUPERVISION_KEYS = [
 ]
 
 FIXTURES = [
-    FixtureRecord(replay_id="ukRz7oSS8", slot=7, note="throwaway pick, eliminated at t=138"),
-    FixtureRecord(replay_id="xdZsRyX0O", slot=2, note="throwaway pick, eliminated at t=183"),
-    FixtureRecord(replay_id="NAT6qThbE", slot=2, note="throwaway pick, survivor"),
+    FixtureRecord(
+        replay_id="ukRz7oSS8", perspective_slot=7, note="throwaway pick, eliminated at t=138"
+    ),
+    FixtureRecord(
+        replay_id="xdZsRyX0O", perspective_slot=2, note="throwaway pick, eliminated at t=183"
+    ),
+    FixtureRecord(
+        replay_id="NAT6qThbE", perspective_slot=2, note="throwaway pick, survivor"
+    ),
 ]
 
 

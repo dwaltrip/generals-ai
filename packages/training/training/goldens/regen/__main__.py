@@ -14,7 +14,7 @@ import sys
 from training.goldens.paths import REFERENCES_DIR
 from training.goldens.regen.apply import apply
 from training.goldens.regen.plan import RegenAbort, assemble, plan_fixture
-from training.goldens.regen.report import render_report
+from training.goldens.regen.report import render_regen_report
 from training.goldens.registry import FIXTURES
 
 
@@ -39,7 +39,7 @@ def main(argv: list[str] | None = None) -> int:
     if not args.dry_run:
         apply(plan)
     print()
-    print(render_report(plan), end="")
+    print(render_regen_report(plan), end="")
     if args.dry_run:
         print("\ndry run: nothing written")
     return 0

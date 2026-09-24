@@ -12,7 +12,7 @@ from training.goldens.registry import FixtureRecord, KeyRef
 
 def load_fixture(fixture: FixtureRecord) -> tuple[SimGame, PerspectiveMeta]:
     corpus = CorpusGame.load(FIXTURES_DIR / f"{fixture.replay_id}.npz")
-    return corpus.sim, corpus.perspective_for_slot(fixture.slot)
+    return corpus.sim, corpus.perspective_for_slot(fixture.perspective_slot)
 
 
 # Returns the arrays found on disk, which may be a subset of `refs`.

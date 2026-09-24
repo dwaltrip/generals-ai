@@ -1,4 +1,4 @@
-"""Build a regen report, using regen Plan as an input."""
+"""Build a regen report from a RegenPlan."""
 
 from __future__ import annotations
 
@@ -10,10 +10,10 @@ from training.goldens import store
 from training.goldens.compare import KeyDiff, ObsMismatch
 from training.goldens.regen.plan import (
     IdenticalGroups,
-    Plan,
     PlannedObs,
     PlannedSupervision,
-    Status,
+    RefStatus,
+    RegenPlan,
 )
 from training.goldens.store import RefId, Surface
 
@@ -23,7 +23,7 @@ _W_FX = 16     # fixture column
 _W_CH = 30     # channel column
 
 
-def render_report(plan: Plan) -> str:
+def render_regen_report(plan: RegenPlan) -> str:
     lines = ["regen: compared against the references on disk before this run", ""]
     lines.append(_headline(plan))
     lines.append("")
@@ -41,17 +41,17 @@ def render_report(plan: Plan) -> str:
 # --- Headline and warnings ---
 
 
-def _headline(plan: Plan) -> str:
+def _headline(plan: RegenPlan) -> str:
     counts = Counter(i.status for i in [*plan.obs, *plan.supervision])
     if plan.is_noop():
-        return f"no changes   unchanged {counts[Status.UNCHANGED]}"
-    parts = [f"{s.value} {counts[s]}" for s in (Status.CHANGED, Status.NEW, Status.MOVED)]
+        return f"no changes   unchanged {counts[RefStatus.UNCHANGED]}"
+    parts = [f"{s.value} {counts[s]}" for s in (RefStatus.CHANGED, RefStatus.NEW, RefStatus.MOVED)]
     parts.append(f"removed {len(plan.removed)}")
-    parts.append(f"unchanged {counts[Status.UNCHANGED]}")
+    parts.append(f"unchanged {counts[RefStatus.UNCHANGED]}")
     return "   ".join(parts)
 
 
-def _warnings(plan: Plan) -> list[str]:
+def _warnings(plan: RegenPlan) -> list[str]:
     if not plan.warnings:
         return ["warnings: none"]
     return ["warnings:"] + [f"  {render_warning(w)}" for w in plan.warnings]
@@ -106,7 +106,7 @@ def _render_layout_change(d: KeyDiff) -> str:
 # --- Obs, pivoted by point ---
 
 
-def _obs_section(plan: Plan) -> list[str]:
+def _obs_section(plan: RegenPlan) -> list[str]:
     lines = ["obs"]
     by_point: dict[str, list[PlannedObs]] = defaultdict(list)
     for item in plan.obs:
@@ -128,23 +128,23 @@ def _obs_section(plan: Plan) -> list[str]:
 def _obs_point(point: str, items: list[PlannedObs]) -> list[str]:
     n = len(items)
     counts = Counter(i.status for i in items)
-    if counts[Status.UNCHANGED] == n:
+    if counts[RefStatus.UNCHANGED] == n:
         return [f"  {point:<{_W_NAME}} unchanged"]
-    if counts[Status.NEW] == n:
+    if counts[RefStatus.NEW] == n:
         return [f"  {point:<{_W_NAME}} new, no baseline   ({_n_fixtures(n)})"]
-    if counts[Status.MOVED] == n:
+    if counts[RefStatus.MOVED] == n:
         sources = sorted({i.moved_from.point for i in items if i.moved_from is not None})
         return [f"  {point:<{_W_NAME}} moved from {', '.join(sources)}   ({_n_fixtures(n)})"]
 
     head = []
-    if counts[Status.CHANGED]:
-        head.append(f"changed on {counts[Status.CHANGED]} of {n} fixtures")
-    for s in (Status.NEW, Status.MOVED, Status.UNCHANGED):
+    if counts[RefStatus.CHANGED]:
+        head.append(f"changed on {counts[RefStatus.CHANGED]} of {n} fixtures")
+    for s in (RefStatus.NEW, RefStatus.MOVED, RefStatus.UNCHANGED):
         if counts[s] and counts[s] != n:
             head.append(f"{s.value} on {counts[s]}")
     lines = [f"  {point:<{_W_NAME}} {', '.join(head)}"]
 
-    changed = [i for i in items if i.status is Status.CHANGED]
+    changed = [i for i in items if i.status is RefStatus.CHANGED]
     if changed:
         lines += _obs_channels(changed)
         lines.append("    frames")
@@ -152,22 +152,22 @@ def _obs_point(point: str, items: list[PlannedObs]) -> list[str]:
             lines.append(f"      {i.entry.fixture.id:<{_W_FX}} {_obs_status(i)}")
     else:
         for i in items:
-            if i.status is not Status.UNCHANGED:
+            if i.status is not RefStatus.UNCHANGED:
                 lines.append(f"    {i.entry.fixture.id:<{_W_FX}} {_obs_status(i)}")
     return lines
 
 
 def _obs_status(i: PlannedObs) -> str:
     match i.status:
-        case Status.CHANGED:
+        case RefStatus.CHANGED:
             assert i.diff is not None
             return _obs_frames(i.diff)
-        case Status.MOVED:
+        case RefStatus.MOVED:
             assert i.moved_from is not None
             return f"moved from {store.rel_path(i.moved_from)}"
-        case Status.NEW:
+        case RefStatus.NEW:
             return "new, no baseline"
-        case Status.UNCHANGED:
+        case RefStatus.UNCHANGED:
             return "unchanged"
 
 
@@ -202,7 +202,7 @@ def _obs_channels(changed: list[PlannedObs]) -> list[str]:
 # --- Supervision, pivoted by key ---
 
 
-def _supervision_section(plan: Plan) -> list[str]:
+def _supervision_section(plan: RegenPlan) -> list[str]:
     # One block per (key, group), which is one file per fixture. Keys whose
     # files are all unchanged are omitted.
     blocks = []
@@ -210,7 +210,7 @@ def _supervision_section(plan: Plan) -> list[str]:
     for item in plan.supervision:
         by_file[(item.key.name, item.points)].append(item)
     for (key, points), items in by_file.items():
-        if all(i.status is Status.UNCHANGED for i in items):
+        if all(i.status is RefStatus.UNCHANGED for i in items):
             continue
         blocks.append(f"  {key:<{_W_NAME}} {', '.join(points)}")
         for i in items:
@@ -229,9 +229,9 @@ def _supervision_section(plan: Plan) -> list[str]:
     # The header names the points that fired. The "unchanged" list means no byte
     # changes, so it is shown only when nothing below reports a new, moved, or
     # removed file, where it would read as a contradiction.
-    changed_points = _points_with(plan.supervision, Status.CHANGED)
+    changed_points = _points_with(plan.supervision, RefStatus.CHANGED)
     bytes_only = (
-        all(i.status in (Status.CHANGED, Status.UNCHANGED) for i in plan.supervision)
+        all(i.status in (RefStatus.CHANGED, RefStatus.UNCHANGED) for i in plan.supervision)
         and not removed_by_key
         and not any(n.surface is Surface.SUPERVISION for n, _ in plan.byte_matches)
     )
@@ -247,19 +247,19 @@ def _supervision_section(plan: Plan) -> list[str]:
 
 def _supervision_status(i: PlannedSupervision) -> str:
     match i.status:
-        case Status.CHANGED:
+        case RefStatus.CHANGED:
             assert i.diff is not None
             return _rows(i.diff)
-        case Status.MOVED:
+        case RefStatus.MOVED:
             assert i.moved_from is not None
             return f"moved from {store.rel_path(i.moved_from)}"
-        case Status.NEW:
+        case RefStatus.NEW:
             return "new, no baseline"
-        case Status.UNCHANGED:
+        case RefStatus.UNCHANGED:
             return "unchanged"
 
 
-def _points_with(items: list[PlannedSupervision], status: Status | None) -> list[str]:
+def _points_with(items: list[PlannedSupervision], status: RefStatus | None) -> list[str]:
     seen: dict[str, None] = {}
     for i in items:
         if status is None or i.status is status:
@@ -271,7 +271,7 @@ def _points_with(items: list[PlannedSupervision], status: Status | None) -> list
 # --- Shared ---
 
 
-def _byte_matches(plan: Plan, surface: Surface) -> list[str]:
+def _byte_matches(plan: RegenPlan, surface: Surface) -> list[str]:
     return [
         f"  note: new {store.rel_path(new)} has identical bytes to removed {store.rel_path(old)}"
         for new, old in plan.byte_matches
@@ -279,7 +279,7 @@ def _byte_matches(plan: Plan, surface: Surface) -> list[str]:
     ]
 
 
-def _stray_files(plan: Plan) -> list[str]:
+def _stray_files(plan: RegenPlan) -> list[str]:
     lines = [f"unrecognized reference path, left in place: {p}" for p in plan.unrecognized]
     if plan.ignored:
         names = ", ".join(str(p) for p in plan.ignored)

@@ -9,7 +9,7 @@ from pathlib import Path
 import numpy as np
 
 from training.goldens import store
-from training.goldens.regen.plan import PlannedSupervision, Status, _detect_moves
+from training.goldens.regen.plan import PlannedSupervision, RefStatus, _detect_moves
 from training.goldens.registry import FixtureRecord, RefForm, SupervisionKey
 from training.goldens.store import RefId, Surface
 
@@ -26,11 +26,11 @@ def _new(point: str, key: str, array: np.ndarray) -> PlannedSupervision:
     return PlannedSupervision(
         ref=_rid(point, key),
         key=_key(key),
-        fixture=FixtureRecord(replay_id="fx", slot=1, note=""),
+        fixture=FixtureRecord(replay_id="fx", perspective_slot=1, note=""),
         gid=(),
         points=(point,),
         array=array,
-        status=Status.NEW,
+        status=RefStatus.NEW,
     )
 
 
@@ -50,9 +50,9 @@ def test_detect_moves(tmp_path: Path) -> None:
 
     assert obs == []
     alive, fresh = sup
-    assert alive.status is Status.MOVED
+    assert alive.status is RefStatus.MOVED
     assert alive.moved_from == _rid("old", "alive")
-    assert fresh.status is Status.NEW
+    assert fresh.status is RefStatus.NEW
     assert fresh.moved_from is None
 
     assert removed == [_rid("other", "present"), _rid("old", "gone")]

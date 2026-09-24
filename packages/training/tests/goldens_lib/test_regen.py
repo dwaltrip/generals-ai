@@ -13,13 +13,13 @@ import pytest
 
 from training.goldens import store
 from training.goldens.regen.apply import apply
-from training.goldens.regen.plan import Plan, Status, assemble, plan_fixture
-from training.goldens.regen.report import render_report
+from training.goldens.regen.plan import RefStatus, RegenPlan, assemble, plan_fixture
+from training.goldens.regen.report import render_regen_report
 from training.goldens.registry import FIXTURES, obs_entries, supervision_entries
 from training.goldens.store import RefId
 
 
-def _plan(root: Path) -> Plan:
+def _plan(root: Path) -> RegenPlan:
     return assemble([plan_fixture(fx, root) for fx in FIXTURES], root)
 
 
@@ -43,19 +43,19 @@ _SUP_RID = next(iter(supervision_entries()[0].refs.values())).ref
 _SUP_RIDS = [replace(_SUP_RID, fixture=fx.id) for fx in FIXTURES]
 
 
-def _statuses(plan: Plan) -> dict[RefId, Status]:
+def _statuses(plan: RegenPlan) -> dict[RefId, RefStatus]:
     return {i.ref: i.status for i in [*plan.obs, *plan.supervision]}
 
 
-def _assert_only(plan: Plan, expected: dict[RefId, Status]) -> None:
+def _assert_only(plan: RegenPlan, expected: dict[RefId, RefStatus]) -> None:
     statuses = _statuses(plan)
     assert expected.keys() <= statuses.keys()
     for rid, status in statuses.items():
-        assert status is expected.get(rid, Status.UNCHANGED), rid
+        assert status is expected.get(rid, RefStatus.UNCHANGED), rid
 
 
-def _assert_round_trip(plan: Plan, base: Path) -> None:
-    render_report(plan)
+def _assert_round_trip(plan: RegenPlan, base: Path) -> None:
+    render_regen_report(plan)
     apply(plan)
     assert _plan(plan.root).is_noop()
     assert store.set_digest(plan.root) == store.set_digest(base)
@@ -75,7 +75,7 @@ def test_deleted_files_are_new(tree: Path, base: Path) -> None:
     store.remove(_SUP_RID, tree)
 
     plan = _plan(tree)
-    _assert_only(plan, {_OBS_RID: Status.NEW, _SUP_RID: Status.NEW})
+    _assert_only(plan, {_OBS_RID: RefStatus.NEW, _SUP_RID: RefStatus.NEW})
     assert plan.removed == [] and plan.byte_matches == []
     _assert_round_trip(plan, base)
 
@@ -86,8 +86,8 @@ def test_representative_rename_is_a_move(tree: Path, base: Path) -> None:
         store.ref_path(rid, tree).rename(store.ref_path(old_rid, tree))
 
     plan = _plan(tree)
-    _assert_only(plan, {rid: Status.MOVED for rid in _SUP_RIDS})
-    moved_from = {s.ref: s.moved_from for s in plan.supervision if s.status is Status.MOVED}
+    _assert_only(plan, {rid: RefStatus.MOVED for rid in _SUP_RIDS})
+    moved_from = {s.ref: s.moved_from for s in plan.supervision if s.status is RefStatus.MOVED}
     assert moved_from == dict(zip(_SUP_RIDS, old, strict=True))
     assert plan.removed == [] and plan.byte_matches == []
     _assert_round_trip(plan, base)
@@ -99,7 +99,7 @@ def test_key_rename_is_new_plus_removed(tree: Path, base: Path) -> None:
         store.ref_path(rid, tree).rename(store.ref_path(old_rid, tree))
 
     plan = _plan(tree)
-    _assert_only(plan, {rid: Status.NEW for rid in _SUP_RIDS})
+    _assert_only(plan, {rid: RefStatus.NEW for rid in _SUP_RIDS})
     assert set(plan.removed) == set(old)
     assert set(plan.byte_matches) == set(zip(_SUP_RIDS, old, strict=True))
     _assert_round_trip(plan, base)
@@ -124,11 +124,11 @@ def test_edited_files_are_changed(tree: Path, base: Path) -> None:
     np.savez(path, frame_hashes=fh, channel_hashes=ch)
 
     plan = _plan(tree)
-    _assert_only(plan, {_OBS_RID: Status.CHANGED, _SUP_RID: Status.CHANGED})
-    (sup,) = [s for s in plan.supervision if s.status is Status.CHANGED]
+    _assert_only(plan, {_OBS_RID: RefStatus.CHANGED, _SUP_RID: RefStatus.CHANGED})
+    (sup,) = [s for s in plan.supervision if s.status is RefStatus.CHANGED]
     assert sup.diff is not None and sup.diff.changed_rows is not None
     assert sup.diff.changed_rows.tolist() == rows
-    (obs,) = [o for o in plan.obs if o.status is Status.CHANGED]
+    (obs,) = [o for o in plan.obs if o.status is RefStatus.CHANGED]
     assert obs.diff is not None
     assert obs.diff.changed_frames is not None and obs.diff.changed_frames.tolist() == frames
     assert obs.diff.changed_channels is not None and obs.diff.changed_channels.tolist() == channels
