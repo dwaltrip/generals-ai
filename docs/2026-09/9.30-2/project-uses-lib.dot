@@ -1,0 +1,67 @@
+// What project-side code uses from training.goldens.lib, as planned for pass 1.
+// Project code imports everything through lib/__init__.py. Each edge starts at the
+// lib module that defines the names, and each project node lists the names it uses,
+// one line per lib module.
+// Render: dot -Tsvg 2026-09-30-goldens-project-uses-lib.dot -o 2026-09-30-goldens-project-uses-lib.svg
+digraph project_uses_lib {
+    graph [rankdir=LR, fontname="Helvetica", fontsize=12, nodesep=0.3, ranksep=2.2, newrank=true];
+    node  [shape=box, style="rounded,filled", fontname="Helvetica", fontsize=12, penwidth=1.2];
+    edge  [color="#555555", arrowsize=0.7];
+
+    subgraph cluster_lib {
+        label="lib (by defining module)"; style="rounded"; color="#757575";
+        // Fill colors match the layers in the lib import graph.
+        run      [fillcolor="#f3e5f5"];
+        report   [fillcolor="#e8f5e9"];
+        registry [fillcolor="#e3f2fd"];
+        content  [fillcolor="#eeeeee"];
+        hashing  [fillcolor="#fff3e0"];
+        compute  [fillcolor="#e3f2fd"];
+        store    [fillcolor="#e8f5e9"];
+        diff     [fillcolor="#eeeeee"];
+        render   [fillcolor="#eeeeee"];
+        plan     [fillcolor="#e8f5e9"];
+        apply    [fillcolor="#e8f5e9"];
+    }
+
+    node [fillcolor="#efebe9", shape=box];
+
+    subgraph cluster_project {
+        label="project package (training/goldens)"; style="rounded"; color="#6d4c41";
+        p_regen [label=<<b>regen.py</b><br/><font point-size="10">run: run_regen<br/>report: render_regen_report</font>>];
+        p_registry [label=<<b>registry.py</b><br/><font point-size="10">registry: Point, Surface, Registry</font>>];
+        p_producers [label=<<b>producers.py</b><br/><font point-size="10">content: EntryContent<br/>hashing: row_hashes, StreamingRowHasher</font>>];
+        p_fixtures [label=<<b>fixtures.py</b><br/><font point-size="10">no lib imports</font>>, style="rounded,filled,dashed"];
+    }
+
+    subgraph cluster_tests {
+        label="project tests (tests/goldens)"; style="rounded"; color="#6d4c41";
+        t_mechanism [label=<<b>test_mechanism_golden.py</b><br/><font point-size="10">hashing: row_hashes, StreamingRowHasher<br/>store: store.set_digest</font>>];
+        t_goldens [label=<<b>test_goldens.py</b><br/><font point-size="10">registry: entries, Entry<br/>compute: produce<br/>store: store.load<br/>diff: diff_content<br/>render: render_content_diff</font>>];
+        t_smoke [label=<<b>test_regen_smoke.py</b><br/><font point-size="10">compute: compute_all<br/>plan: plan, RegenPlan<br/>apply: apply<br/>report: render_regen_report</font>>];
+    }
+
+    { rank=same; p_regen; p_registry; p_producers; p_fixtures; t_mechanism; t_goldens; t_smoke; }
+
+    // Project package.
+    run      -> p_regen;
+    report   -> p_regen;
+    registry -> p_registry;
+    content  -> p_producers;
+    hashing  -> p_producers;
+
+    // Project tests.
+    hashing  -> t_mechanism;
+    store    -> t_mechanism;
+
+    registry -> t_goldens;
+    compute  -> t_goldens;
+    store    -> t_goldens;
+    diff     -> t_goldens;
+    render   -> t_goldens;
+
+    compute  -> t_smoke;
+    plan     -> t_smoke;
+    apply    -> t_smoke;
+    report   -> t_smoke;
+}

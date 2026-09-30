@@ -1,0 +1,83 @@
+// Import graph of training.goldens.lib as planned for pass 1.
+// Edges are written importer -> imported; dir=back draws the arrowhead at the importer,
+// so arrows point from the imported module to the module that uses it.
+// Render: dot -Tsvg lib-import-deps.dot -o lib-import-deps.svg
+digraph lib_imports {
+    graph [rankdir=TB, fontname="Helvetica", fontsize=12, nodesep=0.5, ranksep=0.7, newrank=true, compound=true];
+    node  [shape=box, style="rounded,filled", fontname="Helvetica", fontsize=12, penwidth=1.2];
+    edge  [color="#333333", arrowsize=0.7, fontname="Helvetica", fontsize=11, dir=back];
+
+    subgraph cluster_join {
+        label="joins the halves"; style="rounded,dashed"; color="#999999";
+        run [fillcolor="#f3e5f5"];
+    }
+
+    subgraph cluster_front {
+        label="front half (app types)"; style="rounded"; color="#1e88e5";
+        registry [fillcolor="#e3f2fd"];
+        compute  [fillcolor="#e3f2fd"];
+    }
+
+    subgraph cluster_back {
+        label="back half (EntryId + content only)"; style="rounded"; color="#43a047";
+        store  [fillcolor="#e8f5e9"];
+        plan   [fillcolor="#e8f5e9"];
+        apply  [fillcolor="#e8f5e9"];
+        report [fillcolor="#e8f5e9"];
+    }
+
+    subgraph cluster_utils {
+        label="utilities for project-side code"; style="rounded"; color="#fb8c00";
+        hashing [fillcolor="#fff3e0"];
+    }
+
+    subgraph cluster_shared {
+        label="shared"; style="rounded"; color="#757575";
+        content [fillcolor="#eeeeee"];
+        entry   [fillcolor="#eeeeee"];
+        diff    [fillcolor="#eeeeee"];
+        render  [fillcolor="#eeeeee"];
+    }
+
+    // Structural imports.
+    run -> registry;
+    run -> compute;
+    run -> plan;
+    run -> apply;
+
+    compute -> registry;
+
+    plan -> store;
+    plan -> diff;
+
+    apply -> plan;
+    apply -> store;
+
+    report -> plan;
+    report -> store;
+    report -> render;
+    report -> diff;
+
+    render -> diff;
+
+    entry -> diff;
+
+    // Imports of the base types (content, entry), drawn lighter.
+    edge [color="#bbbbbb", style=dashed];
+    hashing  -> content;
+    diff     -> content;
+    render   -> content;
+    entry    -> content;
+    registry -> content;
+    store    -> content;
+    compute  -> content;
+    plan     -> content;
+    report   -> content;
+
+    registry -> entry;
+    store    -> entry;
+    compute  -> entry;
+    plan     -> entry;
+    apply    -> entry;
+    report   -> entry;
+}
