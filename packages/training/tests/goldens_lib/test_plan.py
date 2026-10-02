@@ -1,60 +1,49 @@
-"""
-Move detection on a temporary references tree: a strict move (same fixture and
-key, different point), a byte coincidence across keys that must not become a
-move, and a plain removal.
-"""
-
-from pathlib import Path
-
 import numpy as np
 
-from training.goldens import store
-from training.goldens.regen.plan import PlannedSupervision, RefStatus, _detect_moves
-from training.goldens.registry import FixtureRecord, KeyGroup, RefForm, SupervisionKey
-from training.goldens.store import RefId, Surface
+from training.goldens.lib.content import EntryContent
+from training.goldens.lib.diff import diff_content
+from training.goldens.lib.entry import Changed, EntryId, Moved, New, PlannedEntry, Unchanged
+from training.goldens.lib.plan import classify, match_moves
 
 
-def _key(name: str) -> SupervisionKey:
-    return SupervisionKey(name=name, deps=(), form=RefForm.FULL)
+_A: EntryContent = {"x": np.arange(3)}
+_B: EntryContent = {"x": np.arange(3) + 1}
 
 
-def _group(point: str, key: str) -> KeyGroup:
-    return KeyGroup(key=_key(key), gid=(), points=(point,))
+def _eid(point: str, fixture: str = "f1", surface: str = "s") -> EntryId:
+    return EntryId(surface=surface, point=point, fixture=fixture)
 
 
-def _rid(point: str, key: str, fixture: str = "fx-s1") -> RefId:
-    return RefId(Surface.SUPERVISION, point=point, fixture=fixture, key=key)
+def _new(eid: EntryId, content: EntryContent) -> PlannedEntry:
+    return PlannedEntry(id=eid, content=content, status=New())
 
 
-def _new(point: str, key: str, array: np.ndarray) -> PlannedSupervision:
-    return PlannedSupervision(
-        group=_group(point, key),
-        fixture=FixtureRecord(replay_id="fx", perspective_slot=1, note=""),
-        array=array,
-        status=RefStatus.NEW,
-    )
+def test_classify() -> None:
+    assert classify(_A, None) == New()
+    assert classify(_A, {"x": np.arange(3)}) == Unchanged()
+
+    status = classify(_B, _A)
+    assert isinstance(status, Changed)
+    assert status.diff == diff_content(_B, _A)
+    assert status.stored is _A
 
 
-def test_detect_moves(tmp_path: Path) -> None:
-    a = np.arange(6, dtype=np.int64)
-    b = np.arange(6, dtype=np.int64) + 100
+def test_rename_is_a_move() -> None:
+    planned = [_new(_eid("p2"), _A), PlannedEntry(id=_eid("q"), content=_A, status=Unchanged())]
+    out = match_moves(planned, {_eid("p1"): _A})
+    assert [e.status for e in out] == [Moved(source=_eid("p1")), Unchanged()]
 
-    # Orphans: the true predecessor of alive (same key), a different key with the
-    # same bytes, and one with nothing to match.
-    store.save_supervision(_rid("old", "alive"), a, tmp_path)
-    store.save_supervision(_rid("other", "present"), a, tmp_path)
-    store.save_supervision(_rid("old", "gone"), b, tmp_path)
-    orphans = [_rid("other", "present"), _rid("old", "alive"), _rid("old", "gone")]
 
-    planned = [_new("renamed", "alive", a), _new("renamed", "fresh", a)]
-    obs, sup, removed, byte_matches = _detect_moves([], planned, orphans, tmp_path)
+def test_not_a_move() -> None:
+    # Equal content, but on another fixture or surface.
+    orphans = {_eid("p1", fixture="f2"): _A, _eid("p1", surface="t"): _A}
+    assert [e.status for e in match_moves([_new(_eid("p2"), _A)], orphans)] == [New()]
 
-    assert obs == []
-    alive, fresh = sup
-    assert alive.status is RefStatus.MOVED
-    assert alive.moved_from == _rid("old", "alive")
-    assert fresh.status is RefStatus.NEW
-    assert fresh.moved_from is None
+    # Same surface and fixture, different content.
+    assert [e.status for e in match_moves([_new(_eid("p2"), _B)], {_eid("p1"): _A})] == [New()]
 
-    assert removed == [_rid("other", "present"), _rid("old", "gone")]
-    assert byte_matches == [(_rid("renamed", "fresh"), _rid("other", "present"))]
+
+def test_each_orphan_used_once() -> None:
+    planned = [_new(_eid("p2"), _A), _new(_eid("p3"), _A)]
+    out = match_moves(planned, {_eid("p1"): _A})
+    assert [e.status for e in out] == [Moved(source=_eid("p1")), New()]
