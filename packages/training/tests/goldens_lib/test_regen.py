@@ -26,6 +26,7 @@ from training.goldens.lib.entry import Changed, EntryId, Moved, New, Unchanged
 from training.goldens.lib.hashing import row_hashes
 from training.goldens.lib.plan import RegenPlan, count_statuses
 from training.goldens.lib.registry import Point, Registry, Surface
+from training.goldens.lib.report import render_regen_report
 from training.goldens.lib.run import run_regen
 
 
@@ -83,8 +84,11 @@ def tree(base: Path, tmp_path: Path) -> Path:
     return root
 
 
+# Also renders the report, to check that rendering doesn't fail.
 def _plan(root: Path, registry: Registry = _REGISTRY) -> RegenPlan:
-    return run_regen(registry, root, write=False)
+    plan = run_regen(registry, root, write=False)
+    render_regen_report(plan)
+    return plan
 
 
 # Every entry not in `expected` is Unchanged.
@@ -216,6 +220,13 @@ def test_case_only_rename_rejected(tree: Path) -> None:
     (tree / "alpha" / "a1").rename(tree / "alpha" / "A1")
     with pytest.raises(ValueError, match="only by case"):
         _plan(tree)
+
+
+def test_invalid_reference_rejected(tmp_path: Path) -> None:
+    run_regen(_REGISTRY, tmp_path, write=True)
+    (tmp_path / store.rel_path(_A1_F1)).write_bytes(b"")
+    with pytest.raises(ValueError, match="invalid references"):
+        _plan(tmp_path)
 
 
 def test_no_fixtures_rejected(tree: Path) -> None:

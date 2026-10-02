@@ -9,6 +9,7 @@ import io
 import json
 from pathlib import Path
 from typing import Any
+import zipfile
 
 import numpy as np
 
@@ -56,10 +57,12 @@ def _files_under(root: Path) -> list[Path]:
 
 
 # The paths are relative to root.
+# TODO: Make the other field names clearer, e.g. `unrecognized` -> `unrecognized_paths`.
 @dataclass(frozen=True)
 class ReferenceTree:
     root: Path
     references: dict[EntryId, EntryContent]   # in scan order
+    invalid_refs: dict[EntryId, str]   # files that aren't valid references, with the error
     unrecognized: list[Path]   # .npz files that don't parse, or are under an unknown surface
     ignored: list[Path]        # all other files
 
@@ -67,8 +70,13 @@ class ReferenceTree:
         return self.references.get(eid)
 
 
+class InvalidReferenceError(Exception):
+    pass
+
+
 def load_references(root: Path, surfaces: Collection[str]) -> ReferenceTree:
     references: dict[EntryId, EntryContent] = {}
+    invalid_refs: dict[EntryId, str] = {}
     unrecognized, ignored = [], []
 
     for rel in _files_under(root):
@@ -77,10 +85,17 @@ def load_references(root: Path, surfaces: Collection[str]) -> ReferenceTree:
         elif (eid := parse_rel_path(rel)) is None or eid.surface not in surfaces:
             unrecognized.append(rel)
         else:
-            references[eid] = _load_file(root / rel)
+            try:
+                references[eid] = _load_file(root / rel)
+            except InvalidReferenceError as e:
+                invalid_refs[eid] = str(e)
 
     return ReferenceTree(
-        root=root, references=references, unrecognized=unrecognized, ignored=ignored
+        root=root,
+        references=references,
+        invalid_refs=invalid_refs,
+        unrecognized=unrecognized,
+        ignored=ignored,
     )
 
 
@@ -116,35 +131,41 @@ def serialize(content: EntryContent) -> bytes:
 
 
 def _load_file(path: Path) -> EntryContent:
-    with np.load(path, allow_pickle=False) as z:
-        members = {name: z[name] for name in z.files}
-
+    # The caught errors are what np.load raises for a damaged file.
     try:
-        return _content_from_members(members)
-    except ValueError as e:
-        e.add_note(f"in {path}")
-        raise
+        with np.load(path, allow_pickle=False) as z:
+            members = {name: z[name] for name in z.files}
+    except (ValueError, EOFError, zipfile.BadZipFile) as e:
+        raise InvalidReferenceError(f"{type(e).__name__}: {e}") from e
+
+    return _content_from_members(members)
 
 
 # The inverse of the member building in `serialize`.
 def _content_from_members(members: dict[str, np.ndarray]) -> EntryContent:
-    meta = json.loads(str(members.pop(_META))) if _META in members else {}
+    try:
+        meta = json.loads(str(members.pop(_META))) if _META in members else {}
+    except json.JSONDecodeError as e:
+        raise InvalidReferenceError(f"{_META} is not valid JSON: {e}") from e
     if not isinstance(meta, dict):
-        raise ValueError(f"{_META} is not a JSON object: {meta!r}")
+        raise InvalidReferenceError(f"{_META} is not a JSON object: {meta!r}")
     content: EntryContent = dict(members)
 
     for name, m in meta.items():
         if name not in members:
-            raise ValueError(f"{_META} lists {name!r}, which isn't in the file")
+            raise InvalidReferenceError(f"{_META} lists {name!r}, which isn't in the file")
         try:
             layout = ArrayLayout(
                 shape=tuple(m["shape"]), dtype=np.dtype(m["dtype"]), hashed_axis=m["hashed_axis"]
             )
         except (KeyError, TypeError) as e:
-            raise ValueError(f"malformed {_META} entry for {name!r}: {m!r}") from e
+            raise InvalidReferenceError(f"malformed {_META} entry for {name!r}: {m!r}") from e
         content[name] = RowHashes(hashes=members[name], layout=layout)
 
-    check_content(content)
+    try:
+        check_content(content)
+    except ValueError as e:
+        raise InvalidReferenceError(str(e)) from e
     return content
 
 

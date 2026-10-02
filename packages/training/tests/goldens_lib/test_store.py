@@ -59,9 +59,17 @@ def test_serialize_ignores_dict_and_memory_order() -> None:
         {"a": [3]},
     ],
 )
-def test_malformed_meta_rejected(tmp_path: Path, meta: dict) -> None:
+def test_invalid_meta_recorded(tmp_path: Path, meta: dict) -> None:
     path = tmp_path / store.rel_path(_EID)
     path.parent.mkdir(parents=True)
     np.savez(path, a=np.arange(3, dtype=np.uint64), __meta__=np.array(json.dumps(meta)))
-    with pytest.raises(ValueError):
-        store.load_references(tmp_path, {"obs"})
+    tree = store.load_references(tmp_path, {"obs"})
+    assert list(tree.invalid_refs) == [_EID] and tree.get_reference(_EID) is None
+
+
+def test_damaged_file_recorded(tmp_path: Path) -> None:
+    store.save(_EID, _content(), tmp_path)
+    path = tmp_path / store.rel_path(_EID)
+    path.write_bytes(path.read_bytes()[:-10])
+    tree = store.load_references(tmp_path, {"obs"})
+    assert list(tree.invalid_refs) == [_EID] and tree.get_reference(_EID) is None

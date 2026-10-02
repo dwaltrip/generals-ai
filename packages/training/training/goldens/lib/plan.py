@@ -69,6 +69,12 @@ def plan_regen(
         raise ValueError("no fixtures, so every reference would be planned for removal")
 
     tree = store.load_references(root, computed.keys())
+    if tree.invalid_refs:
+        lines = [f"  {store.rel_path(eid)}: {err}" for eid, err in tree.invalid_refs.items()]
+        raise ValueError(
+            "invalid references. Restore them from git, or delete them and re-run:\n"
+            + "\n".join(lines)
+        )
     orphans = _find_orphans_by_surface(tree, computed)
 
     surfaces = [
@@ -129,7 +135,7 @@ def _find_orphans_by_surface(
     return by_surface
 
 
-def classify(got: EntryContent, stored: EntryContent | None) -> PlannedEntryStatus:
+def classify(got: EntryContent, stored: EntryContent | None) -> New | Unchanged | Changed:
     if stored is None:
         return New()
     diff = diff_content(got, stored)
