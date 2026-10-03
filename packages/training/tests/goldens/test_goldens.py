@@ -6,8 +6,8 @@ from training.goldens.lib import (
     GoldenTestContext,
     assert_entry_matches,
     entries,
+    entry_test_id,
     load_test_context,
-    store,
 )
 from training.goldens.paths import REFERENCES_DIR
 from training.goldens.registry import REGISTRY
@@ -22,10 +22,6 @@ def ctx() -> _Context:
     return load_test_context(REGISTRY, REFERENCES_DIR)
 
 
-def _test_id(entry: _Entry) -> str:
-    return store.rel_path(entry.id).with_suffix("").as_posix()
-
-
-@pytest.mark.parametrize("entry", entries(REGISTRY), ids=_test_id)
+@pytest.mark.parametrize("entry", entries(REGISTRY), ids=entry_test_id)
 def test_golden(entry: _Entry, ctx: _Context) -> None:
     assert_entry_matches(entry, ctx)

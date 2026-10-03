@@ -216,8 +216,17 @@ def test_edited_meta_layout(tree: Path, base: Path) -> None:
     _assert_round_trip(plan, base=base)
 
 
-def test_case_only_rename_rejected(tree: Path) -> None:
-    (tree / "alpha" / "a1").rename(tree / "alpha" / "A1")
+# On a case-insensitive file system, regen would write through the renamed path.
+@pytest.mark.parametrize(
+    ("old", "new"),
+    [
+        ("alpha", "Alpha"),
+        ("alpha/a1", "alpha/A1"),
+        ("alpha/a1/f1.npz", "alpha/a1/F1.npz"),
+    ],
+)
+def test_case_only_rename_rejected(tree: Path, old: str, new: str) -> None:
+    (tree / old).rename(tree / new)
     with pytest.raises(ValueError, match="only by case"):
         _plan(tree)
 

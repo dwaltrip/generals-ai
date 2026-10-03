@@ -68,6 +68,14 @@ def plan_regen(
     if not fixtures:
         raise ValueError("no fixtures, so every reference would be planned for removal")
 
+    computed_ids = [c.id for cs in computed.values() for c in cs]
+    if mismatches := store.find_case_mismatches(root, computed_ids):
+        lines = [f"  {m.on_disk} on disk, {m.registered} registered" for m in mismatches]
+        raise ValueError(
+            "paths on disk differ from registered names only by case."
+            " Rename them with `git mv` first:\n" + "\n".join(lines)
+        )
+
     tree = store.load_references(root, computed.keys())
     if tree.invalid_refs:
         lines = [f"  {store.rel_path(eid)}: {err}" for eid, err in tree.invalid_refs.items()]
@@ -110,24 +118,12 @@ def _plan_surface(
 
 
 # References on disk that no computed entry claims, grouped by surface. Every
-# computed surface has a key. An orphan that is the same file as a computed entry
-# under a different spelling can't be planned around.
+# computed surface has a key.
 def _find_orphans_by_surface(
     tree: ReferenceTree, computed: ComputedEntriesBySurface
 ) -> dict[str, dict[EntryId, EntryContent]]:
     computed_ids = {c.id for cs in computed.values() for c in cs}
     orphans = {eid: ref for eid, ref in tree.references.items() if eid not in computed_ids}
-
-    claimed = {store.path_key(eid): eid for eid in computed_ids}
-    clashes = [(claimed[k], eid) for eid in orphans if (k := store.path_key(eid)) in claimed]
-    if clashes:
-        lines = [
-            f"  {store.rel_path(o)} on disk, {store.rel_path(c)} registered" for c, o in clashes
-        ]
-        raise ValueError(
-            "references differ from registered entries only by case."
-            " Rename them with `git mv` first:\n" + "\n".join(lines)
-        )
 
     by_surface: dict[str, dict[EntryId, EntryContent]] = {name: {} for name in computed}
     for eid, ref in orphans.items():

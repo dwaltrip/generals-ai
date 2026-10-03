@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Collection
+from collections.abc import Collection, Iterable
 from dataclasses import dataclass
 import hashlib
 import io
@@ -39,9 +39,39 @@ def parse_rel_path(rel: Path) -> EntryId | None:
     return EntryId(surface=surface, point=point, fixture=fixture)
 
 
-# Build a case-insensitive key for a path.
-def path_key(eid: EntryId) -> str:
-    return rel_path(eid).as_posix().casefold()
+@dataclass(frozen=True)
+class CaseMismatch:
+    registered: Path   # relative to root
+    on_disk: Path
+
+
+# Names on disk along the paths of `eids` that match a registered name only when case
+# is ignored. On a case-insensitive file system, writing to the registered path would
+# go through them.
+def find_case_mismatches(root: Path, eids: Iterable[EntryId]) -> list[CaseMismatch]:
+    listings: dict[Path, list[str]] = {}
+
+    def names_in(rel_dir: Path) -> list[str]:
+        if rel_dir not in listings:
+            d = root / rel_dir
+            listings[rel_dir] = [p.name for p in d.iterdir()] if d.is_dir() else []
+        return listings[rel_dir]
+
+    mismatches: dict[Path, CaseMismatch] = {}
+    for eid in eids:
+        parent = Path()
+        for name in rel_path(eid).parts:
+            names = names_in(parent)
+            if name not in names:
+                folded = [n for n in names if n.casefold() == name.casefold()]
+                if folded:
+                    registered = parent / name
+                    mismatches[registered] = CaseMismatch(
+                        registered=registered, on_disk=parent / folded[0]
+                    )
+                break
+            parent = parent / name
+    return list(mismatches.values())
 
 
 # Relative to root, sorted. Files with a dotted part anywhere in their path are skipped.
