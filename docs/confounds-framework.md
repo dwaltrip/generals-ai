@@ -4,6 +4,8 @@
 
 *Update 2026-07-20: the impact vocabulary was renamed (formerly coded E1 / E2 break / E2 repair / E3 ruler / E3 task). The rename map is in [7.20-3](2026-07/7.20-3-goldens-naming-reference.md).*
 
+*Update 2026-10-03: [10.03-1](2026-10/10.03-1-goldens-generic-revision-records.md) renames `mechanics-change` to `dynamics-change` and gives it a generic definition. It also lists proposed refinements to this doc, such as a sharper wrinkle (a). None of these are applied here yet.*
+
 Some code changes draw a boundary in time: checkpoints and recorded numbers from before the change were produced under the old code, so their validity for any later use has to be checked rather than assumed. The code in question is whatever trains, runs, or measures the model (obs building, forward semantics, targets, loss, metric definitions, eval protocol).
 
 This doc classifies these changes. For any use of an old artifact (a checkpoint or a recorded number), the classification gives a verdict: clean, confounded, incomparable, or valid with a caption (a few cells carry close variants). Classifying takes two steps, one per section below:
